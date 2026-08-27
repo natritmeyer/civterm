@@ -1,3 +1,4 @@
+use crate::model::geography_improvement::GeographyImprovement;
 use crate::model::movement_category::MovementCategory;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,26 +42,22 @@ impl Geography {
         !self.is_water()
     }
 
-    pub fn irrigatable(&self) -> bool {
-        matches!(
-            self,
-            Geography::Grassland
-                | Geography::Plains
-                | Geography::Desert
-                | Geography::Swamp
-                | Geography::Jungle
-        )
-    }
-
-    pub fn minable(&self) -> bool {
-        matches!(
-            self,
-            Geography::Hills | Geography::Mountain | Geography::Desert
-        )
-    }
-
-    pub fn road_buildable(&self) -> bool {
-        self.is_land()
+    pub fn supports(&self, improvement: GeographyImprovement) -> bool {
+        match improvement {
+            GeographyImprovement::Irrigation => matches!(
+                self,
+                Geography::Grassland
+                    | Geography::Plains
+                    | Geography::Desert
+                    | Geography::Swamp
+                    | Geography::Jungle
+            ),
+            GeographyImprovement::Mine => matches!(
+                self,
+                Geography::Hills | Geography::Mountain | Geography::Desert
+            ),
+            GeographyImprovement::Road => self.is_land(),
+        }
     }
 }
 
@@ -149,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn irrigatable_terrains() {
+    fn irrigation_supported_terrains() {
         for g in [
             Geography::Grassland,
             Geography::Plains,
@@ -157,7 +154,7 @@ mod tests {
             Geography::Swamp,
             Geography::Jungle,
         ] {
-            assert!(g.irrigatable());
+            assert!(g.supports(GeographyImprovement::Irrigation));
         }
         for g in [
             Geography::Ocean,
@@ -166,14 +163,14 @@ mod tests {
             Geography::Mountain,
             Geography::Tundra,
         ] {
-            assert!(!g.irrigatable());
+            assert!(!g.supports(GeographyImprovement::Irrigation));
         }
     }
 
     #[test]
-    fn minable_terrains() {
+    fn mine_supported_terrains() {
         for g in [Geography::Hills, Geography::Mountain, Geography::Desert] {
-            assert!(g.minable());
+            assert!(g.supports(GeographyImprovement::Mine));
         }
         for g in [
             Geography::Ocean,
@@ -182,19 +179,19 @@ mod tests {
             Geography::Forest,
             Geography::Tundra,
         ] {
-            assert!(!g.minable());
+            assert!(!g.supports(GeographyImprovement::Mine));
         }
     }
 
     #[test]
-    fn roads_buildable_on_all_land() {
-        assert!(!Geography::Ocean.road_buildable());
+    fn road_supported_terrains() {
+        assert!(!Geography::Ocean.supports(GeographyImprovement::Road));
         for g in OPEN
             .iter()
             .chain(DENSE.iter())
             .chain([&Geography::Mountain])
         {
-            assert!(g.road_buildable());
+            assert!(g.supports(GeographyImprovement::Road));
         }
     }
 }

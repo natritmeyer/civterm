@@ -4,6 +4,9 @@ use crate::model::geography::Geography;
 pub struct Tile {
     pub geography: Geography,
     pub discovered: bool,
+    pub irrigated: bool,
+    pub mined: bool,
+    pub has_road: bool,
 }
 
 impl Tile {
@@ -11,6 +14,9 @@ impl Tile {
         Tile {
             geography,
             discovered: false,
+            irrigated: false,
+            mined: false,
+            has_road: false,
         }
     }
 
@@ -27,6 +33,14 @@ mod tests {
     fn tile_starts_undiscovered() {
         let tile = Tile::new(Geography::Grassland);
         assert!(!tile.discovered);
+    }
+
+    #[test]
+    fn tile_starts_without_improvements() {
+        let tile = Tile::new(Geography::Grassland);
+        assert!(!tile.irrigated);
+        assert!(!tile.mined);
+        assert!(!tile.has_road);
     }
 
     #[test]
