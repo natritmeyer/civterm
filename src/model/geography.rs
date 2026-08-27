@@ -1,5 +1,6 @@
 use crate::model::geography_improvement::GeographyImprovement;
 use crate::model::movement_category::MovementCategory;
+use crate::model::special_resource::SpecialResource;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Geography {
@@ -57,6 +58,19 @@ impl Geography {
                 Geography::Hills | Geography::Mountain | Geography::Desert
             ),
             GeographyImprovement::Road => self.is_land(),
+        }
+    }
+
+    pub fn supports_resource(&self, resource: SpecialResource) -> bool {
+        match resource {
+            SpecialResource::Coal => matches!(self, Geography::Hills),
+            SpecialResource::Fish => matches!(self, Geography::Ocean),
+            SpecialResource::Game => matches!(self, Geography::Forest | Geography::Tundra),
+            SpecialResource::Gems => matches!(self, Geography::Jungle),
+            SpecialResource::Gold => matches!(self, Geography::Mountain),
+            SpecialResource::Horses => matches!(self, Geography::Plains),
+            SpecialResource::Oasis => matches!(self, Geography::Desert),
+            SpecialResource::Oil => matches!(self, Geography::Swamp),
         }
     }
 
@@ -228,6 +242,47 @@ mod tests {
             .chain([&Geography::Mountain])
         {
             assert!(g.supports(GeographyImprovement::Road));
+        }
+    }
+
+    #[test]
+    fn special_resource_support_by_geography() {
+        assert!(Geography::Hills.supports_resource(SpecialResource::Coal));
+        assert!(Geography::Ocean.supports_resource(SpecialResource::Fish));
+        assert!(Geography::Forest.supports_resource(SpecialResource::Game));
+        assert!(Geography::Tundra.supports_resource(SpecialResource::Game));
+        assert!(Geography::Jungle.supports_resource(SpecialResource::Gems));
+        assert!(Geography::Mountain.supports_resource(SpecialResource::Gold));
+        assert!(Geography::Plains.supports_resource(SpecialResource::Horses));
+        assert!(Geography::Desert.supports_resource(SpecialResource::Oasis));
+        assert!(Geography::Swamp.supports_resource(SpecialResource::Oil));
+    }
+
+    #[test]
+    fn special_resources_rejected_on_other_geography() {
+        for g in [
+            Geography::Ocean,
+            Geography::Grassland,
+            Geography::Plains,
+            Geography::Forest,
+            Geography::Hills,
+            Geography::Mountain,
+            Geography::Desert,
+            Geography::Tundra,
+            Geography::Swamp,
+            Geography::Jungle,
+        ] {
+            assert!(!g.supports_resource(SpecialResource::Coal) || matches!(g, Geography::Hills));
+            assert!(!g.supports_resource(SpecialResource::Fish) || matches!(g, Geography::Ocean));
+            assert!(
+                !g.supports_resource(SpecialResource::Game)
+                    || matches!(g, Geography::Forest | Geography::Tundra)
+            );
+            assert!(!g.supports_resource(SpecialResource::Gems) || matches!(g, Geography::Jungle));
+            assert!(!g.supports_resource(SpecialResource::Gold) || matches!(g, Geography::Mountain));
+            assert!(!g.supports_resource(SpecialResource::Horses) || matches!(g, Geography::Plains));
+            assert!(!g.supports_resource(SpecialResource::Oasis) || matches!(g, Geography::Desert));
+            assert!(!g.supports_resource(SpecialResource::Oil) || matches!(g, Geography::Swamp));
         }
     }
 
