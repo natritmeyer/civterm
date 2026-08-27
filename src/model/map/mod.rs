@@ -1,6 +1,10 @@
 use crate::model::geography::Geography;
-use crate::model::location::Location;
-use crate::model::tile::Tile;
+
+pub mod location;
+pub mod tile;
+
+pub use location::Location;
+pub use tile::Tile;
 
 pub struct Map {
     pub width: usize,
