@@ -40,6 +40,28 @@ impl Geography {
     pub fn is_land(&self) -> bool {
         !self.is_water()
     }
+
+    pub fn irrigatable(&self) -> bool {
+        matches!(
+            self,
+            Geography::Grassland
+                | Geography::Plains
+                | Geography::Desert
+                | Geography::Swamp
+                | Geography::Jungle
+        )
+    }
+
+    pub fn minable(&self) -> bool {
+        matches!(
+            self,
+            Geography::Hills | Geography::Mountain | Geography::Desert
+        )
+    }
+
+    pub fn road_buildable(&self) -> bool {
+        self.is_land()
+    }
 }
 
 #[cfg(test)]
@@ -123,6 +145,56 @@ mod tests {
         {
             assert!(!g.is_water());
             assert!(g.is_land());
+        }
+    }
+
+    #[test]
+    fn irrigatable_terrains() {
+        for g in [
+            Geography::Grassland,
+            Geography::Plains,
+            Geography::Desert,
+            Geography::Swamp,
+            Geography::Jungle,
+        ] {
+            assert!(g.irrigatable());
+        }
+        for g in [
+            Geography::Ocean,
+            Geography::Forest,
+            Geography::Hills,
+            Geography::Mountain,
+            Geography::Tundra,
+        ] {
+            assert!(!g.irrigatable());
+        }
+    }
+
+    #[test]
+    fn minable_terrains() {
+        for g in [Geography::Hills, Geography::Mountain, Geography::Desert] {
+            assert!(g.minable());
+        }
+        for g in [
+            Geography::Ocean,
+            Geography::Grassland,
+            Geography::Plains,
+            Geography::Forest,
+            Geography::Tundra,
+        ] {
+            assert!(!g.minable());
+        }
+    }
+
+    #[test]
+    fn roads_buildable_on_all_land() {
+        assert!(!Geography::Ocean.road_buildable());
+        for g in OPEN
+            .iter()
+            .chain(DENSE.iter())
+            .chain([&Geography::Mountain])
+        {
+            assert!(g.road_buildable());
         }
     }
 }
