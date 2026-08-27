@@ -1,10 +1,6 @@
+use crate::model::cartography::Location;
+use crate::model::cartography::Tile;
 use crate::model::geography::Geography;
-
-pub mod location;
-pub mod tile;
-
-pub use location::Location;
-pub use tile::Tile;
 
 pub struct Map {
     pub width: usize,
@@ -33,6 +29,7 @@ impl Map {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::geography::SpecialResource;
 
     #[test]
     fn map_defaults_to_ocean() {
@@ -48,9 +45,7 @@ mod tests {
     fn tile_at_returns_the_tile_at_that_location() {
         let mut map = Map::new(3, 2);
         let mut mountain = Tile::new(Geography::Mountain);
-        mountain
-            .place_resource(crate::model::geography::SpecialResource::Gold)
-            .unwrap();
+        mountain.place_resource(SpecialResource::Gold).unwrap();
         *map.tile_at_mut(Location::new(2, 1)) = mountain.clone();
 
         assert_eq!(map.tile_at(Location::new(0, 0)).geography, Geography::Ocean);

@@ -1,5 +1,5 @@
 use crate::engine::player::Player;
-use crate::model::map::Map;
+use crate::model::cartography::Map;
 
 pub struct Game {
     pub map: Map,
