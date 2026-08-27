@@ -59,6 +59,42 @@ impl Geography {
             GeographyImprovement::Road => self.is_land(),
         }
     }
+
+    pub fn yields_food(&self) -> u8 {
+        match self {
+            Geography::Ocean | Geography::Grassland | Geography::Plains => 2,
+            Geography::Forest
+            | Geography::Hills
+            | Geography::Tundra
+            | Geography::Swamp
+            | Geography::Jungle => 1,
+            Geography::Mountain | Geography::Desert => 0,
+        }
+    }
+
+    pub fn yields_resources(&self) -> u8 {
+        match self {
+            Geography::Forest => 2,
+            Geography::Plains
+            | Geography::Hills
+            | Geography::Mountain
+            | Geography::Desert
+            | Geography::Jungle => 1,
+            Geography::Ocean | Geography::Grassland | Geography::Tundra | Geography::Swamp => 0,
+        }
+    }
+
+    pub fn yields_trade(&self) -> u8 {
+        match self {
+            Geography::Ocean => 2,
+            Geography::Grassland
+            | Geography::Mountain
+            | Geography::Desert
+            | Geography::Tundra
+            | Geography::Swamp => 1,
+            Geography::Plains | Geography::Forest | Geography::Hills | Geography::Jungle => 0,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -193,5 +229,47 @@ mod tests {
         {
             assert!(g.supports(GeographyImprovement::Road));
         }
+    }
+
+    #[test]
+    fn food_yields_per_geography() {
+        assert_eq!(Geography::Ocean.yields_food(), 2);
+        assert_eq!(Geography::Grassland.yields_food(), 2);
+        assert_eq!(Geography::Plains.yields_food(), 2);
+        assert_eq!(Geography::Forest.yields_food(), 1);
+        assert_eq!(Geography::Hills.yields_food(), 1);
+        assert_eq!(Geography::Mountain.yields_food(), 0);
+        assert_eq!(Geography::Desert.yields_food(), 0);
+        assert_eq!(Geography::Tundra.yields_food(), 1);
+        assert_eq!(Geography::Swamp.yields_food(), 1);
+        assert_eq!(Geography::Jungle.yields_food(), 1);
+    }
+
+    #[test]
+    fn resources_yields_per_geography() {
+        assert_eq!(Geography::Ocean.yields_resources(), 0);
+        assert_eq!(Geography::Grassland.yields_resources(), 0);
+        assert_eq!(Geography::Plains.yields_resources(), 1);
+        assert_eq!(Geography::Forest.yields_resources(), 2);
+        assert_eq!(Geography::Hills.yields_resources(), 1);
+        assert_eq!(Geography::Mountain.yields_resources(), 1);
+        assert_eq!(Geography::Desert.yields_resources(), 1);
+        assert_eq!(Geography::Tundra.yields_resources(), 0);
+        assert_eq!(Geography::Swamp.yields_resources(), 0);
+        assert_eq!(Geography::Jungle.yields_resources(), 1);
+    }
+
+    #[test]
+    fn trade_yields_per_geography() {
+        assert_eq!(Geography::Ocean.yields_trade(), 2);
+        assert_eq!(Geography::Grassland.yields_trade(), 1);
+        assert_eq!(Geography::Plains.yields_trade(), 0);
+        assert_eq!(Geography::Forest.yields_trade(), 0);
+        assert_eq!(Geography::Hills.yields_trade(), 0);
+        assert_eq!(Geography::Mountain.yields_trade(), 1);
+        assert_eq!(Geography::Desert.yields_trade(), 1);
+        assert_eq!(Geography::Tundra.yields_trade(), 1);
+        assert_eq!(Geography::Swamp.yields_trade(), 1);
+        assert_eq!(Geography::Jungle.yields_trade(), 0);
     }
 }
