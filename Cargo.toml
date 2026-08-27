@@ -1,0 +1,13 @@
+[package]
+name = "civterm"
+version = "0.0.1"
+edition = "2024"
+description = "A civ game in your terminal"
+license = "MIT"
+repository = "https://github.com/natritmeyer/civterm"
+authors = ["Nat Ritmeyer"]
+publish = false
+
+[dependencies]
+crossterm = "0.29"
+ratatui = "0.30.2"
