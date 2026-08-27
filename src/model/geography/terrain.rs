@@ -1,6 +1,6 @@
-use crate::model::geography_improvement::GeographyImprovement;
-use crate::model::movement_category::MovementCategory;
-use crate::model::special_resource::SpecialResource;
+use super::geography_improvement::GeographyImprovement;
+use super::movement_category::MovementCategory;
+use super::special_resource::SpecialResource;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Geography {
@@ -279,8 +279,12 @@ mod tests {
                     || matches!(g, Geography::Forest | Geography::Tundra)
             );
             assert!(!g.supports_resource(SpecialResource::Gems) || matches!(g, Geography::Jungle));
-            assert!(!g.supports_resource(SpecialResource::Gold) || matches!(g, Geography::Mountain));
-            assert!(!g.supports_resource(SpecialResource::Horses) || matches!(g, Geography::Plains));
+            assert!(
+                !g.supports_resource(SpecialResource::Gold) || matches!(g, Geography::Mountain)
+            );
+            assert!(
+                !g.supports_resource(SpecialResource::Horses) || matches!(g, Geography::Plains)
+            );
             assert!(!g.supports_resource(SpecialResource::Oasis) || matches!(g, Geography::Desert));
             assert!(!g.supports_resource(SpecialResource::Oil) || matches!(g, Geography::Swamp));
         }

@@ -1,6 +1,4 @@
-use crate::model::geography::Geography;
-use crate::model::geography_improvement::GeographyImprovement;
-use crate::model::special_resource::SpecialResource;
+use crate::model::geography::{Geography, GeographyImprovement, SpecialResource};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
