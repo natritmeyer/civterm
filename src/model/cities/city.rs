@@ -1,4 +1,5 @@
 use crate::model::cartography::Location;
+use crate::model::cities::CityImprovement;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct City {
@@ -8,6 +9,8 @@ pub struct City {
     food: u32,
     resources: u32,
     trade: u32,
+    improvements: Vec<CityImprovement>,
+    improvement_in_progress: Option<CityImprovement>,
 }
 
 impl City {
@@ -19,6 +22,8 @@ impl City {
             food: 0,
             resources: 0,
             trade: 0,
+            improvements: Vec::new(),
+            improvement_in_progress: None,
         }
     }
 
@@ -44,6 +49,14 @@ impl City {
 
     pub fn trade(&self) -> u32 {
         self.trade
+    }
+
+    pub fn improvements(&self) -> &[CityImprovement] {
+        &self.improvements
+    }
+
+    pub fn improvement_in_progress(&self) -> Option<CityImprovement> {
+        self.improvement_in_progress
     }
 }
 
@@ -71,6 +84,13 @@ mod tests {
         assert_eq!(city.food(), 0);
         assert_eq!(city.resources(), 0);
         assert_eq!(city.trade(), 0);
+    }
+
+    #[test]
+    fn city_starts_with_no_improvements_or_production() {
+        let city = City::new("London", Location::new(0, 0));
+        assert!(city.improvements().is_empty());
+        assert_eq!(city.improvement_in_progress(), None);
     }
 
     #[test]
