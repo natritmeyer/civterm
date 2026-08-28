@@ -58,6 +58,24 @@ impl City {
     pub fn improvement_in_progress(&self) -> Option<CityImprovement> {
         self.improvement_in_progress
     }
+
+    pub fn add_improvement(&mut self, improvement: CityImprovement) {
+        self.improvements.push(improvement);
+    }
+
+    pub fn research(&self) -> u32 {
+        let mut numerator = 4u32;
+        let mut denominator = 4u32;
+        if self.improvements.contains(&CityImprovement::Library) {
+            numerator *= 3;
+            denominator *= 2;
+        }
+        if self.improvements.contains(&CityImprovement::University) {
+            numerator *= 3;
+            denominator *= 2;
+        }
+        self.population * numerator / denominator
+    }
 }
 
 #[cfg(test)]
@@ -116,5 +134,47 @@ mod tests {
         city.shrink();
         city.shrink();
         assert_eq!(city.population(), 1);
+    }
+
+    #[test]
+    fn research_equals_population_without_improvements() {
+        let city = City::new("London", Location::new(0, 0));
+        let mut city = city;
+        city.grow();
+        city.grow();
+        city.grow();
+        assert_eq!(city.population(), 4);
+        assert_eq!(city.research(), 4);
+    }
+
+    #[test]
+    fn library_increases_research_by_50_percent() {
+        let mut city = City::new("London", Location::new(0, 0));
+        city.grow();
+        city.grow();
+        city.grow();
+        city.add_improvement(CityImprovement::Library);
+        assert_eq!(city.research(), 6);
+    }
+
+    #[test]
+    fn university_increases_research_by_50_percent() {
+        let mut city = City::new("London", Location::new(0, 0));
+        city.grow();
+        city.grow();
+        city.grow();
+        city.add_improvement(CityImprovement::University);
+        assert_eq!(city.research(), 6);
+    }
+
+    #[test]
+    fn library_and_university_multipliers_stack() {
+        let mut city = City::new("London", Location::new(0, 0));
+        city.grow();
+        city.grow();
+        city.grow();
+        city.add_improvement(CityImprovement::Library);
+        city.add_improvement(CityImprovement::University);
+        assert_eq!(city.research(), 9);
     }
 }
