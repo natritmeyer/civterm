@@ -1,5 +1,5 @@
 pub mod cartography;
-pub mod city;
+pub mod cities;
 pub mod civilization;
 pub mod geography;
 pub mod unit;

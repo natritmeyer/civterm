@@ -1,4 +1,4 @@
-use crate::model::city::City;
+use crate::model::cities::City;
 use crate::model::civilization::Civilization;
 use crate::model::unit::Unit;
 
