@@ -41,6 +41,10 @@ impl UnitClass {
             UnitClass::Phalanx | UnitClass::Knight | UnitClass::Frigate => 2,
         }
     }
+
+    pub fn can_found_city(&self) -> bool {
+        matches!(self, UnitClass::Settler)
+    }
 }
 
 #[cfg(test)]
@@ -79,5 +83,26 @@ mod tests {
         assert_eq!(UnitClass::Sail.defence(), 1);
         assert_eq!(UnitClass::Frigate.attack(), 2);
         assert_eq!(UnitClass::Frigate.defence(), 2);
+    }
+
+    #[test]
+    fn only_settlers_can_found_cities() {
+        assert!(UnitClass::Settler.can_found_city());
+        for class in [
+            UnitClass::Militia,
+            UnitClass::Phalanx,
+            UnitClass::Legion,
+            UnitClass::Cavalry,
+            UnitClass::Chariot,
+            UnitClass::Knight,
+            UnitClass::Catapult,
+            UnitClass::Diplomat,
+            UnitClass::Caravan,
+            UnitClass::Trireme,
+            UnitClass::Sail,
+            UnitClass::Frigate,
+        ] {
+            assert!(!class.can_found_city());
+        }
     }
 }
