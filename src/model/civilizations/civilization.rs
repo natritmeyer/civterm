@@ -1,3 +1,5 @@
+use crate::model::civilizations::Ruler;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Civilization {
     American,
@@ -14,24 +16,6 @@ pub enum Civilization {
     Roman,
     Russian,
     Zulu,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Ruler {
-    AbrahamLincoln,
-    Montezuma,
-    Hammurabi,
-    MaoZedong,
-    Ramses,
-    QueenElizabethI,
-    Napoleon,
-    FrederickTheGreat,
-    Alexander,
-    Gandhi,
-    GenghisKhan,
-    JuliusCaesar,
-    Stalin,
-    Shaka,
 }
 
 impl Civilization {

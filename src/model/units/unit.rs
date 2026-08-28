@@ -1,5 +1,5 @@
 use crate::model::cartography::Location;
-use crate::model::unit_class::UnitClass;
+use crate::model::units::UnitClass;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Unit {

@@ -1,6 +1,6 @@
 use crate::model::cities::City;
-use crate::model::civilization::Civilization;
-use crate::model::unit::Unit;
+use crate::model::civilizations::Civilization;
+use crate::model::units::Unit;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Player {

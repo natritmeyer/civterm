@@ -21,7 +21,7 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::civilization::Civilization;
+    use crate::model::civilizations::Civilization;
 
     #[test]
     fn game_created_with_the_given_players() {
