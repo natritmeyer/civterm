@@ -5,6 +5,9 @@ pub struct City {
     pub name: String,
     pub location: Location,
     population: u32,
+    food: u32,
+    resources: u32,
+    trade: u32,
 }
 
 impl City {
@@ -13,6 +16,9 @@ impl City {
             name: name.into(),
             location,
             population: 1,
+            food: 0,
+            resources: 0,
+            trade: 0,
         }
     }
 
@@ -26,6 +32,18 @@ impl City {
 
     pub fn shrink(&mut self) {
         self.population = self.population.saturating_sub(1).max(1);
+    }
+
+    pub fn food(&self) -> u32 {
+        self.food
+    }
+
+    pub fn resources(&self) -> u32 {
+        self.resources
+    }
+
+    pub fn trade(&self) -> u32 {
+        self.trade
     }
 }
 
@@ -45,6 +63,14 @@ mod tests {
     fn city_starts_with_population_1() {
         let city = City::new("London", Location::new(0, 0));
         assert_eq!(city.population(), 1);
+    }
+
+    #[test]
+    fn city_starts_with_zero_food_resources_and_trade() {
+        let city = City::new("London", Location::new(0, 0));
+        assert_eq!(city.food(), 0);
+        assert_eq!(city.resources(), 0);
+        assert_eq!(city.trade(), 0);
     }
 
     #[test]
