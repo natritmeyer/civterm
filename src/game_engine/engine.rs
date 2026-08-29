@@ -41,17 +41,25 @@ impl Engine {
         let (dx, dy) = direction.delta();
         match self.owned_unit_mut(unit) {
             Some(u) => {
-                let x = (u.location.x as isize + dx).rem_euclid(width);
-                let y = u.location.y as isize + dy;
-                if y >= 0 && y < height {
-                    u.location = Location::new(x as u16, y as u16);
+                if u.moves_remaining() == 0 {
                     self.events.push(Event::new(format!(
-                        "Unit {} moves {:?}",
-                        unit.index(),
-                        direction
+                        "Unit {} has no moves left",
+                        unit.index()
                     )));
                 } else {
-                    self.events.push(Event::new("Cannot move there"));
+                    let x = (u.location.x as isize + dx).rem_euclid(width);
+                    let y = u.location.y as isize + dy;
+                    if y >= 0 && y < height {
+                        u.location = Location::new(x as u16, y as u16);
+                        u.spend_move();
+                        self.events.push(Event::new(format!(
+                            "Unit {} moves {:?}",
+                            unit.index(),
+                            direction
+                        )));
+                    } else {
+                        self.events.push(Event::new("Cannot move there"));
+                    }
                 }
             }
             None => self.events.push(Event::new("No such unit")),
@@ -107,6 +115,7 @@ impl Engine {
 
     fn end_turn(&mut self) {
         self.advance_to_next_player();
+        self.begin_turn();
         if self.current_player_index == PlayerId::new(0) {
             self.turn += 1;
         }
@@ -120,6 +129,17 @@ impl Engine {
     fn advance_to_next_player(&mut self) {
         let count = self.game.players.len();
         self.current_player_index = PlayerId::new((self.current_player_index.index() + 1) % count);
+    }
+
+    fn begin_turn(&mut self) {
+        for unit in self
+            .game
+            .units
+            .iter_mut()
+            .filter(|unit| unit.owner() == self.current_player_index)
+        {
+            unit.restore_moves();
+        }
     }
 
     fn owned_unit_mut(&mut self, unit: UnitId) -> Option<&mut Unit> {
@@ -192,12 +212,19 @@ mod tests {
     }
 
     fn two_player_engine() -> Engine {
-        Engine::new(
+        let mut engine = Engine::new(
             3,
             2,
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
-        )
+        );
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine
     }
 
     fn three_player_engine() -> Engine {
@@ -263,6 +290,7 @@ mod tests {
             unit: UnitId::new(0),
             direction: Direction::E,
         });
+        engine.submit(Command::EndTurn);
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -277,6 +305,7 @@ mod tests {
             unit: UnitId::new(0),
             direction: Direction::W,
         });
+        engine.submit(Command::EndTurn);
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::W,
@@ -387,6 +416,62 @@ mod tests {
         assert_eq!(engine.current_player(), Civilization::Zulu);
         assert_eq!(engine.turn(), 1);
         assert_eq!(events[0].message(), "Zulu begins turn 1");
+    }
+
+    #[test]
+    fn a_unit_can_move_only_once_per_turn() {
+        let mut engine = test_engine();
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        let events = engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::W,
+        });
+        assert_eq!(events[0].message(), "Unit 0 has no moves left");
+        assert_eq!(engine.game.units[0].location, Location::new(2, 1));
+    }
+
+    #[test]
+    fn moves_are_restored_at_the_beginning_of_the_owners_turn() {
+        let mut engine = test_engine();
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        assert_eq!(engine.game.units[0].moves_remaining(), 0);
+        engine.submit(Command::EndTurn);
+        assert_eq!(engine.game.units[0].moves_remaining(), 1);
+    }
+
+    #[test]
+    fn each_players_units_reset_when_their_turn_begins() {
+        let mut engine = two_player_engine();
+        let zulu_warrior = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            PlayerId::new(1),
+            CityId::new(0),
+        );
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        assert_eq!(engine.game.units[0].moves_remaining(), 0);
+        engine.submit(Command::EndTurn);
+        assert_eq!(engine.current_player(), Civilization::Zulu);
+        assert_eq!(
+            engine
+                .game
+                .units
+                .iter()
+                .find(|unit| unit.id() == zulu_warrior)
+                .unwrap()
+                .moves_remaining(),
+            1
+        );
+        assert_eq!(engine.game.units[0].moves_remaining(), 0);
     }
 
     #[test]

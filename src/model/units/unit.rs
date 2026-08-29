@@ -13,9 +13,12 @@ pub struct Unit {
     home_city: CityId,
     order: UnitOrder,
     veteran: bool,
+    moves_remaining: u8,
 }
 
 impl Unit {
+    const MOVES_PER_TURN: u8 = 1;
+
     pub fn new(
         unit_class: UnitClass,
         location: Location,
@@ -31,6 +34,7 @@ impl Unit {
             home_city,
             order: UnitOrder::Idle,
             veteran: false,
+            moves_remaining: Self::MOVES_PER_TURN,
         }
     }
 
@@ -48,6 +52,18 @@ impl Unit {
 
     pub fn order(&self) -> UnitOrder {
         self.order
+    }
+
+    pub fn moves_remaining(&self) -> u8 {
+        self.moves_remaining
+    }
+
+    pub fn spend_move(&mut self) {
+        self.moves_remaining = self.moves_remaining.saturating_sub(1);
+    }
+
+    pub fn restore_moves(&mut self) {
+        self.moves_remaining = Self::MOVES_PER_TURN;
     }
 
     pub fn fortify(&mut self) {
@@ -198,6 +214,35 @@ mod tests {
             UnitId::new(0),
         );
         assert!(!unit.is_veteran());
+    }
+
+    #[test]
+    fn unit_starts_with_moves_available() {
+        let unit = Unit::new(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
+        assert_eq!(unit.moves_remaining(), 1);
+    }
+
+    #[test]
+    fn moves_are_spent_and_restored() {
+        let mut unit = Unit::new(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
+        unit.spend_move();
+        assert_eq!(unit.moves_remaining(), 0);
+        unit.spend_move();
+        assert_eq!(unit.moves_remaining(), 0);
+        unit.restore_moves();
+        assert_eq!(unit.moves_remaining(), 1);
     }
 
     #[test]
