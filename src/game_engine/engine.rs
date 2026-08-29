@@ -106,9 +106,20 @@ impl Engine {
     }
 
     fn end_turn(&mut self) {
-        self.turn += 1;
-        self.events
-            .push(Event::new(format!("Turn {turn} begins", turn = self.turn)));
+        self.advance_to_next_player();
+        if self.current_player_index == PlayerId::new(0) {
+            self.turn += 1;
+        }
+        self.events.push(Event::new(format!(
+            "{:?} begins turn {}",
+            self.current_player(),
+            self.turn
+        )));
+    }
+
+    fn advance_to_next_player(&mut self) {
+        let count = self.game.players.len();
+        self.current_player_index = PlayerId::new((self.current_player_index.index() + 1) % count);
     }
 
     fn owned_unit_mut(&mut self, unit: UnitId) -> Option<&mut Unit> {
@@ -178,6 +189,27 @@ mod tests {
             CityId::new(0),
         );
         engine
+    }
+
+    fn two_player_engine() -> Engine {
+        Engine::new(
+            3,
+            2,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        )
+    }
+
+    fn three_player_engine() -> Engine {
+        Engine::new(
+            3,
+            2,
+            Player::new(Civilization::English),
+            vec![
+                Player::new(Civilization::Zulu),
+                Player::new(Civilization::Roman),
+            ],
+        )
     }
 
     #[test]
@@ -345,7 +377,54 @@ mod tests {
         let mut engine = test_engine();
         let events = engine.submit(Command::EndTurn);
         assert_eq!(engine.turn(), 2);
-        assert_eq!(events[0].message(), "Turn 2 begins");
+        assert_eq!(events[0].message(), "English begins turn 2");
+    }
+
+    #[test]
+    fn end_turn_moves_play_to_the_next_player_without_advancing_the_turn() {
+        let mut engine = two_player_engine();
+        let events = engine.submit(Command::EndTurn);
+        assert_eq!(engine.current_player(), Civilization::Zulu);
+        assert_eq!(engine.turn(), 1);
+        assert_eq!(events[0].message(), "Zulu begins turn 1");
+    }
+
+    #[test]
+    fn end_turn_after_the_last_player_wraps_and_advances_the_turn() {
+        let mut engine = two_player_engine();
+        engine.submit(Command::EndTurn);
+        let events = engine.submit(Command::EndTurn);
+        assert_eq!(engine.current_player(), Civilization::English);
+        assert_eq!(engine.turn(), 2);
+        assert_eq!(events[0].message(), "English begins turn 2");
+    }
+
+    #[test]
+    fn three_players_rotate_through_three_full_turns() {
+        let mut engine = three_player_engine();
+        let mut messages = Vec::new();
+        for _ in 0..9 {
+            let events = engine.submit(Command::EndTurn);
+            messages.push(events[0].message().to_string());
+            if messages.len() % 3 == 0 {
+                assert_eq!(engine.current_player(), Civilization::English);
+            }
+        }
+        assert_eq!(engine.turn(), 4);
+        assert_eq!(
+            messages,
+            vec![
+                "Zulu begins turn 1",
+                "Roman begins turn 1",
+                "English begins turn 2",
+                "Zulu begins turn 2",
+                "Roman begins turn 2",
+                "English begins turn 3",
+                "Zulu begins turn 3",
+                "Roman begins turn 3",
+                "English begins turn 4",
+            ]
+        );
     }
 
     #[test]
