@@ -1,4 +1,4 @@
-use crate::engine::player::Player;
+use crate::game_engine::player::Player;
 use crate::model::cartography::Map;
 
 pub struct Game {
