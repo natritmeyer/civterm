@@ -41,9 +41,9 @@ impl Engine {
         let (dx, dy) = direction.delta();
         match self.owned_unit_mut(unit) {
             Some(u) => {
-                let x = u.location.x as isize + dx;
+                let x = (u.location.x as isize + dx).rem_euclid(width);
                 let y = u.location.y as isize + dy;
-                if x >= 0 && x < width && y >= 0 && y < height {
+                if y >= 0 && y < height {
                     u.location = Location::new(x as u16, y as u16);
                     self.events.push(Event::new(format!(
                         "Unit {} moves {:?}",
@@ -222,6 +222,34 @@ mod tests {
         });
         assert_eq!(events[0].message(), "Cannot move there");
         assert_eq!(engine.game.units[0].location, Location::new(1, 1));
+    }
+
+    #[test]
+    fn moving_east_off_the_map_wraps_around_to_the_west() {
+        let mut engine = test_engine();
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        assert_eq!(engine.game.units[0].location, Location::new(0, 1));
+    }
+
+    #[test]
+    fn moving_west_off_the_map_wraps_around_to_the_east() {
+        let mut engine = test_engine();
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::W,
+        });
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::W,
+        });
+        assert_eq!(engine.game.units[0].location, Location::new(2, 1));
     }
 
     #[test]
