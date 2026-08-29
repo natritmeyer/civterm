@@ -1,24 +1,25 @@
 use crate::model::cartography::Direction;
 use crate::model::geography::GeographyImprovement;
+use crate::model::units::UnitId;
 
 #[derive(Debug)]
 pub enum Command {
     Move {
-        unit: usize,
+        unit: UnitId,
         direction: Direction,
     },
     Fortify {
-        unit: usize,
+        unit: UnitId,
     },
     Sentry {
-        unit: usize,
+        unit: UnitId,
     },
     Work {
-        unit: usize,
+        unit: UnitId,
         improvement: GeographyImprovement,
     },
     CancelOrder {
-        unit: usize,
+        unit: UnitId,
     },
     EndTurn,
 }

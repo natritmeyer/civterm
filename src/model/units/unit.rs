@@ -1,30 +1,49 @@
 use crate::model::cartography::Location;
+use crate::model::cities::CityId;
+use crate::model::civilizations::PlayerId;
 use crate::model::geography::GeographyImprovement;
-use crate::model::units::UnitClass;
-use crate::model::units::UnitOrder;
+use crate::model::units::{UnitClass, UnitId, UnitOrder};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Unit {
     pub unit_class: UnitClass,
     pub location: Location,
-    owner: usize,
+    id: UnitId,
+    owner: PlayerId,
+    home_city: CityId,
     order: UnitOrder,
     veteran: bool,
 }
 
 impl Unit {
-    pub fn new(unit_class: UnitClass, location: Location, owner: usize) -> Self {
+    pub fn new(
+        unit_class: UnitClass,
+        location: Location,
+        owner: PlayerId,
+        home_city: CityId,
+        id: UnitId,
+    ) -> Self {
         Unit {
             unit_class,
             location,
+            id,
             owner,
+            home_city,
             order: UnitOrder::Idle,
             veteran: false,
         }
     }
 
-    pub fn owner(&self) -> usize {
+    pub fn id(&self) -> UnitId {
+        self.id
+    }
+
+    pub fn owner(&self) -> PlayerId {
         self.owner
+    }
+
+    pub fn home_city(&self) -> CityId {
+        self.home_city
     }
 
     pub fn order(&self) -> UnitOrder {
@@ -61,37 +80,71 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unit_is_created_with_class_and_location() {
+    fn unit_is_created_with_class_location_owner_and_home_city() {
         let location = Location::new(1, 7);
-        let unit = Unit::new(UnitClass::Settler, location, 0);
+        let home_city = CityId::new(4);
+        let id = UnitId::new(2);
+        let unit = Unit::new(
+            UnitClass::Settler,
+            location,
+            PlayerId::new(0),
+            home_city,
+            id,
+        );
         assert_eq!(unit.unit_class, UnitClass::Settler);
         assert_eq!(unit.location, location);
-        assert_eq!(unit.owner(), 0);
+        assert_eq!(unit.owner(), PlayerId::new(0));
+        assert_eq!(unit.home_city(), home_city);
+        assert_eq!(unit.id(), id);
     }
 
     #[test]
     fn unit_starts_idle() {
-        let unit = Unit::new(UnitClass::Settler, Location::new(0, 0), 0);
+        let unit = Unit::new(
+            UnitClass::Settler,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
         assert_eq!(unit.order(), UnitOrder::Idle);
     }
 
     #[test]
     fn unit_can_be_fortified() {
-        let mut unit = Unit::new(UnitClass::Legion, Location::new(0, 0), 0);
+        let mut unit = Unit::new(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
         unit.fortify();
         assert_eq!(unit.order(), UnitOrder::Fortified);
     }
 
     #[test]
     fn unit_can_be_sentried() {
-        let mut unit = Unit::new(UnitClass::Legion, Location::new(0, 0), 0);
+        let mut unit = Unit::new(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
         unit.sentry();
         assert_eq!(unit.order(), UnitOrder::Sentried);
     }
 
     #[test]
     fn unit_can_work_an_improvement() {
-        let mut unit = Unit::new(UnitClass::Settler, Location::new(0, 0), 0);
+        let mut unit = Unit::new(
+            UnitClass::Settler,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
         unit.work(GeographyImprovement::Road);
         assert_eq!(
             unit.order(),
@@ -106,7 +159,13 @@ mod tests {
 
     #[test]
     fn working_replaces_fortify() {
-        let mut unit = Unit::new(UnitClass::Settler, Location::new(0, 0), 0);
+        let mut unit = Unit::new(
+            UnitClass::Settler,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
         unit.fortify();
         unit.work(GeographyImprovement::Mine);
         assert_eq!(
@@ -117,7 +176,13 @@ mod tests {
 
     #[test]
     fn order_can_be_cancelled() {
-        let mut unit = Unit::new(UnitClass::Settler, Location::new(0, 0), 0);
+        let mut unit = Unit::new(
+            UnitClass::Settler,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
         unit.fortify();
         unit.cancel_order();
         assert_eq!(unit.order(), UnitOrder::Idle);
@@ -125,13 +190,25 @@ mod tests {
 
     #[test]
     fn unit_starts_as_regular() {
-        let unit = Unit::new(UnitClass::Legion, Location::new(0, 0), 0);
+        let unit = Unit::new(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
         assert!(!unit.is_veteran());
     }
 
     #[test]
     fn unit_is_promoted_to_veteran() {
-        let mut unit = Unit::new(UnitClass::Legion, Location::new(0, 0), 0);
+        let mut unit = Unit::new(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
         unit.promote();
         assert!(unit.is_veteran());
     }

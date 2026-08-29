@@ -1,10 +1,13 @@
 use crate::model::cartography::Location;
-use crate::model::cities::CityImprovement;
+use crate::model::cities::{CityId, CityImprovement};
+use crate::model::civilizations::PlayerId;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct City {
     pub name: String,
     pub location: Location,
+    id: CityId,
+    owner: PlayerId,
     population: u32,
     food: u32,
     resources: u32,
@@ -14,10 +17,12 @@ pub struct City {
 }
 
 impl City {
-    pub fn new(name: impl Into<String>, location: Location) -> Self {
+    pub fn new(name: impl Into<String>, location: Location, owner: PlayerId, id: CityId) -> Self {
         City {
             name: name.into(),
             location,
+            id,
+            owner,
             population: 1,
             food: 0,
             resources: 0,
@@ -25,6 +30,14 @@ impl City {
             improvements: Vec::new(),
             improvement_in_progress: None,
         }
+    }
+
+    pub fn id(&self) -> CityId {
+        self.id
+    }
+
+    pub fn owner(&self) -> PlayerId {
+        self.owner
     }
 
     pub fn population(&self) -> u32 {
@@ -85,20 +98,33 @@ mod tests {
     #[test]
     fn city_is_created_with_name_and_location() {
         let location = Location::new(3, 4);
-        let city = City::new("London", location);
+        let id = CityId::new(2);
+        let city = City::new("London", location, PlayerId::new(0), id);
         assert_eq!(city.name, "London");
         assert_eq!(city.location, location);
+        assert_eq!(city.owner(), PlayerId::new(0));
+        assert_eq!(city.id(), id);
     }
 
     #[test]
     fn city_starts_with_population_1() {
-        let city = City::new("London", Location::new(0, 0));
+        let city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
         assert_eq!(city.population(), 1);
     }
 
     #[test]
     fn city_starts_with_zero_food_resources_and_trade() {
-        let city = City::new("London", Location::new(0, 0));
+        let city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
         assert_eq!(city.food(), 0);
         assert_eq!(city.resources(), 0);
         assert_eq!(city.trade(), 0);
@@ -106,14 +132,24 @@ mod tests {
 
     #[test]
     fn city_starts_with_no_improvements_or_production() {
-        let city = City::new("London", Location::new(0, 0));
+        let city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
         assert!(city.improvements().is_empty());
         assert_eq!(city.improvement_in_progress(), None);
     }
 
     #[test]
     fn growing_a_city_increments_its_population() {
-        let mut city = City::new("London", Location::new(0, 0));
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
         city.grow();
         city.grow();
         assert_eq!(city.population(), 3);
@@ -121,7 +157,12 @@ mod tests {
 
     #[test]
     fn shrinking_a_city_decrements_its_population() {
-        let mut city = City::new("London", Location::new(0, 0));
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
         city.grow();
         city.shrink();
         assert_eq!(city.population(), 1);
@@ -129,7 +170,12 @@ mod tests {
 
     #[test]
     fn shrinking_does_not_go_below_one() {
-        let city = City::new("London", Location::new(0, 0));
+        let city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
         let mut city = city;
         city.shrink();
         city.shrink();
@@ -138,7 +184,12 @@ mod tests {
 
     #[test]
     fn research_equals_population_without_improvements() {
-        let city = City::new("London", Location::new(0, 0));
+        let city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
         let mut city = city;
         city.grow();
         city.grow();
@@ -149,7 +200,12 @@ mod tests {
 
     #[test]
     fn library_increases_research_by_50_percent() {
-        let mut city = City::new("London", Location::new(0, 0));
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
         city.grow();
         city.grow();
         city.grow();
@@ -159,7 +215,12 @@ mod tests {
 
     #[test]
     fn university_increases_research_by_50_percent() {
-        let mut city = City::new("London", Location::new(0, 0));
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
         city.grow();
         city.grow();
         city.grow();
@@ -169,7 +230,12 @@ mod tests {
 
     #[test]
     fn library_and_university_multipliers_stack() {
-        let mut city = City::new("London", Location::new(0, 0));
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
         city.grow();
         city.grow();
         city.grow();
