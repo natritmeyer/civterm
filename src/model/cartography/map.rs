@@ -1,5 +1,5 @@
-use crate::model::cartography::Location;
 use crate::model::cartography::Tile;
+use crate::model::cartography::{Direction, Location};
 use crate::model::geography::Geography;
 
 pub struct Map {
@@ -23,6 +23,18 @@ impl Map {
 
     pub fn tile_at_mut(&mut self, location: Location) -> &mut Tile {
         &mut self.tiles[location.y as usize][location.x as usize]
+    }
+
+    pub fn destination(&self, from: Location, direction: Direction) -> Option<Location> {
+        let (width, height) = (self.width as isize, self.height as isize);
+        let (dx, dy) = direction.delta();
+        let x = (from.x as isize + dx).rem_euclid(width);
+        let y = from.y as isize + dy;
+        if y >= 0 && y < height {
+            Some(Location::new(x as u16, y as u16))
+        } else {
+            None
+        }
     }
 }
 
@@ -50,5 +62,25 @@ mod tests {
 
         assert_eq!(map.tile_at(Location::new(0, 0)).geography, Geography::Ocean);
         assert_eq!(map.tile_at(Location::new(2, 1)), &mountain);
+    }
+
+    #[test]
+    fn destination_wraps_around_the_east_and_west_edges() {
+        let map = Map::new(3, 2);
+        assert_eq!(
+            map.destination(Location::new(2, 1), Direction::E),
+            Some(Location::new(0, 1))
+        );
+        assert_eq!(
+            map.destination(Location::new(0, 1), Direction::W),
+            Some(Location::new(2, 1))
+        );
+    }
+
+    #[test]
+    fn destination_is_absent_off_the_north_and_south_edges() {
+        let map = Map::new(3, 2);
+        assert_eq!(map.destination(Location::new(1, 0), Direction::N), None);
+        assert_eq!(map.destination(Location::new(1, 1), Direction::S), None);
     }
 }

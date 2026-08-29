@@ -45,6 +45,20 @@ impl UnitClass {
     pub fn can_found_city(&self) -> bool {
         matches!(self, UnitClass::Settler)
     }
+
+    pub fn moves(&self) -> u8 {
+        match self {
+            UnitClass::Settler
+            | UnitClass::Militia
+            | UnitClass::Phalanx
+            | UnitClass::Legion
+            | UnitClass::Catapult
+            | UnitClass::Diplomat
+            | UnitClass::Caravan => 1,
+            UnitClass::Cavalry | UnitClass::Chariot | UnitClass::Knight => 3,
+            UnitClass::Trireme | UnitClass::Sail | UnitClass::Frigate => 3,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -83,6 +97,31 @@ mod tests {
         assert_eq!(UnitClass::Sail.defence(), 1);
         assert_eq!(UnitClass::Frigate.attack(), 2);
         assert_eq!(UnitClass::Frigate.defence(), 2);
+    }
+
+    #[test]
+    fn unit_movement_rates() {
+        for class in [
+            UnitClass::Settler,
+            UnitClass::Militia,
+            UnitClass::Phalanx,
+            UnitClass::Legion,
+            UnitClass::Catapult,
+            UnitClass::Diplomat,
+            UnitClass::Caravan,
+        ] {
+            assert_eq!(class.moves(), 1);
+        }
+        for class in [
+            UnitClass::Cavalry,
+            UnitClass::Chariot,
+            UnitClass::Knight,
+            UnitClass::Trireme,
+            UnitClass::Sail,
+            UnitClass::Frigate,
+        ] {
+            assert_eq!(class.moves(), 3);
+        }
     }
 
     #[test]

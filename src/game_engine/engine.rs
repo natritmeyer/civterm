@@ -37,33 +37,49 @@ impl Engine {
     }
 
     fn move_unit(&mut self, unit: UnitId, direction: Direction) {
-        let (width, height) = (self.game.map.width as isize, self.game.map.height as isize);
-        let (dx, dy) = direction.delta();
-        match self.owned_unit_mut(unit) {
-            Some(u) => {
-                if u.moves_remaining() == 0 {
-                    self.events.push(Event::new(format!(
-                        "Unit {} has no moves left",
-                        unit.index()
-                    )));
-                } else {
-                    let x = (u.location.x as isize + dx).rem_euclid(width);
-                    let y = u.location.y as isize + dy;
-                    if y >= 0 && y < height {
-                        u.location = Location::new(x as u16, y as u16);
-                        u.spend_move();
-                        self.events.push(Event::new(format!(
-                            "Unit {} moves {:?}",
-                            unit.index(),
-                            direction
-                        )));
-                    } else {
-                        self.events.push(Event::new("Cannot move there"));
-                    }
-                }
-            }
-            None => self.events.push(Event::new("No such unit")),
+        let Some(unit_ref) = self.owned_unit(unit) else {
+            self.events.push(Event::new("No such unit"));
+            return;
+        };
+        let moves = unit_ref.moves_remaining();
+        if moves == 0 {
+            self.events.push(Event::new(format!(
+                "Unit {} has no moves left",
+                unit.index()
+            )));
+            return;
         }
+        if !self.unit_movement_allowed_by_geography(unit_ref.location, direction) {
+            self.events.push(Event::new("Cannot move there"));
+            return;
+        }
+        let destination = self
+            .game
+            .map
+            .destination(unit_ref.location, direction)
+            .expect("geography allowed this destination");
+        if !self.unit_has_enough_movement_remaining(destination, moves) {
+            self.events.push(Event::new("Terrain too difficult"));
+            return;
+        }
+
+        let cost = self.game.map.tile_at(destination).geography.movement_cost();
+        let mut_unit = self.owned_unit_mut(unit).unwrap();
+        mut_unit.location = destination;
+        mut_unit.spend_moves(cost);
+        self.events.push(Event::new(format!(
+            "Unit {} moves {:?}",
+            unit.index(),
+            direction
+        )));
+    }
+
+    fn unit_movement_allowed_by_geography(&self, from: Location, direction: Direction) -> bool {
+        self.game.map.destination(from, direction).is_some()
+    }
+
+    fn unit_has_enough_movement_remaining(&self, location: Location, moves: u8) -> bool {
+        moves >= self.game.map.tile_at(location).geography.movement_cost()
     }
 
     fn fortify(&mut self, unit: UnitId) {
@@ -140,6 +156,13 @@ impl Engine {
         {
             unit.restore_moves();
         }
+    }
+
+    fn owned_unit(&self, unit: UnitId) -> Option<&Unit> {
+        self.game
+            .units
+            .iter()
+            .find(|u| u.id() == unit && u.owner() == self.current_player_index)
     }
 
     fn owned_unit_mut(&mut self, unit: UnitId) -> Option<&mut Unit> {
@@ -431,6 +454,56 @@ mod tests {
         });
         assert_eq!(events[0].message(), "Unit 0 has no moves left");
         assert_eq!(engine.game.units[0].location, Location::new(2, 1));
+    }
+
+    #[test]
+    fn difficult_terrain_costs_more_moves_points() {
+        let mut engine = Engine::new(5, 1, Player::new(Civilization::English), Vec::new());
+        engine.game.spawn_unit(
+            UnitClass::Cavalry,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.map.tile_at_mut(Location::new(1, 0)).geography = Geography::Forest;
+        engine.game.map.tile_at_mut(Location::new(2, 0)).geography = Geography::Forest;
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        assert_eq!(engine.game.units[0].location, Location::new(1, 0));
+        assert_eq!(engine.game.units[0].moves_remaining(), 1);
+        let events = engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        assert_eq!(events[0].message(), "Terrain too difficult");
+        assert_eq!(engine.game.units[0].location, Location::new(1, 0));
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::W,
+        });
+        assert_eq!(engine.game.units[0].location, Location::new(0, 0));
+        assert_eq!(engine.game.units[0].moves_remaining(), 0);
+    }
+
+    #[test]
+    fn a_unit_without_enough_moves_cannot_enter_difficult_terrain() {
+        let mut engine = Engine::new(5, 1, Player::new(Civilization::English), Vec::new());
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.map.tile_at_mut(Location::new(1, 0)).geography = Geography::Forest;
+        let events = engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        assert_eq!(events[0].message(), "Terrain too difficult");
+        assert_eq!(engine.game.units[0].location, Location::new(0, 0));
+        assert_eq!(engine.game.units[0].moves_remaining(), 1);
     }
 
     #[test]
