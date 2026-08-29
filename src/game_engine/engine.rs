@@ -6,6 +6,7 @@ use crate::model::geography::GeographyImprovement;
 use crate::model::units::{Unit, UnitId};
 
 use super::game::Game;
+use crate::game_engine::MoveError;
 
 pub struct Engine {
     game: Game,
@@ -37,33 +38,18 @@ impl Engine {
     }
 
     fn move_unit(&mut self, unit: UnitId, direction: Direction) {
-        let Some(unit_ref) = self.owned_unit(unit) else {
-            self.events.push(Event::new("No such unit"));
-            return;
+        let (destination, cost) = match self.ensure_can_move(unit, direction) {
+            Ok(legal) => legal,
+            Err(MoveError::NoSuchUnit(_)) => {
+                self.events.push(Event::new("No such unit"));
+                return;
+            }
+            Err(error) => {
+                self.events.push(Event::new(error.message()));
+                return;
+            }
         };
-        let moves = unit_ref.moves_remaining();
-        if moves == 0 {
-            self.events.push(Event::new(format!(
-                "Unit {} has no moves left",
-                unit.index()
-            )));
-            return;
-        }
-        if !self.unit_movement_allowed_by_geography(unit_ref.location, direction) {
-            self.events.push(Event::new("Cannot move there"));
-            return;
-        }
-        let destination = self
-            .game
-            .map
-            .destination(unit_ref.location, direction)
-            .expect("geography allowed this destination");
-        if !self.unit_has_enough_movement_remaining(destination, moves) {
-            self.events.push(Event::new("Terrain too difficult"));
-            return;
-        }
 
-        let cost = self.game.map.tile_at(destination).geography.movement_cost();
         let mut_unit = self.owned_unit_mut(unit).unwrap();
         mut_unit.location = destination;
         mut_unit.spend_moves(cost);
@@ -74,12 +60,58 @@ impl Engine {
         )));
     }
 
-    fn unit_movement_allowed_by_geography(&self, from: Location, direction: Direction) -> bool {
-        self.game.map.destination(from, direction).is_some()
+    fn ensure_medium_access(&self, unit: &Unit, destination: Location) -> Result<(), MoveError> {
+        let tile_is_water = self.game.map.tile_at(destination).geography.is_water();
+        if unit.unit_class.can_travel_water() != tile_is_water {
+            Err(MoveError::CannotCrossLandSeaBorder(unit.id()))
+        } else {
+            Ok(())
+        }
     }
 
-    fn unit_has_enough_movement_remaining(&self, location: Location, moves: u8) -> bool {
-        moves >= self.game.map.tile_at(location).geography.movement_cost()
+    fn ensure_can_move(
+        &self,
+        unit: UnitId,
+        direction: Direction,
+    ) -> Result<(Location, u8), MoveError> {
+        let unit = self.ensure_unit_owned(unit)?;
+        self.ensure_moves_remaining(unit)?;
+        let destination = self.ensure_destination_on_map(unit.location, direction)?;
+        self.ensure_medium_access(unit, destination)?;
+        let cost = self.ensure_affordable(unit, destination)?;
+        Ok((destination, cost))
+    }
+
+    fn ensure_unit_owned(&self, unit: UnitId) -> Result<&Unit, MoveError> {
+        self.owned_unit(unit).ok_or(MoveError::NoSuchUnit(unit))
+    }
+
+    fn ensure_moves_remaining(&self, unit: &Unit) -> Result<(), MoveError> {
+        if unit.moves_remaining() > 0 {
+            Ok(())
+        } else {
+            Err(MoveError::NoMovesRemaining(unit.id()))
+        }
+    }
+
+    fn ensure_destination_on_map(
+        &self,
+        from: Location,
+        direction: Direction,
+    ) -> Result<Location, MoveError> {
+        self.game
+            .map
+            .destination(from, direction)
+            .ok_or(MoveError::CannotMoveThere)
+    }
+
+    fn ensure_affordable(&self, unit: &Unit, destination: Location) -> Result<u8, MoveError> {
+        let cost = self.game.map.tile_at(destination).geography.movement_cost();
+        if unit.moves_remaining() >= cost {
+            Ok(cost)
+        } else {
+            Err(MoveError::TerrainTooDifficult(unit.id()))
+        }
     }
 
     fn fortify(&mut self, unit: UnitId) {
@@ -287,6 +319,7 @@ mod tests {
     #[test]
     fn move_command_moves_the_unit_within_the_map() {
         let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
         let events = engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -309,6 +342,8 @@ mod tests {
     #[test]
     fn moving_east_off_the_map_wraps_around_to_the_west() {
         let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(0, 1)).geography = Geography::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -324,6 +359,8 @@ mod tests {
     #[test]
     fn moving_west_off_the_map_wraps_around_to_the_east() {
         let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(0, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::W,
@@ -444,6 +481,7 @@ mod tests {
     #[test]
     fn a_unit_can_move_only_once_per_turn() {
         let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -465,6 +503,7 @@ mod tests {
             PlayerId::new(0),
             CityId::new(0),
         );
+        engine.game.map.tile_at_mut(Location::new(0, 0)).geography = Geography::Grassland;
         engine.game.map.tile_at_mut(Location::new(1, 0)).geography = Geography::Forest;
         engine.game.map.tile_at_mut(Location::new(2, 0)).geography = Geography::Forest;
         engine.submit(Command::Move {
@@ -509,6 +548,7 @@ mod tests {
     #[test]
     fn moves_are_restored_at_the_beginning_of_the_owners_turn() {
         let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -527,6 +567,7 @@ mod tests {
             PlayerId::new(1),
             CityId::new(0),
         );
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -545,6 +586,54 @@ mod tests {
             1
         );
         assert_eq!(engine.game.units[0].moves_remaining(), 0);
+    }
+
+    #[test]
+    fn a_land_unit_cannot_enter_water() {
+        let mut engine = test_engine();
+        let events = engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        assert_eq!(events[0].message(), "Unit 0 cannot cross land/sea border");
+        assert_eq!(engine.game.units[0].location, Location::new(1, 1));
+        assert_eq!(engine.game.units[0].moves_remaining(), 1);
+    }
+
+    #[test]
+    fn a_naval_unit_can_enter_water() {
+        let mut engine = test_engine();
+        engine.game.spawn_unit(
+            UnitClass::Trireme,
+            Location::new(1, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let events = engine.submit(Command::Move {
+            unit: UnitId::new(1),
+            direction: Direction::S,
+        });
+        assert_eq!(events[0].message(), "Unit 1 moves S");
+        assert_eq!(engine.game.units[1].location, Location::new(1, 1));
+    }
+
+    #[test]
+    fn a_naval_unit_cannot_enter_land() {
+        let mut engine = test_engine();
+        engine.game.spawn_unit(
+            UnitClass::Trireme,
+            Location::new(2, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        let events = engine.submit(Command::Move {
+            unit: UnitId::new(1),
+            direction: Direction::S,
+        });
+        assert_eq!(events[0].message(), "Unit 1 cannot cross land/sea border");
+        assert_eq!(engine.game.units[1].location, Location::new(2, 0));
+        assert_eq!(engine.game.units[1].moves_remaining(), 3);
     }
 
     #[test]

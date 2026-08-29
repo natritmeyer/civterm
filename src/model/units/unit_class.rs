@@ -46,6 +46,13 @@ impl UnitClass {
         matches!(self, UnitClass::Settler)
     }
 
+    pub fn can_travel_water(&self) -> bool {
+        matches!(
+            self,
+            UnitClass::Trireme | UnitClass::Sail | UnitClass::Frigate
+        )
+    }
+
     pub fn moves(&self) -> u8 {
         match self {
             UnitClass::Settler
@@ -142,6 +149,27 @@ mod tests {
             UnitClass::Frigate,
         ] {
             assert!(!class.can_found_city());
+        }
+    }
+
+    #[test]
+    fn only_naval_units_can_travel_water() {
+        for class in [UnitClass::Trireme, UnitClass::Sail, UnitClass::Frigate] {
+            assert!(class.can_travel_water());
+        }
+        for class in [
+            UnitClass::Settler,
+            UnitClass::Militia,
+            UnitClass::Phalanx,
+            UnitClass::Legion,
+            UnitClass::Cavalry,
+            UnitClass::Chariot,
+            UnitClass::Knight,
+            UnitClass::Catapult,
+            UnitClass::Diplomat,
+            UnitClass::Caravan,
+        ] {
+            assert!(!class.can_travel_water());
         }
     }
 }
