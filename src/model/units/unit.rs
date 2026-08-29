@@ -7,18 +7,24 @@ use crate::model::units::UnitOrder;
 pub struct Unit {
     pub unit_class: UnitClass,
     pub location: Location,
+    owner: usize,
     order: UnitOrder,
     veteran: bool,
 }
 
 impl Unit {
-    pub fn new(unit_class: UnitClass, location: Location) -> Self {
+    pub fn new(unit_class: UnitClass, location: Location, owner: usize) -> Self {
         Unit {
             unit_class,
             location,
+            owner,
             order: UnitOrder::Idle,
             veteran: false,
         }
+    }
+
+    pub fn owner(&self) -> usize {
+        self.owner
     }
 
     pub fn order(&self) -> UnitOrder {
@@ -57,34 +63,35 @@ mod tests {
     #[test]
     fn unit_is_created_with_class_and_location() {
         let location = Location::new(1, 7);
-        let unit = Unit::new(UnitClass::Settler, location);
+        let unit = Unit::new(UnitClass::Settler, location, 0);
         assert_eq!(unit.unit_class, UnitClass::Settler);
         assert_eq!(unit.location, location);
+        assert_eq!(unit.owner(), 0);
     }
 
     #[test]
     fn unit_starts_idle() {
-        let unit = Unit::new(UnitClass::Settler, Location::new(0, 0));
+        let unit = Unit::new(UnitClass::Settler, Location::new(0, 0), 0);
         assert_eq!(unit.order(), UnitOrder::Idle);
     }
 
     #[test]
     fn unit_can_be_fortified() {
-        let mut unit = Unit::new(UnitClass::Legion, Location::new(0, 0));
+        let mut unit = Unit::new(UnitClass::Legion, Location::new(0, 0), 0);
         unit.fortify();
         assert_eq!(unit.order(), UnitOrder::Fortified);
     }
 
     #[test]
     fn unit_can_be_sentried() {
-        let mut unit = Unit::new(UnitClass::Legion, Location::new(0, 0));
+        let mut unit = Unit::new(UnitClass::Legion, Location::new(0, 0), 0);
         unit.sentry();
         assert_eq!(unit.order(), UnitOrder::Sentried);
     }
 
     #[test]
     fn unit_can_work_an_improvement() {
-        let mut unit = Unit::new(UnitClass::Settler, Location::new(0, 0));
+        let mut unit = Unit::new(UnitClass::Settler, Location::new(0, 0), 0);
         unit.work(GeographyImprovement::Road);
         assert_eq!(
             unit.order(),
@@ -99,7 +106,7 @@ mod tests {
 
     #[test]
     fn working_replaces_fortify() {
-        let mut unit = Unit::new(UnitClass::Settler, Location::new(0, 0));
+        let mut unit = Unit::new(UnitClass::Settler, Location::new(0, 0), 0);
         unit.fortify();
         unit.work(GeographyImprovement::Mine);
         assert_eq!(
@@ -110,7 +117,7 @@ mod tests {
 
     #[test]
     fn order_can_be_cancelled() {
-        let mut unit = Unit::new(UnitClass::Settler, Location::new(0, 0));
+        let mut unit = Unit::new(UnitClass::Settler, Location::new(0, 0), 0);
         unit.fortify();
         unit.cancel_order();
         assert_eq!(unit.order(), UnitOrder::Idle);
@@ -118,13 +125,13 @@ mod tests {
 
     #[test]
     fn unit_starts_as_regular() {
-        let unit = Unit::new(UnitClass::Legion, Location::new(0, 0));
+        let unit = Unit::new(UnitClass::Legion, Location::new(0, 0), 0);
         assert!(!unit.is_veteran());
     }
 
     #[test]
     fn unit_is_promoted_to_veteran() {
-        let mut unit = Unit::new(UnitClass::Legion, Location::new(0, 0));
+        let mut unit = Unit::new(UnitClass::Legion, Location::new(0, 0), 0);
         unit.promote();
         assert!(unit.is_veteran());
     }

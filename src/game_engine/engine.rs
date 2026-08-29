@@ -39,7 +39,7 @@ impl Engine {
     fn move_unit(&mut self, unit: usize, direction: Direction) {
         let (width, height) = (self.game.map.width as isize, self.game.map.height as isize);
         let (dx, dy) = direction.delta();
-        match self.acting_units().get_mut(unit) {
+        match self.owned_unit_mut(unit) {
             Some(u) => {
                 let x = u.location.x as isize + dx;
                 let y = u.location.y as isize + dy;
@@ -56,7 +56,7 @@ impl Engine {
     }
 
     fn fortify(&mut self, unit: usize) {
-        match self.acting_units().get_mut(unit) {
+        match self.owned_unit_mut(unit) {
             Some(u) => {
                 u.fortify();
                 self.events
@@ -67,7 +67,7 @@ impl Engine {
     }
 
     fn sentry(&mut self, unit: usize) {
-        match self.acting_units().get_mut(unit) {
+        match self.owned_unit_mut(unit) {
             Some(u) => {
                 u.sentry();
                 self.events
@@ -78,7 +78,7 @@ impl Engine {
     }
 
     fn work(&mut self, unit: usize, improvement: GeographyImprovement) {
-        match self.acting_units().get_mut(unit) {
+        match self.owned_unit_mut(unit) {
             Some(u) => {
                 u.work(improvement);
                 self.events
@@ -89,7 +89,7 @@ impl Engine {
     }
 
     fn cancel_order(&mut self, unit: usize) {
-        match self.acting_units().get_mut(unit) {
+        match self.owned_unit_mut(unit) {
             Some(u) => {
                 u.cancel_order();
                 self.events
@@ -105,8 +105,13 @@ impl Engine {
             .push(Event::new(format!("Turn {turn} begins", turn = self.turn)));
     }
 
-    fn acting_units(&mut self) -> &mut Vec<Unit> {
-        &mut self.game.players[self.current_player_index].units
+    fn owned_unit_mut(&mut self, unit: usize) -> Option<&mut Unit> {
+        let unit_ref = self.game.units.get_mut(unit)?;
+        if unit_ref.owner() == self.current_player_index {
+            Some(unit_ref)
+        } else {
+            None
+        }
     }
 }
 
@@ -125,9 +130,8 @@ impl GameView for Engine {
 
     fn units_at(&self, x: usize, y: usize) -> Vec<&Unit> {
         self.game
-            .players
+            .units
             .iter()
-            .flat_map(|player| player.units.iter())
             .filter(|unit| unit.location.x == x as u16 && unit.location.y == y as u16)
             .collect()
     }
@@ -156,15 +160,16 @@ mod tests {
     use crate::model::units::{UnitClass, UnitOrder};
 
     fn english_player() -> Player {
-        let mut player = Player::new(Civilization::English);
-        player
-            .units
-            .push(Unit::new(UnitClass::Settler, Location::new(1, 1)));
-        player
+        Player::new(Civilization::English)
     }
 
     fn test_engine() -> Engine {
-        Engine::new(3, 2, english_player(), Vec::new())
+        let mut engine = Engine::new(3, 2, english_player(), Vec::new());
+        engine
+            .game
+            .units
+            .push(Unit::new(UnitClass::Settler, Location::new(1, 1), 0));
+        engine
     }
 
     #[test]
@@ -196,10 +201,7 @@ mod tests {
             unit: 0,
             direction: Direction::E,
         });
-        assert_eq!(
-            engine.game.players[0].units[0].location,
-            Location::new(2, 1)
-        );
+        assert_eq!(engine.game.units[0].location, Location::new(2, 1));
         assert_eq!(events[0].message(), "Unit 0 moves E");
     }
 
@@ -211,10 +213,7 @@ mod tests {
             direction: Direction::S,
         });
         assert_eq!(events[0].message(), "Cannot move there");
-        assert_eq!(
-            engine.game.players[0].units[0].location,
-            Location::new(1, 1)
-        );
+        assert_eq!(engine.game.units[0].location, Location::new(1, 1));
     }
 
     #[test]
@@ -228,13 +227,22 @@ mod tests {
     }
 
     #[test]
+    fn commanding_another_players_unit_is_rejected() {
+        let mut engine = test_engine();
+        engine
+            .game
+            .units
+            .push(Unit::new(UnitClass::Legion, Location::new(2, 0), 1));
+        let events = engine.submit(Command::Fortify { unit: 1 });
+        assert_eq!(events[0].message(), "No such unit");
+        assert_eq!(engine.game.units[1].order(), UnitOrder::Idle);
+    }
+
+    #[test]
     fn fortify_command_orders_the_unit_and_reports_an_event() {
         let mut engine = test_engine();
         let events = engine.submit(Command::Fortify { unit: 0 });
-        assert_eq!(
-            engine.game.players[0].units[0].order(),
-            UnitOrder::Fortified
-        );
+        assert_eq!(engine.game.units[0].order(), UnitOrder::Fortified);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].message(), "Unit 0 fortifies");
     }
@@ -243,7 +251,7 @@ mod tests {
     fn sentry_command_orders_the_unit() {
         let mut engine = test_engine();
         engine.submit(Command::Sentry { unit: 0 });
-        assert_eq!(engine.game.players[0].units[0].order(), UnitOrder::Sentried);
+        assert_eq!(engine.game.units[0].order(), UnitOrder::Sentried);
     }
 
     #[test]
@@ -254,7 +262,7 @@ mod tests {
             improvement: GeographyImprovement::Road,
         });
         assert_eq!(
-            engine.game.players[0].units[0].order(),
+            engine.game.units[0].order(),
             UnitOrder::Improving(GeographyImprovement::Road)
         );
     }
@@ -264,7 +272,7 @@ mod tests {
         let mut engine = test_engine();
         engine.submit(Command::Fortify { unit: 0 });
         engine.submit(Command::CancelOrder { unit: 0 });
-        assert_eq!(engine.game.players[0].units[0].order(), UnitOrder::Idle);
+        assert_eq!(engine.game.units[0].order(), UnitOrder::Idle);
     }
 
     #[test]
@@ -272,7 +280,7 @@ mod tests {
         let mut engine = test_engine();
         let events = engine.submit(Command::Fortify { unit: 99 });
         assert_eq!(events[0].message(), "No such unit");
-        assert_eq!(engine.game.players[0].units[0].order(), UnitOrder::Idle);
+        assert_eq!(engine.game.units[0].order(), UnitOrder::Idle);
     }
 
     #[test]

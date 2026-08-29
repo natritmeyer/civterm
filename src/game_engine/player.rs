@@ -1,13 +1,11 @@
 use crate::model::advancements::Advancement;
 use crate::model::cities::City;
 use crate::model::civilizations::Civilization;
-use crate::model::units::Unit;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Player {
     pub civilization: Civilization,
     pub cities: Vec<City>,
-    pub units: Vec<Unit>,
     advancement_in_progress: Option<Advancement>,
     advances_made: Vec<Advancement>,
 }
@@ -17,7 +15,6 @@ impl Player {
         Player {
             civilization,
             cities: Vec::new(),
-            units: Vec::new(),
             advancement_in_progress: None,
             advances_made: Vec::new(),
         }
@@ -43,10 +40,9 @@ mod tests {
     }
 
     #[test]
-    fn player_starts_with_no_cities_or_units() {
+    fn player_starts_with_no_cities() {
         let player = Player::new(Civilization::English);
         assert!(player.cities.is_empty());
-        assert!(player.units.is_empty());
     }
 
     #[test]

@@ -1,9 +1,11 @@
 use crate::game_engine::player::Player;
 use crate::model::cartography::Map;
+use crate::model::units::Unit;
 
 pub struct Game {
     pub map: Map,
     pub players: Vec<Player>,
+    pub units: Vec<Unit>,
 }
 
 impl Game {
@@ -14,6 +16,7 @@ impl Game {
         Game {
             map: Map::new(width, height),
             players,
+            units: Vec::new(),
         }
     }
 }
@@ -51,5 +54,11 @@ mod tests {
         let game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
         assert_eq!(game.map.width, 3);
         assert_eq!(game.map.height, 2);
+    }
+
+    #[test]
+    fn game_starts_with_no_units() {
+        let game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        assert!(game.units.is_empty());
     }
 }
