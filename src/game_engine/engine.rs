@@ -6,7 +6,7 @@ use crate::model::geography::GeographyImprovement;
 use crate::model::units::{Unit, UnitId};
 
 use super::game::Game;
-use crate::game_engine::MoveError;
+use crate::game_engine::{MoveError, SettleError};
 
 pub struct Engine {
     game: Game,
@@ -32,6 +32,7 @@ impl Engine {
             Command::Sentry { unit } => self.sentry(unit),
             Command::Work { unit, improvement } => self.work(unit, improvement),
             Command::CancelOrder { unit } => self.cancel_order(unit),
+            Command::FoundCity { unit, name } => self.found_city(unit, name),
             Command::EndTurn => self.end_turn(),
         }
         std::mem::take(&mut self.events)
@@ -178,6 +179,45 @@ impl Engine {
             self.current_player(),
             self.turn
         )));
+    }
+
+    fn found_city(&mut self, unit: UnitId, name: String) {
+        let (owner, location) = match self.ensure_can_found(unit) {
+            Ok(legal) => legal,
+            Err(SettleError::NoSuchUnit(_)) => {
+                self.events.push(Event::new("No such unit"));
+                return;
+            }
+            Err(error) => {
+                self.events.push(Event::new(error.message()));
+                return;
+            }
+        };
+        self.game.remove_unit(unit);
+        self.game.add_city(owner, name.clone(), location);
+        self.game.reveal_tiles_at(owner, location);
+        self.events
+            .push(Event::new(format!("Unit {} founds {}", unit.index(), name)));
+    }
+
+    fn ensure_can_found(&self, unit: UnitId) -> Result<(PlayerId, Location), SettleError> {
+        let unit = self.owned_unit(unit).ok_or(SettleError::NoSuchUnit(unit))?;
+        if !unit.unit_class.can_found_city() {
+            return Err(SettleError::NotASettler(unit.id()));
+        }
+        let location = unit.location;
+        if self.game.map.tile_at(location).geography.is_water() {
+            return Err(SettleError::LandRequired(unit.id()));
+        }
+        if self
+            .game
+            .cities
+            .iter()
+            .any(|city| city.location == location)
+        {
+            return Err(SettleError::CityAlreadyHere(location));
+        }
+        Ok((unit.owner(), location))
     }
 
     fn advance_to_next_player(&mut self) {
@@ -757,5 +797,111 @@ mod tests {
             unit: UnitId::new(0),
         });
         assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn a_settler_founds_a_city() {
+        let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        let settler = engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let events = engine.submit(Command::FoundCity {
+            unit: settler,
+            name: "London".to_string(),
+        });
+        assert_eq!(events[0].message(), "Unit 0 founds London");
+        assert!(engine.game.units.is_empty());
+        assert_eq!(engine.game.cities.len(), 1);
+        assert_eq!(engine.game.cities[0].name, "London");
+        assert_eq!(engine.game.cities[0].location, Location::new(2, 2));
+        assert_eq!(engine.game.cities[0].owner(), PlayerId::new(0));
+    }
+
+    #[test]
+    fn founding_a_city_reveals_tiles_around_it_for_its_owner() {
+        let mut engine = two_player_engine();
+        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        let settler = engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.submit(Command::FoundCity {
+            unit: settler,
+            name: "London".to_string(),
+        });
+        assert!(engine.game.players[0].explored_at(1, 1));
+        assert!(engine.game.players[0].explored_at(0, 0));
+        assert!(!engine.game.players[1].explored_at(1, 1));
+    }
+
+    #[test]
+    fn non_settlers_cannot_found_cities() {
+        let mut engine = test_engine();
+        engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let events = engine.submit(Command::FoundCity {
+            unit: UnitId::new(1),
+            name: "London".to_string(),
+        });
+        assert_eq!(events[0].message(), "Unit 1 cannot found a city");
+        assert!(engine.game.cities.is_empty());
+        assert!(!engine.game.units.is_empty());
+    }
+
+    #[test]
+    fn cities_cannot_be_founded_on_water() {
+        let mut engine = test_engine();
+        let events = engine.submit(Command::FoundCity {
+            unit: UnitId::new(0),
+            name: "London".to_string(),
+        });
+        assert_eq!(
+            events[0].message(),
+            "Unit 0 must be on land to found a city"
+        );
+        assert!(engine.game.cities.is_empty());
+        assert_eq!(engine.game.units.len(), 1);
+    }
+
+    #[test]
+    fn a_city_cannot_be_founded_where_a_city_already_exists() {
+        let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine
+            .game
+            .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+        let settler = engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let events = engine.submit(Command::FoundCity {
+            unit: settler,
+            name: "York".to_string(),
+        });
+        assert_eq!(events[0].message(), "A city already occupies that tile");
+        assert_eq!(engine.game.cities.len(), 1);
+        assert_eq!(engine.game.units.len(), 1);
+    }
+
+    #[test]
+    fn founding_with_an_unknown_unit_is_rejected() {
+        let mut engine = test_engine();
+        let events = engine.submit(Command::FoundCity {
+            unit: UnitId::new(99),
+            name: "Atlantis".to_string(),
+        });
+        assert_eq!(events[0].message(), "No such unit");
     }
 }

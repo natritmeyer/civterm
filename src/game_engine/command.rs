@@ -21,5 +21,9 @@ pub enum Command {
     CancelOrder {
         unit: UnitId,
     },
+    FoundCity {
+        unit: UnitId,
+        name: String,
+    },
     EndTurn,
 }
