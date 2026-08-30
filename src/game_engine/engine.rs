@@ -2,26 +2,41 @@ use crate::game_engine::{Command, Event, GameView, Player};
 use crate::model::cartography::{Direction, Location, Tile};
 use crate::model::cities::City;
 use crate::model::civilizations::{Civilization, PlayerId};
-use crate::model::geography::GeographyImprovement;
+use crate::model::geography::{Geography, GeographyImprovement};
 use crate::model::units::{Unit, UnitId};
 
 use super::game::Game;
-use crate::game_engine::{MoveError, SettleError};
+use crate::game_engine::{MoveError, Rng, SettleError};
+
+const DEFAULT_SEED: u64 = 0xC0FFEE;
+const HIT_POINTS: u32 = 10;
 
 pub struct Engine {
     game: Game,
     turn: u32,
     current_player_index: PlayerId,
     events: Vec<Event>,
+    rng: Rng,
 }
 
 impl Engine {
     pub fn new(width: usize, height: usize, first: Player, rest: Vec<Player>) -> Self {
+        Engine::with_seed(width, height, first, rest, DEFAULT_SEED)
+    }
+
+    pub fn with_seed(
+        width: usize,
+        height: usize,
+        first: Player,
+        rest: Vec<Player>,
+        seed: u64,
+    ) -> Self {
         Engine {
             game: Game::new(width, height, first, rest),
             turn: 1,
             current_player_index: PlayerId::new(0),
             events: Vec::new(),
+            rng: Rng::new(seed),
         }
     }
 
@@ -51,16 +66,79 @@ impl Engine {
             }
         };
 
+        let owner = self.owned_unit(unit).unwrap().owner();
+        let enemies_present = self
+            .game
+            .units
+            .iter()
+            .any(|u| u.location == destination && u.owner() != owner);
+        if enemies_present {
+            self.resolve_move_combat(unit, destination);
+            return;
+        }
+
         let mut_unit = self.owned_unit_mut(unit).unwrap();
         mut_unit.location = destination;
         mut_unit.spend_moves(cost);
-        let owner = mut_unit.owner();
         self.game.reveal_tiles_at(owner, destination);
         self.events.push(Event::new(format!(
             "Unit {} moves {:?}",
             unit.index(),
             direction
         )));
+    }
+
+    fn resolve_move_combat(&mut self, attacker: UnitId, tile: Location) {
+        let attacker_idx = self
+            .game
+            .units
+            .iter()
+            .position(|u| u.id() == attacker)
+            .expect("the moving unit exists");
+        let defender_idx = self.select_defender(attacker_idx, tile);
+
+        let attacker_id = self.game.units[attacker_idx].id();
+        let defender_id = self.game.units[defender_idx].id();
+        self.events.push(Event::new(format!(
+            "Unit {} attacks Unit {}",
+            attacker_id.index(),
+            defender_id.index()
+        )));
+
+        let attacker_power = self.attacker_power(&self.game.units[attacker_idx]);
+        let defender_power = self.defender_power(&self.game.units[defender_idx]);
+        let attacker_won = self.resolve_combat(attacker_power, defender_power);
+
+        if attacker_won {
+            let owner = self.game.units[attacker_idx].owner();
+            let was_veteran = self.game.units[attacker_idx].is_veteran();
+            self.game.remove_unit(defender_id);
+            let tile_is_clear = !self
+                .game
+                .units
+                .iter()
+                .any(|unit| unit.location == tile && unit.owner() != owner);
+            let attacker_unit = self.owned_unit_mut(attacker_id).unwrap();
+            if tile_is_clear {
+                attacker_unit.location = tile;
+            }
+            attacker_unit.spend_turn();
+            if !was_veteran {
+                attacker_unit.promote();
+            }
+            self.events.push(Event::new(format!(
+                "Unit {} defeats Unit {}",
+                attacker_id.index(),
+                defender_id.index()
+            )));
+        } else {
+            self.game.remove_unit(attacker_id);
+            self.events.push(Event::new(format!(
+                "Unit {} repels Unit {}",
+                defender_id.index(),
+                attacker_id.index()
+            )));
+        }
     }
 
     fn ensure_medium_access(&self, unit: &Unit, destination: Location) -> Result<(), MoveError> {
@@ -218,6 +296,68 @@ impl Engine {
             return Err(SettleError::CityAlreadyHere(location));
         }
         Ok((unit.owner(), location))
+    }
+
+    fn select_defender(&self, attacker_idx: usize, tile: Location) -> usize {
+        let owner = self.game.units[attacker_idx].owner();
+        self.game
+            .units
+            .iter()
+            .enumerate()
+            .filter(|(_, unit)| unit.location == tile && unit.owner() != owner)
+            .max_by(|(_, a), (_, b)| {
+                (self.defender_power(a), a.id().index())
+                    .cmp(&(self.defender_power(b), b.id().index()))
+            })
+            .expect("the target's tile always holds at least the named enemy unit")
+            .0
+    }
+
+    fn attacker_power(&self, unit: &Unit) -> u32 {
+        let base = unit.unit_class.attack() as u32 * 10;
+        if unit.is_veteran() {
+            base * 3 / 2
+        } else {
+            base
+        }
+    }
+
+    fn defender_power(&self, unit: &Unit) -> u32 {
+        let base = unit.unit_class.defence() as u32 * 10;
+        let mut power = base;
+        if self.game.map.tile_at(unit.location).geography == Geography::Mountain {
+            power *= 2;
+        }
+        let is_in_home_city = self
+            .game
+            .cities
+            .iter()
+            .any(|city| city.location == unit.location && city.owner() == unit.owner());
+        if is_in_home_city {
+            power = power * 3 / 2;
+        }
+        if unit.is_veteran() {
+            power = power * 3 / 2;
+        }
+        power
+    }
+
+    fn resolve_combat(&mut self, attacker_power: u32, defender_power: u32) -> bool {
+        let total = attacker_power + defender_power;
+        if total == 0 {
+            return false;
+        }
+        let mut attacker_hp = HIT_POINTS;
+        let mut defender_hp = HIT_POINTS;
+        while attacker_hp > 0 && defender_hp > 0 {
+            let hit = self.rng.in_range(total);
+            if hit < attacker_power {
+                defender_hp -= 1;
+            } else {
+                attacker_hp -= 1;
+            }
+        }
+        defender_hp == 0
     }
 
     fn advance_to_next_player(&mut self) {
@@ -923,5 +1063,285 @@ mod tests {
             name: "Atlantis".to_string(),
         });
         assert_eq!(events[0].message(), "No such unit");
+    }
+
+    fn blank_war_map() -> Engine {
+        Engine::with_seed(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+            11,
+        )
+    }
+
+    #[test]
+    fn attacker_defeats_the_target_and_takes_its_tile() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let militia = engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            format!("Unit {} attacks Unit {}", legion.index(), militia.index())
+        );
+        assert_eq!(
+            events[1].message(),
+            format!("Unit {} defeats Unit {}", legion.index(), militia.index())
+        );
+        assert!(!engine.game.units.iter().any(|unit| unit.id() == militia));
+        let legion_unit = engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == legion)
+            .unwrap();
+        assert_eq!(legion_unit.location, Location::new(3, 2));
+        assert_eq!(legion_unit.moves_remaining(), 0);
+        assert!(legion_unit.is_veteran());
+    }
+
+    #[test]
+    fn the_strongest_defender_on_the_target_tile_absorbs_the_attack() {
+        let mut engine = Engine::with_seed(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+            1,
+        );
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let settler = engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let phalanx = engine.game.spawn_unit(
+            UnitClass::Phalanx,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            format!("Unit {} attacks Unit {}", legion.index(), phalanx.index())
+        );
+        assert_eq!(
+            events[1].message(),
+            format!("Unit {} defeats Unit {}", legion.index(), phalanx.index())
+        );
+        assert!(!engine.game.units.iter().any(|unit| unit.id() == phalanx));
+        assert!(engine.game.units.iter().any(|unit| unit.id() == settler));
+        let legion_unit = engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == legion)
+            .unwrap();
+        assert_eq!(legion_unit.location, Location::new(2, 2));
+        assert!(legion_unit.is_veteran());
+    }
+
+    #[test]
+    fn equal_defence_is_broken_in_favour_of_the_higher_unit_id() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let stronger_id = engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            format!(
+                "Unit {} attacks Unit {}",
+                legion.index(),
+                stronger_id.index()
+            )
+        );
+    }
+
+    #[test]
+    fn a_repelled_attacker_is_removed_but_the_target_survives() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 3)).geography = Geography::Grassland;
+        let militia = engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let knight = engine.game.spawn_unit(
+            UnitClass::Knight,
+            Location::new(2, 3),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let events = engine.submit(Command::Move {
+            unit: militia,
+            direction: Direction::S,
+        });
+        assert_eq!(
+            events[1].message(),
+            format!("Unit {} repels Unit {}", knight.index(), militia.index())
+        );
+        assert!(!engine.game.units.iter().any(|unit| unit.id() == militia));
+        let knight_unit = engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == knight)
+            .unwrap();
+        assert!(!knight_unit.is_veteran());
+    }
+
+    #[test]
+    fn moving_onto_a_friendly_unit_is_a_plain_move() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let phalanx = engine.game.spawn_unit(
+            UnitClass::Phalanx,
+            Location::new(3, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            format!("Unit {} moves E", legion.index())
+        );
+        assert!(engine.game.units.iter().any(|unit| unit.id() == phalanx));
+        let legion_unit = engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == legion)
+            .unwrap();
+        assert_eq!(legion_unit.location, Location::new(3, 2));
+    }
+
+    #[test]
+    fn attacker_power_is_base_attack_scaled_by_ten() {
+        let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert_eq!(engine.attacker_power(&engine.game.units[0]), 10);
+        engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 3),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert_eq!(engine.attacker_power(&engine.game.units[1]), 30);
+    }
+
+    #[test]
+    fn veteran_attacks_at_half_again_power() {
+        let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.units[0].promote();
+        assert_eq!(engine.attacker_power(&engine.game.units[0]), 15);
+    }
+
+    #[test]
+    fn defender_power_applies_terrain_city_and_veteran_bonuses() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 3)).geography = Geography::Mountain;
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(2, 3),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        assert_eq!(engine.defender_power(&engine.game.units[0]), 10);
+        assert_eq!(engine.defender_power(&engine.game.units[1]), 20);
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(2, 3));
+        assert_eq!(engine.defender_power(&engine.game.units[1]), 30);
+        engine.game.units[1].promote();
+        assert_eq!(engine.defender_power(&engine.game.units[1]), 45);
     }
 }
