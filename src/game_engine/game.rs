@@ -33,8 +33,8 @@ impl Game {
         }
     }
 
-    pub fn reveal(&mut self, player: PlayerId, location: Location) {
-        self.players[player.index()].reveal(location, Self::DISCOVERY_RADIUS);
+    pub fn reveal_tiles_at(&mut self, player: PlayerId, location: Location) {
+        self.players[player.index()].reveal_tiles_at(location, Self::DISCOVERY_RADIUS);
     }
 
     pub fn spawn_unit(
@@ -48,7 +48,7 @@ impl Game {
         self.next_unit_id += 1;
         self.units
             .push(Unit::new(unit_class, location, owner, home_city, id));
-        self.reveal(owner, location);
+        self.reveal_tiles_at(owner, location);
         id
     }
 

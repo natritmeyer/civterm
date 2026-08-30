@@ -34,11 +34,11 @@ impl Player {
     }
 
     pub fn explored_at(&self, x: usize, y: usize) -> bool {
-        self.explored.marks(x, y)
+        self.explored.discovered(x, y)
     }
 
-    pub fn reveal(&mut self, origin: Location, radius: u8) {
-        self.explored.reveal(origin, radius);
+    pub fn reveal_tiles_at(&mut self, origin: Location, radius: u8) {
+        self.explored.reveal_tiles_at(origin, radius);
     }
 }
 

@@ -24,11 +24,11 @@ impl Exploration {
         }
     }
 
-    pub fn marks(&self, x: usize, y: usize) -> bool {
+    pub fn discovered(&self, x: usize, y: usize) -> bool {
         self.grid[y][x]
     }
 
-    pub fn reveal(&mut self, origin: Location, radius: u8) {
+    pub fn reveal_tiles_at(&mut self, origin: Location, radius: u8) {
         let radius = radius as isize;
         let x0 = origin.x as isize;
         let y0 = origin.y as isize;
@@ -51,32 +51,32 @@ mod tests {
     #[test]
     fn starts_with_nothing_explored() {
         let exploration = Exploration::new(5, 5);
-        assert!(!exploration.marks(2, 2));
+        assert!(!exploration.discovered(2, 2));
     }
 
     #[test]
     fn reveal_marks_every_tile_within_the_radius() {
         let mut exploration = Exploration::new(5, 5);
-        exploration.reveal(Location::new(2, 2), 1);
+        exploration.reveal_tiles_at(Location::new(2, 2), 1);
         for y in 1..=3 {
             for x in 1..=3 {
-                assert!(exploration.marks(x, y));
+                assert!(exploration.discovered(x, y));
             }
         }
-        assert!(!exploration.marks(0, 0));
-        assert!(!exploration.marks(4, 4));
+        assert!(!exploration.discovered(0, 0));
+        assert!(!exploration.discovered(4, 4));
     }
 
     #[test]
     fn reveal_wraps_around_east_and_west_but_clamps_north_and_south() {
         let mut exploration = Exploration::new(3, 3);
-        exploration.reveal(Location::new(0, 0), 1);
+        exploration.reveal_tiles_at(Location::new(0, 0), 1);
         for y in 0..=1 {
             for x in 0..3 {
-                assert!(exploration.marks(x, y));
+                assert!(exploration.discovered(x, y));
             }
         }
-        assert!(!exploration.marks(0, 2));
-        assert!(!exploration.marks(2, 2));
+        assert!(!exploration.discovered(0, 2));
+        assert!(!exploration.discovered(2, 2));
     }
 }

@@ -54,7 +54,7 @@ impl Engine {
         mut_unit.location = destination;
         mut_unit.spend_moves(cost);
         let owner = mut_unit.owner();
-        self.game.reveal(owner, destination);
+        self.game.reveal_tiles_at(owner, destination);
         self.events.push(Event::new(format!(
             "Unit {} moves {:?}",
             unit.index(),
