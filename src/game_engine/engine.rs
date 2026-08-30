@@ -195,7 +195,7 @@ impl Engine {
         };
         self.game.remove_unit(unit);
         self.game.add_city(owner, name.clone(), location);
-        self.game.reveal_tiles_at(owner, location);
+        self.game.reveal_tiles_surrounding_city_at(owner, location);
         self.events
             .push(Event::new(format!("Unit {} founds {}", unit.index(), name)));
     }
@@ -838,6 +838,26 @@ mod tests {
         assert!(engine.game.players[0].explored_at(1, 1));
         assert!(engine.game.players[0].explored_at(0, 0));
         assert!(!engine.game.players[1].explored_at(1, 1));
+    }
+
+    #[test]
+    fn founding_a_city_reveals_its_footprint_but_not_the_corners() {
+        let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        let settler = engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.submit(Command::FoundCity {
+            unit: settler,
+            name: "London".to_string(),
+        });
+        assert!(engine.game.players[0].explored_at(0, 2));
+        assert!(engine.game.players[0].explored_at(2, 4));
+        assert!(!engine.game.players[0].explored_at(0, 0));
+        assert!(!engine.game.players[0].explored_at(4, 4));
     }
 
     #[test]

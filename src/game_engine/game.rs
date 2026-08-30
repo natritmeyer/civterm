@@ -37,6 +37,10 @@ impl Game {
         self.players[player.index()].reveal_tiles_at(location, Self::DISCOVERY_RADIUS);
     }
 
+    pub fn reveal_tiles_surrounding_city_at(&mut self, player: PlayerId, location: Location) {
+        self.players[player.index()].reveal_tiles_surrounding_city_at(location);
+    }
+
     pub fn spawn_unit(
         &mut self,
         unit_class: UnitClass,

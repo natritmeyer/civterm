@@ -40,6 +40,10 @@ impl Player {
     pub fn reveal_tiles_at(&mut self, origin: Location, radius: u8) {
         self.explored.reveal_tiles_at(origin, radius);
     }
+
+    pub fn reveal_tiles_surrounding_city_at(&mut self, origin: Location) {
+        self.explored.reveal_tiles_surrounding_city_at(origin);
+    }
 }
 
 #[cfg(test)]
