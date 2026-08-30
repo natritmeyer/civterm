@@ -53,6 +53,8 @@ impl Engine {
         let mut_unit = self.owned_unit_mut(unit).unwrap();
         mut_unit.location = destination;
         mut_unit.spend_moves(cost);
+        let owner = mut_unit.owner();
+        self.game.reveal(owner, destination);
         self.events.push(Event::new(format!(
             "Unit {} moves {:?}",
             unit.index(),
@@ -239,6 +241,10 @@ impl GameView for Engine {
             .find(|city| city.location.x == x as u16 && city.location.y == y as u16)
     }
 
+    fn explored(&self, x: usize, y: usize) -> bool {
+        self.game.explored[self.current_player_index.index()].marks(x, y)
+    }
+
     fn current_player(&self) -> Civilization {
         self.game.players[self.current_player_index.index()].civilization
     }
@@ -389,7 +395,7 @@ mod tests {
 
     #[test]
     fn commanding_another_players_unit_is_rejected() {
-        let mut engine = test_engine();
+        let mut engine = two_player_engine();
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(2, 0),
@@ -490,6 +496,44 @@ mod tests {
         });
         assert_eq!(events[0].message(), "No such unit");
         assert_eq!(engine.game.units[0].order(), UnitOrder::Idle);
+    }
+
+    #[test]
+    fn moving_a_unit_reveals_tiles_around_its_new_location() {
+        let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert!(engine.explored(1, 1));
+        assert!(!engine.explored(4, 4));
+        engine.game.map.tile_at_mut(Location::new(1, 0)).geography = Geography::Grassland;
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        assert!(engine.explored(2, 1));
+        assert!(!engine.explored(4, 4));
+    }
+
+    #[test]
+    fn moving_only_reveals_for_the_units_owner() {
+        let mut engine = two_player_engine();
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(1, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.map.tile_at_mut(Location::new(2, 0)).geography = Geography::Grassland;
+        engine.submit(Command::Move {
+            unit: UnitId::new(1),
+            direction: Direction::E,
+        });
+        assert!(engine.game.explored[0].marks(2, 0));
+        assert!(!engine.game.explored[1].marks(2, 0));
     }
 
     #[test]

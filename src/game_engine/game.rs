@@ -1,3 +1,4 @@
+use crate::game_engine::exploration::Exploration;
 use crate::game_engine::player::Player;
 use crate::model::cartography::{Location, Map};
 use crate::model::cities::{City, CityId};
@@ -9,23 +10,34 @@ pub struct Game {
     pub players: Vec<Player>,
     pub units: Vec<Unit>,
     pub cities: Vec<City>,
+    pub explored: Vec<Exploration>,
     next_unit_id: usize,
     next_city_id: usize,
 }
 
 impl Game {
+    pub const DISCOVERY_RADIUS: u8 = 1;
+
     pub fn new(width: usize, height: usize, first: Player, rest: Vec<Player>) -> Self {
         let mut players = Vec::with_capacity(rest.len() + 1);
         players.push(first);
         players.extend(rest);
+        let explored = (0..players.len())
+            .map(|_| Exploration::new(width, height))
+            .collect();
         Game {
             map: Map::new(width, height),
             players,
             units: Vec::new(),
             cities: Vec::new(),
+            explored,
             next_unit_id: 0,
             next_city_id: 0,
         }
+    }
+
+    pub fn reveal(&mut self, player: PlayerId, location: Location) {
+        self.explored[player.index()].reveal(location, Self::DISCOVERY_RADIUS);
     }
 
     pub fn spawn_unit(
@@ -39,6 +51,7 @@ impl Game {
         self.next_unit_id += 1;
         self.units
             .push(Unit::new(unit_class, location, owner, home_city, id));
+        self.reveal(owner, location);
         id
     }
 
@@ -162,5 +175,26 @@ mod tests {
     fn removing_an_unknown_unit_reports_nothing() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
         assert_eq!(game.remove_unit(UnitId::new(5)), None);
+    }
+
+    #[test]
+    fn spawning_a_unit_reveals_the_area_around_it_for_its_owner() {
+        let mut game = Game::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert!(game.explored[0].marks(1, 1));
+        assert!(game.explored[0].marks(2, 2));
+        assert!(game.explored[0].marks(3, 3));
+        assert!(!game.explored[0].marks(4, 4));
+        assert!(!game.explored[1].marks(2, 2));
     }
 }
