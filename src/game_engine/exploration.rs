@@ -1,5 +1,6 @@
 use crate::model::cartography::Location;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Exploration {
     width: usize,
     height: usize,
@@ -7,6 +8,14 @@ pub struct Exploration {
 }
 
 impl Exploration {
+    pub fn empty() -> Self {
+        Exploration {
+            width: 0,
+            height: 0,
+            grid: Vec::new(),
+        }
+    }
+
     pub fn new(width: usize, height: usize) -> Self {
         Exploration {
             width,

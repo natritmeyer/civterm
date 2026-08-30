@@ -1,4 +1,3 @@
-use crate::game_engine::exploration::Exploration;
 use crate::game_engine::player::Player;
 use crate::model::cartography::{Location, Map};
 use crate::model::cities::{City, CityId};
@@ -10,7 +9,6 @@ pub struct Game {
     pub players: Vec<Player>,
     pub units: Vec<Unit>,
     pub cities: Vec<City>,
-    pub explored: Vec<Exploration>,
     next_unit_id: usize,
     next_city_id: usize,
 }
@@ -22,22 +20,21 @@ impl Game {
         let mut players = Vec::with_capacity(rest.len() + 1);
         players.push(first);
         players.extend(rest);
-        let explored = (0..players.len())
-            .map(|_| Exploration::new(width, height))
-            .collect();
+        for player in &mut players {
+            player.seed_exploration(width, height);
+        }
         Game {
             map: Map::new(width, height),
             players,
             units: Vec::new(),
             cities: Vec::new(),
-            explored,
             next_unit_id: 0,
             next_city_id: 0,
         }
     }
 
     pub fn reveal(&mut self, player: PlayerId, location: Location) {
-        self.explored[player.index()].reveal(location, Self::DISCOVERY_RADIUS);
+        self.players[player.index()].reveal(location, Self::DISCOVERY_RADIUS);
     }
 
     pub fn spawn_unit(
@@ -94,19 +91,31 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        assert_eq!(
-            game.players,
-            vec![
-                Player::new(Civilization::English),
-                Player::new(Civilization::Zulu)
-            ]
-        );
+        assert_eq!(game.players.len(), 2);
+        assert_eq!(game.players[0].civilization, Civilization::English);
+        assert_eq!(game.players[1].civilization, Civilization::Zulu);
     }
 
     #[test]
     fn game_can_have_a_single_player() {
         let game = Game::new(3, 2, Player::new(Civilization::Roman), Vec::new());
-        assert_eq!(game.players, vec![Player::new(Civilization::Roman)]);
+        assert_eq!(game.players.len(), 1);
+        assert_eq!(game.players[0].civilization, Civilization::Roman);
+    }
+
+    #[test]
+    fn each_player_is_seeded_with_a_world_sized_exploration() {
+        let game = Game::new(
+            3,
+            2,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        let mut first = Player::new(Civilization::English);
+        first.seed_exploration(3, 2);
+        let mut second = Player::new(Civilization::Zulu);
+        second.seed_exploration(3, 2);
+        assert_eq!(game.players, vec![first, second]);
     }
 
     #[test]
@@ -191,10 +200,10 @@ mod tests {
             PlayerId::new(0),
             CityId::new(0),
         );
-        assert!(game.explored[0].marks(1, 1));
-        assert!(game.explored[0].marks(2, 2));
-        assert!(game.explored[0].marks(3, 3));
-        assert!(!game.explored[0].marks(4, 4));
-        assert!(!game.explored[1].marks(2, 2));
+        assert!(game.players[0].explored_at(1, 1));
+        assert!(game.players[0].explored_at(2, 2));
+        assert!(game.players[0].explored_at(3, 3));
+        assert!(!game.players[0].explored_at(4, 4));
+        assert!(!game.players[1].explored_at(2, 2));
     }
 }

@@ -242,7 +242,7 @@ impl GameView for Engine {
     }
 
     fn explored(&self, x: usize, y: usize) -> bool {
-        self.game.explored[self.current_player_index.index()].marks(x, y)
+        self.game.players[self.current_player_index.index()].explored_at(x, y)
     }
 
     fn current_player(&self) -> Civilization {
@@ -532,8 +532,8 @@ mod tests {
             unit: UnitId::new(1),
             direction: Direction::E,
         });
-        assert!(engine.game.explored[0].marks(2, 0));
-        assert!(!engine.game.explored[1].marks(2, 0));
+        assert!(engine.game.players[0].explored_at(2, 0));
+        assert!(!engine.game.players[1].explored_at(2, 0));
     }
 
     #[test]
