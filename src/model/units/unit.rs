@@ -60,6 +60,10 @@ impl Unit {
         self.moves_remaining = self.moves_remaining.saturating_sub(amount);
     }
 
+    pub fn spend_turn(&mut self) {
+        self.moves_remaining = 0;
+    }
+
     pub fn restore_moves(&mut self) {
         self.moves_remaining = self.unit_class.moves();
     }
@@ -241,6 +245,19 @@ mod tests {
         assert_eq!(unit.moves_remaining(), 0);
         unit.restore_moves();
         assert_eq!(unit.moves_remaining(), 3);
+    }
+
+    #[test]
+    fn spending_a_turn_uses_up_all_moves() {
+        let mut unit = Unit::new(
+            UnitClass::Chariot,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
+        unit.spend_turn();
+        assert_eq!(unit.moves_remaining(), 0);
     }
 
     #[test]

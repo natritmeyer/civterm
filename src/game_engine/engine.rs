@@ -118,6 +118,7 @@ impl Engine {
         match self.owned_unit_mut(unit) {
             Some(u) => {
                 u.fortify();
+                u.spend_turn();
                 self.events
                     .push(Event::new(format!("Unit {} fortifies", unit.index())));
             }
@@ -129,6 +130,7 @@ impl Engine {
         match self.owned_unit_mut(unit) {
             Some(u) => {
                 u.sentry();
+                u.spend_turn();
                 self.events
                     .push(Event::new(format!("Unit {} stands sentry", unit.index())));
             }
@@ -140,6 +142,7 @@ impl Engine {
         match self.owned_unit_mut(unit) {
             Some(u) => {
                 u.work(improvement);
+                u.spend_turn();
                 self.events.push(Event::new(format!(
                     "Unit {} begins {:?}",
                     unit.index(),
@@ -154,6 +157,7 @@ impl Engine {
         match self.owned_unit_mut(unit) {
             Some(u) => {
                 u.cancel_order();
+                u.spend_turn();
                 self.events
                     .push(Event::new(format!("Unit {} order cancelled", unit.index())));
             }
@@ -449,6 +453,33 @@ mod tests {
             unit: UnitId::new(0),
         });
         assert_eq!(engine.game.units[0].order(), UnitOrder::Idle);
+    }
+
+    #[test]
+    fn an_order_consumes_the_units_turn() {
+        let mut engine = test_engine();
+        let cavalry = engine.game.spawn_unit(
+            UnitClass::Cavalry,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert_eq!(engine.game.units[1].moves_remaining(), 3);
+        engine.submit(Command::Sentry { unit: cavalry });
+        assert_eq!(engine.game.units[1].moves_remaining(), 0);
+    }
+
+    #[test]
+    fn cancelling_an_order_also_consumes_the_turn() {
+        let mut engine = test_engine();
+        engine.submit(Command::Fortify {
+            unit: UnitId::new(0),
+        });
+        engine.submit(Command::CancelOrder {
+            unit: UnitId::new(0),
+        });
+        assert_eq!(engine.game.units[0].order(), UnitOrder::Idle);
+        assert_eq!(engine.game.units[0].moves_remaining(), 0);
     }
 
     #[test]
