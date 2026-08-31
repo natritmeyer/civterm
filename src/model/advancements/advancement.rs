@@ -1,4 +1,6 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+use strum::EnumIter;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 pub enum Advancement {
     Alphabet,
     Astronomy,
@@ -75,6 +77,47 @@ impl Advancement {
             Advancement::University => &[Advancement::Mathematics, Advancement::Philosophy],
             Advancement::Wheel => &[],
             Advancement::Writing => &[Advancement::Alphabet],
+        }
+    }
+
+    /// The number of beakers required to discover this advancement.
+    pub fn cost(&self) -> u32 {
+        match self {
+            Advancement::Alphabet => 40,
+            Advancement::Astronomy => 180,
+            Advancement::Banking => 160,
+            Advancement::BridgeBuilding => 150,
+            Advancement::BronzeWorking => 40,
+            Advancement::CeremonialBurial => 40,
+            Advancement::Chemistry => 300,
+            Advancement::Chivalry => 200,
+            Advancement::CodeOfLaws => 80,
+            Advancement::Construction => 100,
+            Advancement::Currency => 70,
+            Advancement::Engineering => 140,
+            Advancement::Feudalism => 100,
+            Advancement::HorsebackRiding => 40,
+            Advancement::Invention => 320,
+            Advancement::IronWorking => 70,
+            Advancement::Literacy => 180,
+            Advancement::Magnetism => 360,
+            Advancement::MapMaking => 80,
+            Advancement::Masonry => 40,
+            Advancement::Mathematics => 80,
+            Advancement::Medicine => 320,
+            Advancement::Mysticism => 70,
+            Advancement::Navigation => 300,
+            Advancement::Philosophy => 160,
+            Advancement::Physics => 260,
+            Advancement::Pottery => 40,
+            Advancement::Recycling => 400,
+            Advancement::Refining => 360,
+            Advancement::Religion => 300,
+            Advancement::TheoryOfGravity => 400,
+            Advancement::Trade => 160,
+            Advancement::University => 240,
+            Advancement::Wheel => 40,
+            Advancement::Writing => 110,
         }
     }
 }

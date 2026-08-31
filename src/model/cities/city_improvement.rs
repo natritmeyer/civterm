@@ -1,6 +1,7 @@
 use crate::model::advancements::Advancement;
+use strum::EnumIter;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 pub enum CityImprovement {
     Aqueduct,
     Bank,

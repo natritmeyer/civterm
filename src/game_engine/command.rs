@@ -1,3 +1,4 @@
+use crate::model::advancements::Advancement;
 use crate::model::cartography::Direction;
 use crate::model::cities::{CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
@@ -36,6 +37,9 @@ pub enum Command {
     },
     MakePeace {
         opponent: PlayerId,
+    },
+    SetResearchTarget {
+        advancement: Advancement,
     },
     EndTurn,
 }

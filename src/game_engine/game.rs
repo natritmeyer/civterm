@@ -1,4 +1,5 @@
 use crate::game_engine::player::Player;
+use crate::model::advancements::Advancement;
 use crate::model::cartography::{Location, Map};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
@@ -128,6 +129,49 @@ impl Game {
             resources += tile.yields_resources() as u32;
         }
         (food, resources)
+    }
+
+    /// Total beakers produced by all of a player's cities this turn.
+    pub fn research_income(&self, owner: PlayerId) -> u32 {
+        self.cities
+            .iter()
+            .filter(|city| city.owner() == owner)
+            .map(|city| city.research())
+            .sum()
+    }
+
+    /// Whether a player may begin researching `advancement`: it must not be
+    /// already discovered and all of its prerequisites must have been.
+    pub fn can_research(&self, owner: PlayerId, advancement: Advancement) -> bool {
+        let player = &self.players[owner.index()];
+        if player.has_advancement(advancement) {
+            return false;
+        }
+        advancement
+            .prerequisites()
+            .iter()
+            .all(|prereq| player.has_advancement(*prereq))
+    }
+
+    pub(crate) fn begin_research(&mut self, owner: PlayerId) {
+        self.players[owner.index()].begin_research();
+    }
+
+    pub fn advancement_in_progress(&self, owner: PlayerId) -> Option<Advancement> {
+        self.players[owner.index()].advancement_in_progress()
+    }
+
+    pub fn research_progress(&self, owner: PlayerId) -> u32 {
+        self.players[owner.index()].research_progress()
+    }
+
+    pub(crate) fn set_research_target(&mut self, owner: PlayerId, advancement: Advancement) {
+        self.players[owner.index()].set_research_target(advancement);
+    }
+
+    pub(crate) fn advance_research(&mut self, owner: PlayerId) -> Option<Advancement> {
+        let beakers = self.research_income(owner);
+        self.players[owner.index()].advance_research(beakers)
     }
 
     /// The Chebyshev radius-2 footprint around a city (the 21 fog-reveal tiles),

@@ -1,4 +1,5 @@
 use crate::game_engine::{Command, Event, GameView, Player};
+use crate::model::advancements::Advancement;
 use crate::model::cartography::{Direction, Location, Tile};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
@@ -51,6 +52,7 @@ impl Engine {
             Command::SetProductionTarget { city, target } => self.set_production(city, target),
             Command::DeclareWar { opponent } => self.declare_war(opponent),
             Command::MakePeace { opponent } => self.make_peace(opponent),
+            Command::SetResearchTarget { advancement } => self.set_research_target(advancement),
             Command::EndTurn => self.end_turn(),
         }
         std::mem::take(&mut self.events)
@@ -400,12 +402,44 @@ impl Engine {
         self.game.remove_unit(unit);
         let city_id = self.game.add_city(owner, name.clone(), location);
         self.game.auto_assign_work(city_id);
+        let first_city = self
+            .game
+            .cities
+            .iter()
+            .filter(|city| city.owner() == owner)
+            .count()
+            == 1;
+        if first_city {
+            self.game.begin_research(owner);
+            let target = self.game.advancement_in_progress(owner).unwrap();
+            self.events.push(Event::new(format!(
+                "{:?} begin researching {:?}",
+                self.game.players[owner.index()].civilization,
+                target
+            )));
+        }
         self.game.reveal_tiles_surrounding_city_at(owner, location);
         self.events
             .push(Event::new(format!("Unit {} founds {}", unit.index(), name)));
     }
 
     fn set_production(&mut self, city: CityId, target: ProductionTarget) {
+        if !self
+            .game
+            .players
+            .get(self.current_player_index.index())
+            .is_some_and(|p| p.can_build(target))
+        {
+            let reason = match target.required_advancement() {
+                Some(adv) => format!("requires {:?}", adv),
+                None => "not available".to_string(),
+            };
+            self.events.push(Event::new(format!(
+                "Cannot produce {:?}: {}",
+                target, reason
+            )));
+            return;
+        }
         match self
             .game
             .cities
@@ -476,6 +510,41 @@ impl Engine {
                     .push(Event::new(format!("{} is starving", city_name)));
             }
         }
+    }
+
+    /// Aggregate one turn of civilisations' city research into advancement
+    /// progress at the player level.
+    fn process_research(&mut self, owner: PlayerId) {
+        if let Some(advancement) = self.game.advance_research(owner) {
+            self.events.push(Event::new(format!(
+                "{:?} discover {:?}",
+                self.game.players[owner.index()].civilization,
+                advancement
+            )));
+        }
+    }
+
+    fn set_research_target(&mut self, advancement: Advancement) {
+        let owner = self.current_player_index;
+        if !self.game.can_research(owner, advancement) {
+            let player = &self.game.players[owner.index()];
+            let reason = if player.has_advancement(advancement) {
+                "already discovered"
+            } else {
+                "prerequisites not met"
+            };
+            self.events.push(Event::new(format!(
+                "Cannot research {:?}: {}",
+                advancement, reason
+            )));
+            return;
+        }
+        self.game.set_research_target(owner, advancement);
+        self.events.push(Event::new(format!(
+            "{:?} begin researching {:?}",
+            self.game.players[owner.index()].civilization,
+            advancement
+        )));
     }
 
     fn ensure_can_found(&self, unit: UnitId) -> Result<(PlayerId, Location), SettleError> {
@@ -579,6 +648,7 @@ impl Engine {
             unit.restore_moves();
         }
         self.process_cities(self.current_player_index);
+        self.process_research(self.current_player_index);
     }
 
     fn owned_unit(&self, unit: UnitId) -> Option<&Unit> {
@@ -1176,12 +1246,20 @@ mod tests {
             unit: settler,
             name: "London".to_string(),
         });
-        assert_eq!(events[0].message(), "Unit 0 founds London");
+        assert_eq!(
+            events[0].message(),
+            "English begin researching Construction"
+        );
+        assert_eq!(events[1].message(), "Unit 0 founds London");
         assert!(engine.game.units.is_empty());
         assert_eq!(engine.game.cities.len(), 1);
         assert_eq!(engine.game.cities[0].name, "London");
         assert_eq!(engine.game.cities[0].location, Location::new(2, 2));
         assert_eq!(engine.game.cities[0].owner(), PlayerId::new(0));
+        assert_eq!(
+            engine.game.advancement_in_progress(PlayerId::new(0)),
+            Some(Advancement::Construction)
+        );
     }
 
     #[test]
@@ -2016,6 +2094,110 @@ mod tests {
         );
     }
 
+    fn research_engine() -> Engine {
+        let mut engine = Engine::new(3, 2, Player::new(Civilization::English), Vec::new());
+        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.submit(Command::FoundCity {
+            unit: UnitId::new(0),
+            name: "London".to_string(),
+        });
+        engine
+    }
+
+    #[test]
+    fn founding_a_city_begins_research_on_construction() {
+        let engine = research_engine();
+        assert_eq!(
+            engine.game.advancement_in_progress(PlayerId::new(0)),
+            Some(Advancement::Construction)
+        );
+        assert_eq!(engine.game.research_progress(PlayerId::new(0)), 0);
+    }
+
+    #[test]
+    fn set_research_target_changes_the_research_target() {
+        let mut engine = research_engine();
+        let events = engine.submit(Command::SetResearchTarget {
+            advancement: Advancement::Wheel,
+        });
+        assert_eq!(
+            engine.game.advancement_in_progress(PlayerId::new(0)),
+            Some(Advancement::Wheel)
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "English begin researching Wheel")
+        );
+    }
+
+    #[test]
+    fn set_research_target_rejects_unmet_prerequisites() {
+        let mut engine = research_engine();
+        let events = engine.submit(Command::SetResearchTarget {
+            advancement: Advancement::Astronomy,
+        });
+        assert_eq!(
+            engine.game.advancement_in_progress(PlayerId::new(0)),
+            Some(Advancement::Construction)
+        );
+        assert!(
+            !engine
+                .game
+                .can_research(PlayerId::new(0), Advancement::Astronomy)
+        );
+        let error = events
+            .iter()
+            .find(|e| e.message() == "Cannot research Astronomy: prerequisites not met");
+        assert!(error.is_some());
+    }
+
+    #[test]
+    fn set_research_target_rejects_an_already_discovered_advancement() {
+        let mut engine = research_engine();
+        // Discover Construction by accumulating its cost.
+        for _ in 0..30 {
+            engine.submit(Command::EndTurn);
+        }
+        assert!(engine.game.players[0].has_advancement(Advancement::Construction));
+        let events = engine.submit(Command::SetResearchTarget {
+            advancement: Advancement::Construction,
+        });
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "Cannot research Construction: already discovered")
+        );
+    }
+
+    #[test]
+    fn research_accumulates_and_discovers_the_advance_ment() {
+        let mut engine = research_engine();
+        engine.submit(Command::SetResearchTarget {
+            advancement: Advancement::Wheel,
+        });
+        // Wheel costs 40; the city produces 4 beakers per turn.
+        let mut discovered = false;
+        for _ in 0..20 {
+            let events = engine.submit(Command::EndTurn);
+            if events
+                .iter()
+                .any(|e| e.message() == "English discover Wheel")
+            {
+                discovered = true;
+            }
+        }
+        assert!(discovered, "expected the research discovery event");
+        assert!(engine.game.players[0].has_advancement(Advancement::Wheel));
+        assert_eq!(engine.game.advancement_in_progress(PlayerId::new(0)), None);
+    }
+
     #[test]
     fn a_city_starves_without_food() {
         let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
@@ -2059,6 +2241,56 @@ mod tests {
             target: ProductionTarget::Unit(UnitClass::Militia),
         });
         assert_eq!(events[0].message(), "No such city");
+    }
+
+    #[test]
+    fn setting_production_rejects_a_unit_requiring_an_undiscovered_advancement() {
+        let mut engine = research_engine();
+        let events = engine.submit(Command::SetProductionTarget {
+            city: CityId::new(0),
+            target: ProductionTarget::Unit(UnitClass::Knight),
+        });
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "Cannot produce Unit(Knight): requires Chivalry")
+        );
+    }
+
+    #[test]
+    fn setting_production_allows_gated_units_once_the_advancement_is_discovered() {
+        let mut engine = research_engine();
+        // Wheel costs 40; the city produces 4 beakers per turn.
+        engine.submit(Command::SetResearchTarget {
+            advancement: Advancement::Wheel,
+        });
+        for _ in 0..20 {
+            engine.submit(Command::EndTurn);
+        }
+        assert!(engine.game.players[0].has_advancement(Advancement::Wheel));
+        let events = engine.submit(Command::SetProductionTarget {
+            city: CityId::new(0),
+            target: ProductionTarget::Unit(UnitClass::Chariot),
+        });
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "London begins producing Unit(Chariot)")
+        );
+    }
+
+    #[test]
+    fn setting_production_allows_units_with_no_required_advancement() {
+        let mut engine = research_engine();
+        let events = engine.submit(Command::SetProductionTarget {
+            city: CityId::new(0),
+            target: ProductionTarget::Unit(UnitClass::Militia),
+        });
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "London begins producing Unit(Militia)")
+        );
     }
 
     #[test]

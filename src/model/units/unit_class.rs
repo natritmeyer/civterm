@@ -1,4 +1,7 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+use crate::model::advancements::Advancement;
+use strum::EnumIter;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 pub enum UnitClass {
     Settler,
     Militia,
@@ -81,6 +84,22 @@ impl UnitClass {
             UnitClass::Settler => 60,
         }
     }
+
+    pub fn required_advancement(&self) -> Option<Advancement> {
+        match self {
+            UnitClass::Settler | UnitClass::Militia => None,
+            UnitClass::Phalanx => Some(Advancement::BronzeWorking),
+            UnitClass::Legion => Some(Advancement::IronWorking),
+            UnitClass::Chariot | UnitClass::Catapult => Some(Advancement::Wheel),
+            UnitClass::Cavalry => Some(Advancement::HorsebackRiding),
+            UnitClass::Knight => Some(Advancement::Chivalry),
+            UnitClass::Diplomat => Some(Advancement::Writing),
+            UnitClass::Caravan => Some(Advancement::Trade),
+            UnitClass::Trireme => Some(Advancement::BronzeWorking),
+            UnitClass::Sail => Some(Advancement::MapMaking),
+            UnitClass::Frigate => Some(Advancement::Magnetism),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -161,6 +180,56 @@ mod tests {
         assert_eq!(UnitClass::Trireme.resource_cost(), 30);
         assert_eq!(UnitClass::Frigate.resource_cost(), 40);
         assert_eq!(UnitClass::Settler.resource_cost(), 60);
+    }
+
+    #[test]
+    fn unit_advancement_requirements() {
+        assert_eq!(UnitClass::Settler.required_advancement(), None);
+        assert_eq!(UnitClass::Militia.required_advancement(), None);
+        assert_eq!(
+            UnitClass::Trireme.required_advancement(),
+            Some(Advancement::BronzeWorking)
+        );
+        assert_eq!(
+            UnitClass::Phalanx.required_advancement(),
+            Some(Advancement::BronzeWorking)
+        );
+        assert_eq!(
+            UnitClass::Legion.required_advancement(),
+            Some(Advancement::IronWorking)
+        );
+        assert_eq!(
+            UnitClass::Chariot.required_advancement(),
+            Some(Advancement::Wheel)
+        );
+        assert_eq!(
+            UnitClass::Catapult.required_advancement(),
+            Some(Advancement::Wheel)
+        );
+        assert_eq!(
+            UnitClass::Cavalry.required_advancement(),
+            Some(Advancement::HorsebackRiding)
+        );
+        assert_eq!(
+            UnitClass::Knight.required_advancement(),
+            Some(Advancement::Chivalry)
+        );
+        assert_eq!(
+            UnitClass::Diplomat.required_advancement(),
+            Some(Advancement::Writing)
+        );
+        assert_eq!(
+            UnitClass::Caravan.required_advancement(),
+            Some(Advancement::Trade)
+        );
+        assert_eq!(
+            UnitClass::Sail.required_advancement(),
+            Some(Advancement::MapMaking)
+        );
+        assert_eq!(
+            UnitClass::Frigate.required_advancement(),
+            Some(Advancement::Magnetism)
+        );
     }
 
     #[test]
