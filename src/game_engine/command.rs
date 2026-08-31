@@ -1,4 +1,5 @@
 use crate::model::cartography::Direction;
+use crate::model::civilizations::PlayerId;
 use crate::model::geography::GeographyImprovement;
 use crate::model::units::UnitId;
 
@@ -24,6 +25,12 @@ pub enum Command {
     FoundCity {
         unit: UnitId,
         name: String,
+    },
+    DeclareWar {
+        opponent: PlayerId,
+    },
+    MakePeace {
+        opponent: PlayerId,
     },
     EndTurn,
 }

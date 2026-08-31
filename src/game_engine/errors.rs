@@ -8,6 +8,7 @@ pub enum MoveError {
     CannotMoveThere,
     TerrainTooDifficult(UnitId),
     CannotCrossLandSeaBorder(UnitId),
+    PeacefulTileOccupied(UnitId),
 }
 
 impl MoveError {
@@ -20,6 +21,10 @@ impl MoveError {
             MoveError::CannotCrossLandSeaBorder(unit) => {
                 format!("Unit {} cannot cross land/sea border", unit.index())
             }
+            MoveError::PeacefulTileOccupied(unit) => format!(
+                "Unit {} cannot move onto a tile occupied by a civilization at peace",
+                unit.index()
+            ),
         }
     }
 }

@@ -33,6 +33,36 @@ impl Game {
         }
     }
 
+    pub fn at_war(&self, a: PlayerId, b: PlayerId) -> bool {
+        self.players[a.index()].at_war_with.contains(&b)
+            || self.players[b.index()].at_war_with.contains(&a)
+    }
+
+    pub fn at_peace(&self, a: PlayerId, b: PlayerId) -> bool {
+        self.players[a.index()].at_peace_with.contains(&b)
+            || self.players[b.index()].at_peace_with.contains(&a)
+    }
+
+    pub fn met(&self, a: PlayerId, b: PlayerId) -> bool {
+        self.at_war(a, b) || self.at_peace(a, b)
+    }
+
+    pub fn declare_war(&mut self, a: PlayerId, b: PlayerId) {
+        if a == b {
+            return;
+        }
+        self.players[a.index()].enter_war_with(b);
+        self.players[b.index()].enter_war_with(a);
+    }
+
+    pub fn make_peace(&mut self, a: PlayerId, b: PlayerId) {
+        if a == b {
+            return;
+        }
+        self.players[a.index()].enter_peace_with(b);
+        self.players[b.index()].enter_peace_with(a);
+    }
+
     pub fn reveal_tiles_at(&mut self, player: PlayerId, location: Location) {
         self.players[player.index()].reveal_tiles_at(location, Self::DISCOVERY_RADIUS);
     }
@@ -209,5 +239,72 @@ mod tests {
         assert!(game.players[0].explored_at(3, 3));
         assert!(!game.players[0].explored_at(4, 4));
         assert!(!game.players[1].explored_at(2, 2));
+    }
+
+    #[test]
+    fn players_start_alone_and_unmet() {
+        let game = Game::new(
+            3,
+            2,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        assert!(!game.at_war(PlayerId::new(0), PlayerId::new(1)));
+        assert!(!game.at_peace(PlayerId::new(0), PlayerId::new(1)));
+        assert!(!game.at_war(PlayerId::new(0), PlayerId::new(0)));
+        assert!(game.players[0].at_war_with().is_empty());
+        assert!(game.players[0].at_peace_with().is_empty());
+    }
+
+    #[test]
+    fn declaring_war_registers_on_both_players() {
+        let mut game = Game::new(
+            3,
+            2,
+            Player::new(Civilization::English),
+            vec![
+                Player::new(Civilization::Zulu),
+                Player::new(Civilization::Roman),
+            ],
+        );
+        game.declare_war(PlayerId::new(0), PlayerId::new(2));
+        assert!(game.at_war(PlayerId::new(0), PlayerId::new(2)));
+        assert!(game.at_war(PlayerId::new(2), PlayerId::new(0)));
+        assert!(game.players[0].at_war_with().contains(&PlayerId::new(2)));
+        assert!(game.players[2].at_war_with().contains(&PlayerId::new(0)));
+        assert!(!game.at_war(PlayerId::new(0), PlayerId::new(1)));
+    }
+
+    #[test]
+    fn declaring_war_after_meeting_in_peace_updates_both_lists() {
+        let mut game = Game::new(
+            3,
+            2,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        game.make_peace(PlayerId::new(0), PlayerId::new(1));
+        assert!(game.at_peace(PlayerId::new(0), PlayerId::new(1)));
+        assert!(game.players[0].at_peace_with().contains(&PlayerId::new(1)));
+        assert!(game.players[1].at_peace_with().contains(&PlayerId::new(0)));
+        game.declare_war(PlayerId::new(0), PlayerId::new(1));
+        assert!(game.at_war(PlayerId::new(0), PlayerId::new(1)));
+        assert!(!game.at_peace(PlayerId::new(0), PlayerId::new(1)));
+        assert!(game.players[0].at_peace_with().is_empty());
+        assert!(game.players[1].at_peace_with().is_empty());
+    }
+
+    #[test]
+    fn making_peace_after_a_war_ends_it() {
+        let mut game = Game::new(
+            3,
+            2,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        game.declare_war(PlayerId::new(0), PlayerId::new(1));
+        game.make_peace(PlayerId::new(0), PlayerId::new(1));
+        assert!(!game.at_war(PlayerId::new(0), PlayerId::new(1)));
+        assert!(game.at_peace(PlayerId::new(0), PlayerId::new(1)));
     }
 }

@@ -48,6 +48,8 @@ impl Engine {
             Command::Work { unit, improvement } => self.work(unit, improvement),
             Command::CancelOrder { unit } => self.cancel_order(unit),
             Command::FoundCity { unit, name } => self.found_city(unit, name),
+            Command::DeclareWar { opponent } => self.declare_war(opponent),
+            Command::MakePeace { opponent } => self.make_peace(opponent),
             Command::EndTurn => self.end_turn(),
         }
         std::mem::take(&mut self.events)
@@ -67,11 +69,12 @@ impl Engine {
         };
 
         let owner = self.owned_unit(unit).unwrap().owner();
+        self.meet_contacts_within(destination, owner);
         let enemies_present = self
             .game
             .units
             .iter()
-            .any(|u| u.location == destination && u.owner() != owner);
+            .any(|u| u.location == destination && self.game.at_war(owner, u.owner()));
         if enemies_present {
             self.resolve_move_combat(unit, destination);
             return;
@@ -117,7 +120,7 @@ impl Engine {
                 .game
                 .units
                 .iter()
-                .any(|unit| unit.location == tile && unit.owner() != owner);
+                .any(|unit| unit.location == tile && self.game.at_war(owner, unit.owner()));
             let attacker_unit = self.owned_unit_mut(attacker_id).unwrap();
             if tile_is_clear {
                 attacker_unit.location = tile;
@@ -159,8 +162,31 @@ impl Engine {
         self.ensure_moves_remaining(unit)?;
         let destination = self.ensure_destination_on_map(unit.location, direction)?;
         self.ensure_medium_access(unit, destination)?;
+        self.ensure_peaceful_passage(unit, destination)?;
         let cost = self.ensure_affordable(unit, destination)?;
         Ok((destination, cost))
+    }
+
+    fn ensure_peaceful_passage(&self, unit: &Unit, destination: Location) -> Result<(), MoveError> {
+        let owner = unit.owner();
+        let mut has_foreign_occupant = false;
+        let mut has_enemy_occupant = false;
+        for occupied in self
+            .game
+            .units
+            .iter()
+            .filter(|u| u.location == destination && u.owner() != owner)
+        {
+            has_foreign_occupant = true;
+            if self.game.at_war(owner, occupied.owner()) {
+                has_enemy_occupant = true;
+            }
+        }
+        if has_foreign_occupant && !has_enemy_occupant {
+            Err(MoveError::PeacefulTileOccupied(unit.id()))
+        } else {
+            Ok(())
+        }
     }
 
     fn ensure_unit_owned(&self, unit: UnitId) -> Result<&Unit, MoveError> {
@@ -259,6 +285,89 @@ impl Engine {
         )));
     }
 
+    fn declare_war(&mut self, opponent: PlayerId) {
+        if opponent == self.current_player_index {
+            self.events
+                .push(Event::new("Cannot declare war on yourself"));
+            return;
+        }
+        if opponent.index() >= self.game.players.len() {
+            self.events.push(Event::new("No such player"));
+            return;
+        }
+        if self.game.at_war(self.current_player_index, opponent) {
+            self.events.push(Event::new("Already at war"));
+            return;
+        }
+        self.game.declare_war(self.current_player_index, opponent);
+        self.events.push(Event::new(format!(
+            "{:?} declares war on {:?}",
+            self.game.players[self.current_player_index.index()].civilization,
+            self.game.players[opponent.index()].civilization
+        )));
+    }
+
+    fn make_peace(&mut self, opponent: PlayerId) {
+        if opponent == self.current_player_index {
+            self.events
+                .push(Event::new("Cannot make peace with yourself"));
+            return;
+        }
+        if opponent.index() >= self.game.players.len() {
+            self.events.push(Event::new("No such player"));
+            return;
+        }
+        if self.game.at_peace(self.current_player_index, opponent) {
+            self.events.push(Event::new("Already at peace"));
+            return;
+        }
+        self.game.make_peace(self.current_player_index, opponent);
+        self.events.push(Event::new(format!(
+            "{:?} makes peace with {:?}",
+            self.game.players[self.current_player_index.index()].civilization,
+            self.game.players[opponent.index()].civilization
+        )));
+    }
+
+    fn meet_contacts_within(&mut self, location: Location, owner: PlayerId) {
+        let width = self.game.map.width;
+        let height = self.game.map.height;
+        let mut contacts: Vec<PlayerId> = Vec::new();
+        for dy in -1..=1 {
+            let y = location.y as i32 + dy;
+            if y < 0 || y >= height as i32 {
+                continue;
+            }
+            for dx in -1..=1 {
+                let x = (location.x as i32 + dx).rem_euclid(width as i32) as u16;
+                let tile = Location::new(x, y as u16);
+                for unit in &self.game.units {
+                    if unit.location == tile && unit.owner() != owner {
+                        contacts.push(unit.owner());
+                    }
+                }
+                for city in &self.game.cities {
+                    if city.location == tile && city.owner() != owner {
+                        contacts.push(city.owner());
+                    }
+                }
+            }
+        }
+        contacts.sort_unstable();
+        contacts.dedup();
+        for other in contacts {
+            if self.game.met(owner, other) {
+                continue;
+            }
+            self.game.make_peace(owner, other);
+            self.events.push(Event::new(format!(
+                "{:?} and {:?} meet for the first time",
+                self.game.players[owner.index()].civilization,
+                self.game.players[other.index()].civilization
+            )));
+        }
+    }
+
     fn found_city(&mut self, unit: UnitId, name: String) {
         let (owner, location) = match self.ensure_can_found(unit) {
             Ok(legal) => legal,
@@ -304,7 +413,11 @@ impl Engine {
             .units
             .iter()
             .enumerate()
-            .filter(|(_, unit)| unit.location == tile && unit.owner() != owner)
+            .filter(|(_, unit)| {
+                unit.location == tile
+                    && unit.owner() != owner
+                    && self.game.at_war(owner, unit.owner())
+            })
             .max_by(|(_, a), (_, b)| {
                 (self.defender_power(a), a.id().index())
                     .cmp(&(self.defender_power(b), b.id().index()))
@@ -1066,13 +1179,15 @@ mod tests {
     }
 
     fn blank_war_map() -> Engine {
-        Engine::with_seed(
+        let mut engine = Engine::with_seed(
             5,
             5,
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
             11,
-        )
+        );
+        engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+        engine
     }
 
     #[test]
@@ -1125,6 +1240,7 @@ mod tests {
             vec![Player::new(Civilization::Zulu)],
             1,
         );
+        engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
         engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
         engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
         let legion = engine.game.spawn_unit(
@@ -1343,5 +1459,387 @@ mod tests {
         assert_eq!(engine.defender_power(&engine.game.units[1]), 30);
         engine.game.units[1].promote();
         assert_eq!(engine.defender_power(&engine.game.units[1]), 45);
+    }
+
+    #[test]
+    fn movement_onto_a_peaceful_tile_is_blocked() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            format!(
+                "Unit {} cannot move onto a tile occupied by a civilization at peace",
+                legion.index()
+            )
+        );
+        let legion_unit = engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == legion)
+            .unwrap();
+        assert_eq!(legion_unit.location, Location::new(2, 2));
+    }
+
+    #[test]
+    fn declaring_war_makes_enemy_tiles_attackable() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let militia = engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let war_events = engine.submit(Command::DeclareWar {
+            opponent: PlayerId::new(1),
+        });
+        assert_eq!(war_events[0].message(), "English declares war on Zulu");
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[1].message(),
+            format!("Unit {} defeats Unit {}", legion.index(), militia.index())
+        );
+    }
+
+    #[test]
+    fn declaring_war_on_yourself_or_a_phantom_player_is_rejected() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        let events = engine.submit(Command::DeclareWar {
+            opponent: PlayerId::new(0),
+        });
+        assert_eq!(events[0].message(), "Cannot declare war on yourself");
+        let events = engine.submit(Command::DeclareWar {
+            opponent: PlayerId::new(7),
+        });
+        assert_eq!(events[0].message(), "No such player");
+    }
+
+    #[test]
+    fn declaring_war_twice_is_redundant() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.submit(Command::DeclareWar {
+            opponent: PlayerId::new(1),
+        });
+        let events = engine.submit(Command::DeclareWar {
+            opponent: PlayerId::new(1),
+        });
+        assert_eq!(events[0].message(), "Already at war");
+    }
+
+    #[test]
+    fn combat_only_engages_players_we_are_at_war_with() {
+        let mut engine = Engine::with_seed(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![
+                Player::new(Civilization::Zulu),
+                Player::new(Civilization::Roman),
+            ],
+            1,
+        );
+        engine.game.declare_war(PlayerId::new(0), PlayerId::new(2));
+        engine.game.make_peace(PlayerId::new(0), PlayerId::new(1));
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let ally = engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let enemy = engine.game.spawn_unit(
+            UnitClass::Knight,
+            Location::new(3, 2),
+            PlayerId::new(2),
+            CityId::new(2),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            format!("Unit {} attacks Unit {}", legion.index(), enemy.index())
+        );
+        assert_eq!(
+            events[1].message(),
+            format!("Unit {} defeats Unit {}", legion.index(), enemy.index())
+        );
+        assert!(!engine.game.units.iter().any(|unit| unit.id() == enemy));
+        assert!(engine.game.units.iter().any(|unit| unit.id() == ally));
+        let legion_unit = engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == legion)
+            .unwrap();
+        assert_eq!(legion_unit.location, Location::new(3, 2));
+    }
+
+    #[test]
+    fn making_peace_registers_and_blocks_movement_again() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        engine.submit(Command::DeclareWar {
+            opponent: PlayerId::new(1),
+        });
+        engine.submit(Command::MakePeace {
+            opponent: PlayerId::new(1),
+        });
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            format!(
+                "Unit {} cannot move onto a tile occupied by a civilization at peace",
+                legion.index()
+            )
+        );
+    }
+
+    #[test]
+    fn making_peace_with_yourself_a_phantom_or_a_friend_is_rejected() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        let events = engine.submit(Command::MakePeace {
+            opponent: PlayerId::new(0),
+        });
+        assert_eq!(events[0].message(), "Cannot make peace with yourself");
+        let events = engine.submit(Command::MakePeace {
+            opponent: PlayerId::new(7),
+        });
+        assert_eq!(events[0].message(), "No such player");
+        let events = engine.submit(Command::MakePeace {
+            opponent: PlayerId::new(1),
+        });
+        assert_eq!(events[0].message(), "English makes peace with Zulu");
+        let events = engine.submit(Command::MakePeace {
+            opponent: PlayerId::new(1),
+        });
+        assert_eq!(events[0].message(), "Already at peace");
+    }
+
+    #[test]
+    fn moving_adjacent_to_a_foreign_unit_establishes_first_contact() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 1)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 1),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        assert!(!engine.game.met(PlayerId::new(0), PlayerId::new(1)));
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            "English and Zulu meet for the first time"
+        );
+        assert!(engine.game.at_peace(PlayerId::new(0), PlayerId::new(1)));
+        engine.submit(Command::EndTurn);
+        engine.submit(Command::EndTurn);
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            format!(
+                "Unit {} cannot move onto a tile occupied by a civilization at peace",
+                legion.index()
+            )
+        );
+    }
+
+    #[test]
+    fn first_contact_with_a_foreign_city_makes_peace() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            "English and Zulu meet for the first time"
+        );
+        assert!(engine.game.at_peace(PlayerId::new(0), PlayerId::new(1)));
+    }
+
+    #[test]
+    fn a_pair_only_meets_once() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 1),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        engine.submit(Command::EndTurn);
+        engine.submit(Command::EndTurn);
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::W,
+        });
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].message(),
+            format!("Unit {} moves W", legion.index())
+        );
+    }
+
+    #[test]
+    fn a_civilization_does_not_meet_itself() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(
+            events[0].message(),
+            format!("Unit {} moves E", legion.index())
+        );
+        assert_eq!(events.len(), 1);
+        assert!(!engine.game.met(PlayerId::new(0), PlayerId::new(0)));
     }
 }
