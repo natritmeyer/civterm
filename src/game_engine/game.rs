@@ -92,6 +92,22 @@ impl Game {
         Some(self.units.swap_remove(index))
     }
 
+    /// Dissolve every unit whose home city is `city_id` (used when a city is
+    /// captured). Returns the number of units disbanded.
+    pub fn disband_units_homed_to(&mut self, city_id: CityId) -> u32 {
+        let mut disbanded = 0;
+        let mut i = 0;
+        while i < self.units.len() {
+            if self.units[i].home_city() == city_id {
+                self.units.swap_remove(i);
+                disbanded += 1;
+            } else {
+                i += 1;
+            }
+        }
+        disbanded
+    }
+
     pub fn add_city(
         &mut self,
         owner: PlayerId,

@@ -83,6 +83,21 @@ impl Engine {
             return;
         }
 
+        // An at-war unit moving onto a foreign city tile that has no defending
+        // units captures the city for the attacker.
+        let capture_city = self.game.cities.iter().find(|c| {
+            c.location == destination && c.owner() != owner && self.game.at_war(owner, c.owner())
+        });
+        if let Some(city) = capture_city {
+            let defender_present = self.game.units.iter().any(|u| {
+                u.location == destination && u.owner() == city.owner() && u.owner() != owner
+            });
+            if !defender_present {
+                self.capture_city(city.id(), unit, destination);
+                return;
+            }
+        }
+
         let mut_unit = self.owned_unit_mut(unit).unwrap();
         mut_unit.location = destination;
         mut_unit.spend_moves(cost);
@@ -147,6 +162,49 @@ impl Engine {
         }
     }
 
+    /// Transfer ownership of an undefended foreign city to the attacking unit's
+    /// owner. Units homed to the captured city are disbanded. The attacking
+    /// unit advances onto the city tile.
+    fn capture_city(&mut self, city_id: CityId, unit: UnitId, destination: Location) {
+        let city_name = self
+            .game
+            .cities
+            .iter()
+            .find(|c| c.id() == city_id)
+            .unwrap()
+            .name
+            .clone();
+        let old_owner = self
+            .game
+            .cities
+            .iter()
+            .find(|c| c.id() == city_id)
+            .unwrap()
+            .owner();
+        let disbanded = self.game.disband_units_homed_to(city_id);
+        self.game
+            .cities
+            .iter_mut()
+            .find(|c| c.id() == city_id)
+            .unwrap()
+            .change_owner(self.current_player_index);
+        let mut_unit = self.owned_unit_mut(unit).unwrap();
+        mut_unit.location = destination;
+        mut_unit.spend_turn();
+        self.events.push(Event::new(format!(
+            "{:?} capture {} (formerly {:?}'s)",
+            self.game.players[self.current_player_index.index()].civilization,
+            city_name,
+            self.game.players[old_owner.index()].civilization
+        )));
+        if disbanded > 0 {
+            self.events.push(Event::new(format!(
+                "{} units disband with the loss of {}",
+                disbanded, city_name
+            )));
+        }
+    }
+
     fn ensure_medium_access(&self, unit: &Unit, destination: Location) -> Result<(), MoveError> {
         let tile_is_water = self.game.map.tile_at(destination).geography.is_water();
         if unit.unit_class.can_travel_water() != tile_is_water {
@@ -182,6 +240,19 @@ impl Engine {
         {
             has_foreign_occupant = true;
             if self.game.at_war(owner, occupied.owner()) {
+                has_enemy_occupant = true;
+            }
+        }
+        // A foreign city on the destination tile blocks passage unless the two
+        // civilisations are at war.
+        if let Some(city) = self
+            .game
+            .cities
+            .iter()
+            .find(|c| c.location == destination && c.owner() != owner)
+        {
+            has_foreign_occupant = true;
+            if self.game.at_war(owner, city.owner()) {
                 has_enemy_occupant = true;
             }
         }
@@ -1417,6 +1488,158 @@ mod tests {
         assert_eq!(legion_unit.location, Location::new(3, 2));
         assert_eq!(legion_unit.moves_remaining(), 0);
         assert!(legion_unit.is_veteran());
+    }
+
+    #[test]
+    fn an_at_war_unit_moving_onto_an_undefended_enemy_city_captures_it() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(2),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "English capture Umgungundlovu (formerly Zulu's)")
+        );
+        let city = engine
+            .game
+            .cities
+            .iter()
+            .find(|c| c.name == "Umgungundlovu")
+            .unwrap();
+        assert_eq!(city.owner(), PlayerId::new(0));
+        let unit = engine.game.units.iter().find(|u| u.id() == legion).unwrap();
+        assert_eq!(unit.location, Location::new(3, 2));
+        assert_eq!(unit.moves_remaining(), 0);
+    }
+
+    #[test]
+    fn capturing_a_city_disbands_units_homed_to_it() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(2),
+        );
+        // A Zulu unit homed to the captured city (id 0) sits elsewhere on the map.
+        let lost_phalanx = engine.game.spawn_unit(
+            UnitClass::Phalanx,
+            Location::new(0, 0),
+            PlayerId::new(1),
+            CityId::new(0),
+        );
+        // An unrelated Zulu unit homed to a different city survives.
+        let other_phalanx = engine.game.spawn_unit(
+            UnitClass::Phalanx,
+            Location::new(0, 1),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "1 units disband with the loss of Umgungundlovu")
+        );
+        assert!(!engine.game.units.iter().any(|u| u.id() == lost_phalanx));
+        assert!(engine.game.units.iter().any(|u| u.id() == other_phalanx));
+    }
+
+    #[test]
+    fn a_city_tile_with_a_defending_unit_is_not_captured() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let phalanx = engine.game.spawn_unit(
+            UnitClass::Phalanx,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        // The defender absorbs the attack; the city stays in Zulu hands.
+        assert!(
+            !events
+                .iter()
+                .any(|e| e.message().contains("capture Umgungundlovu"))
+        );
+        let city = engine
+            .game
+            .cities
+            .iter()
+            .find(|c| c.name == "Umgungundlovu")
+            .unwrap();
+        assert_eq!(city.owner(), PlayerId::new(1));
+        assert!(engine.game.units.iter().any(|u| u.id() == phalanx));
+    }
+
+    #[test]
+    fn a_unit_at_peace_with_the_city_owner_cannot_move_into_the_city() {
+        // two_player_engine is not at war: the two civilizations are unmet/peaceful.
+        let mut engine = two_player_engine();
+        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(2, 1));
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert!(events.iter().any(|e| e.message()
+            == format!(
+                "Unit {} cannot move onto a tile occupied by a civilization at peace",
+                legion.index()
+            )));
+        // Neither ownership nor the unit's position change.
+        let city = engine
+            .game
+            .cities
+            .iter()
+            .find(|c| c.name == "Umgungundlovu")
+            .unwrap();
+        assert_eq!(city.owner(), PlayerId::new(1));
+        let unit = engine.game.units.iter().find(|u| u.id() == legion).unwrap();
+        assert_eq!(unit.location, Location::new(1, 1));
     }
 
     #[test]

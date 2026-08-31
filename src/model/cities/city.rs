@@ -44,6 +44,10 @@ impl City {
         self.owner
     }
 
+    pub fn change_owner(&mut self, owner: PlayerId) {
+        self.owner = owner;
+    }
+
     pub fn population(&self) -> u32 {
         self.population
     }
