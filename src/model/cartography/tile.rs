@@ -41,7 +41,7 @@ impl Tile {
         self.apply_improvement(GeographyImprovement::Road)
     }
 
-    fn apply_improvement(
+    pub fn apply_improvement(
         &mut self,
         improvement: GeographyImprovement,
     ) -> Result<(), GeographyImprovement> {
@@ -54,6 +54,18 @@ impl Tile {
             GeographyImprovement::Road => self.has_road = true,
         }
         Ok(())
+    }
+
+    pub fn is_irrigated(&self) -> bool {
+        self.irrigated
+    }
+
+    pub fn is_mined(&self) -> bool {
+        self.mined
+    }
+
+    pub fn has_road(&self) -> bool {
+        self.has_road
     }
 
     pub fn yields_food(&self) -> u8 {

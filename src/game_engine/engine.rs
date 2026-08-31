@@ -247,17 +247,33 @@ impl Engine {
     }
 
     fn work(&mut self, unit: UnitId, improvement: GeographyImprovement) {
-        match self.owned_unit_mut(unit) {
-            Some(u) => {
-                u.work(improvement);
-                u.spend_turn();
+        let location = match self.owned_unit(unit) {
+            Some(u) => u.location,
+            None => {
+                self.events.push(Event::new("No such unit"));
+                return;
+            }
+        };
+        let result = self
+            .game
+            .map
+            .tile_at_mut(location)
+            .apply_improvement(improvement);
+        match result {
+            Ok(()) => {
+                if let Some(u) = self.owned_unit_mut(unit) {
+                    u.work(improvement);
+                    u.spend_turn();
+                }
                 self.events.push(Event::new(format!(
-                    "Unit {} begins {:?}",
+                    "Unit {} builds {:?}",
                     unit.index(),
                     improvement
                 )));
             }
-            None => self.events.push(Event::new("No such unit")),
+            Err(_) => self
+                .events
+                .push(Event::new(format!("Cannot build {:?} here", improvement))),
         }
     }
 
@@ -806,16 +822,34 @@ mod tests {
     }
 
     #[test]
-    fn work_command_orders_the_unit() {
+    fn work_command_improves_the_tile_and_orders_the_unit() {
         let mut engine = test_engine();
-        engine.submit(Command::Work {
+        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        assert!(!engine.game.map.tile_at(Location::new(1, 1)).has_road());
+        let events = engine.submit(Command::Work {
             unit: UnitId::new(0),
             improvement: GeographyImprovement::Road,
         });
+        assert!(engine.game.map.tile_at(Location::new(1, 1)).has_road());
         assert_eq!(
             engine.game.units[0].order(),
             UnitOrder::Improving(GeographyImprovement::Road)
         );
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].message(), "Unit 0 builds Road");
+    }
+
+    #[test]
+    fn work_command_rejects_unsupported_improvement() {
+        let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        let events = engine.submit(Command::Work {
+            unit: UnitId::new(0),
+            improvement: GeographyImprovement::Mine,
+        });
+        assert!(!engine.game.map.tile_at(Location::new(1, 1)).is_mined());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].message(), "Cannot build Mine here");
     }
 
     #[test]
