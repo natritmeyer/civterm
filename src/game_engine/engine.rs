@@ -12,12 +12,30 @@ use crate::game_engine::{MoveError, Rng, SettleError};
 const DEFAULT_SEED: u64 = 0xC0FFEE;
 const HIT_POINTS: u32 = 10;
 
+/// Default width of a generated world, mirroring classic Civ: 80 × 50.
+pub const DEFAULT_MAP_WIDTH: usize = 80;
+/// Default height of a generated world.
+pub const DEFAULT_MAP_HEIGHT: usize = 50;
+
 pub struct Engine {
     game: Game,
     turn: u32,
     current_player_index: PlayerId,
     events: Vec<Event>,
     rng: Rng,
+}
+
+impl Default for Engine {
+    fn default() -> Self {
+        let first = Player::new(Civilization::English);
+        Engine::with_seed(
+            DEFAULT_MAP_WIDTH,
+            DEFAULT_MAP_HEIGHT,
+            first,
+            Vec::new(),
+            DEFAULT_SEED,
+        )
+    }
 }
 
 impl Engine {
@@ -789,6 +807,15 @@ mod tests {
 
     fn english_player() -> Player {
         Player::new(Civilization::English)
+    }
+
+    #[test]
+    fn the_default_map_is_80_by_50() {
+        let engine = Engine::default();
+        assert_eq!(engine.width(), DEFAULT_MAP_WIDTH);
+        assert_eq!(engine.height(), DEFAULT_MAP_HEIGHT);
+        assert_eq!(DEFAULT_MAP_WIDTH, 80);
+        assert_eq!(DEFAULT_MAP_HEIGHT, 50);
     }
 
     fn test_engine() -> Engine {
