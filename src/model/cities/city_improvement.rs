@@ -35,6 +35,24 @@ impl CityImprovement {
             CityImprovement::University => Some(Advancement::University),
         }
     }
+
+    pub fn resource_cost(&self) -> u32 {
+        match self {
+            CityImprovement::Library
+            | CityImprovement::Granary
+            | CityImprovement::Marketplace
+            | CityImprovement::Temple
+            | CityImprovement::Colosseum
+            | CityImprovement::Cathedral
+            | CityImprovement::Courthouse
+            | CityImprovement::Bank
+            | CityImprovement::University => 20,
+            CityImprovement::CityWalls | CityImprovement::Barracks | CityImprovement::Aqueduct => {
+                15
+            }
+            CityImprovement::Palace => 30,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -80,5 +98,15 @@ mod tests {
     #[test]
     fn improvements_without_a_required_advancement() {
         assert_eq!(CityImprovement::Barracks.required_advancement(), None);
+    }
+
+    #[test]
+    fn improvement_production_costs() {
+        assert_eq!(CityImprovement::CityWalls.resource_cost(), 15);
+        assert_eq!(CityImprovement::Barracks.resource_cost(), 15);
+        assert_eq!(CityImprovement::Aqueduct.resource_cost(), 15);
+        assert_eq!(CityImprovement::Library.resource_cost(), 20);
+        assert_eq!(CityImprovement::Temple.resource_cost(), 20);
+        assert_eq!(CityImprovement::Palace.resource_cost(), 30);
     }
 }

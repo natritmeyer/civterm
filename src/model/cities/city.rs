@@ -1,5 +1,5 @@
 use crate::model::cartography::Location;
-use crate::model::cities::{CityId, CityImprovement};
+use crate::model::cities::{CityId, CityImprovement, CityTick, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -13,7 +13,9 @@ pub struct City {
     resources: u32,
     trade: u32,
     improvements: Vec<CityImprovement>,
-    improvement_in_progress: Option<CityImprovement>,
+    production: Option<ProductionTarget>,
+    resource_stored: u32,
+    worked: Vec<Location>,
 }
 
 impl City {
@@ -28,7 +30,9 @@ impl City {
             resources: 0,
             trade: 0,
             improvements: Vec::new(),
-            improvement_in_progress: None,
+            production: None,
+            resource_stored: 0,
+            worked: Vec::new(),
         }
     }
 
@@ -68,12 +72,84 @@ impl City {
         &self.improvements
     }
 
-    pub fn improvement_in_progress(&self) -> Option<CityImprovement> {
-        self.improvement_in_progress
-    }
-
     pub fn add_improvement(&mut self, improvement: CityImprovement) {
         self.improvements.push(improvement);
+    }
+
+    pub fn set_production(&mut self, target: ProductionTarget) {
+        self.production = Some(target);
+        self.resource_stored = 0;
+    }
+
+    pub fn worked_tiles(&self) -> &[Location] {
+        &self.worked
+    }
+
+    pub fn add_worked_tile(&mut self, location: Location) {
+        if !self.worked.contains(&location) {
+            self.worked.push(location);
+        }
+    }
+
+    /// Food consumed each turn: each citizen eats 2.
+    pub fn food_consumption(&self) -> u32 {
+        2 * self.population
+    }
+
+    /// Advance the city one turn given this turn's food and resource income.
+    pub fn tick(&mut self, food_income: u32, resource_income: u32) -> CityTick {
+        let consumption = self.food_consumption();
+        let net_food = food_income as i32 - consumption as i32;
+        let produced = resource_income;
+
+        let food_deficit = (-net_food).max(0) as u32;
+        let food_surplus = net_food.max(0) as u32;
+
+        self.food = self
+            .food
+            .saturating_add(food_surplus)
+            .saturating_sub(food_deficit);
+        self.resources = self.resources.saturating_add(produced);
+        self.resource_stored = self.resource_stored.saturating_add(produced);
+
+        let growth_need = self.population * 2;
+        let mut grew = false;
+        if net_food >= 0 && self.food >= growth_need {
+            self.food -= growth_need;
+            self.grow();
+            grew = true;
+        }
+
+        let starving = net_food < 0 && self.food == 0;
+        let completed = match self.production {
+            Some(target) if self.resource_stored >= target.resource_cost() => {
+                self.resource_stored = 0;
+                self.production = None;
+                match target {
+                    ProductionTarget::Improvement(improvement) => {
+                        self.add_improvement(improvement);
+                        Some(target)
+                    }
+                    ProductionTarget::Unit(_) => Some(target),
+                }
+            }
+            _ => None,
+        };
+
+        CityTick {
+            produced,
+            grew,
+            completed,
+            starving,
+        }
+    }
+
+    pub fn production_target(&self) -> Option<ProductionTarget> {
+        self.production
+    }
+
+    pub fn resource_stored(&self) -> u32 {
+        self.resource_stored
     }
 
     pub fn research(&self) -> u32 {
@@ -94,6 +170,7 @@ impl City {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::units::UnitClass;
 
     #[test]
     fn city_is_created_with_name_and_location() {
@@ -139,7 +216,7 @@ mod tests {
             CityId::new(0),
         );
         assert!(city.improvements().is_empty());
-        assert_eq!(city.improvement_in_progress(), None);
+        assert_eq!(city.production_target(), None);
     }
 
     #[test]
@@ -242,5 +319,97 @@ mod tests {
         city.add_improvement(CityImprovement::Library);
         city.add_improvement(CityImprovement::University);
         assert_eq!(city.research(), 9);
+    }
+
+    #[test]
+    fn food_consumption_scales_with_population() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert_eq!(city.food_consumption(), 2);
+        city.grow();
+        city.grow();
+        assert_eq!(city.food_consumption(), 6);
+    }
+
+    #[test]
+    fn worked_tiles_accumulate_and_deduplicate() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert!(city.worked_tiles().is_empty());
+        city.add_worked_tile(Location::new(1, 1));
+        city.add_worked_tile(Location::new(1, 1));
+        city.add_worked_tile(Location::new(0, 1));
+        assert_eq!(city.worked_tiles().len(), 2);
+    }
+
+    #[test]
+    fn a_city_grows_when_food_surplus_accumulates() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        // Pop 1 consuming 2 food, income 3 => +1 surplus per turn. Growth needs 2.
+        let raised = city.tick(3, 1);
+        assert!(!raised.grew);
+        let raised = city.tick(3, 1);
+        assert!(raised.grew);
+        assert_eq!(city.population(), 2);
+    }
+
+    #[test]
+    fn resource_income_accrues_into_build_progress() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        city.set_production(ProductionTarget::Unit(UnitClass::Militia));
+        // 3 resources per turn; Militia costs 10. After 3 turns stored = 9,
+        // the 4th turn brings it to 12 which completes.
+        let raised = city.tick(0, 3);
+        assert_eq!(raised.completed, None);
+        let raised = city.tick(0, 3);
+        assert_eq!(raised.completed, None);
+        let raised = city.tick(0, 3);
+        assert_eq!(raised.completed, None);
+        let raised = city.tick(0, 3);
+        assert_eq!(
+            raised.completed,
+            Some(ProductionTarget::Unit(UnitClass::Militia))
+        );
+        assert_eq!(city.resource_stored(), 0);
+    }
+
+    #[test]
+    fn setting_production_stores_the_target_and_resets_accumulated_resources() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        city.set_production(ProductionTarget::Unit(UnitClass::Militia));
+        assert_eq!(
+            city.production_target(),
+            Some(ProductionTarget::Unit(UnitClass::Militia))
+        );
+        assert_eq!(city.resource_stored(), 0);
+        city.set_production(ProductionTarget::Improvement(CityImprovement::Library));
+        assert_eq!(
+            city.production_target(),
+            Some(ProductionTarget::Improvement(CityImprovement::Library))
+        );
+        assert_eq!(city.resource_stored(), 0);
     }
 }

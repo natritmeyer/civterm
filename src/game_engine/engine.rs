@@ -1,6 +1,6 @@
 use crate::game_engine::{Command, Event, GameView, Player};
 use crate::model::cartography::{Direction, Location, Tile};
-use crate::model::cities::City;
+use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::geography::{Geography, GeographyImprovement};
 use crate::model::units::{Unit, UnitId};
@@ -48,6 +48,7 @@ impl Engine {
             Command::Work { unit, improvement } => self.work(unit, improvement),
             Command::CancelOrder { unit } => self.cancel_order(unit),
             Command::FoundCity { unit, name } => self.found_city(unit, name),
+            Command::SetProductionTarget { city, target } => self.set_production(city, target),
             Command::DeclareWar { opponent } => self.declare_war(opponent),
             Command::MakePeace { opponent } => self.make_peace(opponent),
             Command::EndTurn => self.end_turn(),
@@ -381,10 +382,84 @@ impl Engine {
             }
         };
         self.game.remove_unit(unit);
-        self.game.add_city(owner, name.clone(), location);
+        let city_id = self.game.add_city(owner, name.clone(), location);
+        self.game.auto_assign_work(city_id);
         self.game.reveal_tiles_surrounding_city_at(owner, location);
         self.events
             .push(Event::new(format!("Unit {} founds {}", unit.index(), name)));
+    }
+
+    fn set_production(&mut self, city: CityId, target: ProductionTarget) {
+        match self
+            .game
+            .cities
+            .iter_mut()
+            .find(|c| c.id() == city && c.owner() == self.current_player_index)
+        {
+            Some(city) => {
+                city.set_production(target);
+                self.events.push(Event::new(format!(
+                    "{} begins producing {:?}",
+                    city.name, target
+                )));
+            }
+            None => self.events.push(Event::new("No such city")),
+        }
+    }
+
+    fn process_cities(&mut self, owner: PlayerId) {
+        let city_ids: Vec<CityId> = self
+            .game
+            .cities
+            .iter()
+            .filter(|c| c.owner() == owner)
+            .map(|c| c.id())
+            .collect();
+        for city_id in city_ids {
+            let city_name = self
+                .game
+                .cities
+                .iter()
+                .find(|c| c.id() == city_id)
+                .unwrap()
+                .name
+                .clone();
+            let result = self.game.process_city(city_id);
+            if result.grew {
+                self.game.auto_assign_work(city_id);
+                self.events.push(Event::new(format!(
+                    "{} grows to size {}",
+                    city_name,
+                    self.game
+                        .cities
+                        .iter()
+                        .find(|c| c.id() == city_id)
+                        .unwrap()
+                        .population()
+                )));
+            }
+            if let Some(target) = result.completed {
+                match target {
+                    ProductionTarget::Unit(unit_class) => {
+                        let city = self.game.cities.iter().find(|c| c.id() == city_id).unwrap();
+                        let location = city.location;
+                        self.game.spawn_unit(unit_class, location, owner, city_id);
+                        self.events.push(Event::new(format!(
+                            "{} produces {:?}",
+                            city_name, unit_class
+                        )));
+                    }
+                    ProductionTarget::Improvement(_) => {
+                        self.events
+                            .push(Event::new(format!("{} completes {:?}", city_name, target)));
+                    }
+                }
+            }
+            if result.starving {
+                self.events
+                    .push(Event::new(format!("{} is starving", city_name)));
+            }
+        }
     }
 
     fn ensure_can_found(&self, unit: UnitId) -> Result<(PlayerId, Location), SettleError> {
@@ -487,6 +562,7 @@ impl Engine {
         {
             unit.restore_moves();
         }
+        self.process_cities(self.current_player_index);
     }
 
     fn owned_unit(&self, unit: UnitId) -> Option<&Unit> {
@@ -550,7 +626,7 @@ impl GameView for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::cities::CityId;
+    use crate::model::cities::{CityId, ProductionTarget};
     use crate::model::geography::Geography;
     use crate::model::units::{UnitClass, UnitId, UnitOrder};
 
@@ -1841,5 +1917,173 @@ mod tests {
         );
         assert_eq!(events.len(), 1);
         assert!(!engine.game.met(PlayerId::new(0), PlayerId::new(0)));
+    }
+
+    #[test]
+    fn a_city_grows_and_reports_it() {
+        let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine
+            .game
+            .add_city(PlayerId::new(0), "London", Location::new(1, 1));
+        engine.game.auto_assign_work(CityId::new(0));
+        let events = engine.submit(Command::EndTurn);
+        let message = events
+            .iter()
+            .find(|e| e.message().contains("grows"))
+            .map(|e| e.message().to_string());
+        assert_eq!(message, Some("London grows to size 2".to_string()));
+        let city = &engine.game.cities[0];
+        assert_eq!(city.population(), 2);
+    }
+
+    #[test]
+    fn a_city_produces_units() {
+        let mut engine = Engine::new(7, 7, Player::new(Civilization::English), Vec::new());
+        // Grassland centre plus forest ring tiles that yield resources.
+        engine.game.map.tile_at_mut(Location::new(3, 3)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 3)).geography = Geography::Forest;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Forest;
+        engine.game.map.tile_at_mut(Location::new(4, 3)).geography = Geography::Forest;
+        engine.game.map.tile_at_mut(Location::new(3, 4)).geography = Geography::Forest;
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(3, 3),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.submit(Command::FoundCity {
+            unit: UnitId::new(0),
+            name: "London".to_string(),
+        });
+        engine.submit(Command::SetProductionTarget {
+            city: CityId::new(0),
+            target: ProductionTarget::Unit(UnitClass::Militia),
+        });
+        // Centre grassland 0 resources + 1 forest worked tile (2 resources).
+        // Militia costs 10, so it should finish within 5 turns.
+        let mut produced = false;
+        for _ in 0..8 {
+            let events = engine.submit(Command::EndTurn);
+            if events
+                .iter()
+                .any(|e| e.message() == "London produces Militia")
+            {
+                produced = true;
+            }
+        }
+        assert!(produced, "expected production event across the turns");
+        assert!(
+            engine
+                .game
+                .units
+                .iter()
+                .any(|u| u.unit_class == UnitClass::Militia)
+        );
+    }
+
+    #[test]
+    fn a_city_starves_without_food() {
+        let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
+        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.submit(Command::FoundCity {
+            unit: UnitId::new(0),
+            name: "London".to_string(),
+        });
+        // Drive the city to size 5 (net food -3) so the food store drains each turn.
+        for _ in 0..4 {
+            engine.game.cities[0].grow();
+        }
+        assert_eq!(engine.game.cities[0].population(), 5);
+        let events = engine.submit(Command::EndTurn);
+        assert!(
+            events.iter().any(|e| e.message() == "London is starving"),
+            "expected starvation, got {:?}",
+            events.iter().map(|e| e.message()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn setting_production_on_a_foreign_city_is_rejected() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 3));
+        let events = engine.submit(Command::SetProductionTarget {
+            city: CityId::new(0),
+            target: ProductionTarget::Unit(UnitClass::Militia),
+        });
+        assert_eq!(events[0].message(), "No such city");
+    }
+
+    #[test]
+    fn city_footprint_is_the_21_tile_ring() {
+        let engine = Engine::new(7, 7, Player::new(Civilization::English), Vec::new());
+        let footprint = engine.game.city_footprint(Location::new(3, 3));
+        assert_eq!(footprint.len(), 21);
+        assert!(footprint.contains(&Location::new(3, 3)));
+        // Octant corners (distance 2,2) are excluded; ring edges included.
+        assert!(footprint.contains(&Location::new(2, 3)));
+        assert!(footprint.contains(&Location::new(3, 5)));
+        assert!(!footprint.contains(&Location::new(1, 1)));
+        assert!(!footprint.contains(&Location::new(5, 5)));
+    }
+
+    #[test]
+    fn a_city_automatically_works_its_highest_yield_tile() {
+        let mut engine = Engine::new(7, 7, Player::new(Civilization::English), Vec::new());
+        engine.game.map.tile_at_mut(Location::new(3, 3)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(4, 3)).geography = Geography::Forest;
+        engine.game.map.tile_at_mut(Location::new(2, 3)).geography = Geography::Hills;
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(3, 3),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.submit(Command::FoundCity {
+            unit: UnitId::new(0),
+            name: "London".to_string(),
+        });
+        let city = &engine.game.cities[0];
+        // Size 1 works one ring tile; forest (2 resources) beats hills (1).
+        assert_eq!(city.worked_tiles(), &[Location::new(4, 3)]);
+        let (food, resources) = engine.game.city_income(CityId::new(0));
+        assert_eq!(resources, 2);
+        assert_eq!(food, 3);
+    }
+
+    #[test]
+    fn capturing_a_city_harvests_more_tiles_as_it_grows() {
+        let mut engine = Engine::new(7, 7, Player::new(Civilization::English), Vec::new());
+        engine.game.map.tile_at_mut(Location::new(3, 3)).geography = Geography::Grassland;
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(3, 3),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.submit(Command::FoundCity {
+            unit: UnitId::new(0),
+            name: "London".to_string(),
+        });
+        assert_eq!(engine.game.cities[0].worked_tiles().len(), 1);
+        // Grow to size 4 (engine-driven growth auto-assigns more ring tiles).
+        for _ in 0..6 {
+            engine.submit(Command::EndTurn);
+        }
+        assert_eq!(engine.game.cities[0].population(), 4);
+        assert_eq!(engine.game.cities[0].worked_tiles().len(), 4);
     }
 }

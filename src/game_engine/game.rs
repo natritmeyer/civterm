@@ -1,6 +1,6 @@
 use crate::game_engine::player::Player;
 use crate::model::cartography::{Location, Map};
-use crate::model::cities::{City, CityId};
+use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 use crate::model::units::{Unit, UnitClass, UnitId};
 
@@ -102,6 +102,120 @@ impl Game {
         self.cities.push(City::new(name, location, owner, id));
         id
     }
+
+    pub fn owned_units(&self, owner: PlayerId) -> Vec<UnitId> {
+        self.units
+            .iter()
+            .filter(|unit| unit.owner() == owner)
+            .map(|unit| unit.id())
+            .collect()
+    }
+
+    /// Sum food and resource income a city harvests from its worked tiles
+    /// (the city centre is always worked, plus each chosen ring tile).
+    pub fn city_income(&self, city_id: CityId) -> (u32, u32) {
+        let city = self
+            .cities
+            .iter()
+            .find(|city| city.id() == city_id)
+            .expect("city to read income from exists");
+        let centre = self.map.tile_at(city.location);
+        let mut food = centre.yields_food() as u32;
+        let mut resources = centre.yields_resources() as u32;
+        for location in city.worked_tiles() {
+            let tile = self.map.tile_at(*location);
+            food += tile.yields_food() as u32;
+            resources += tile.yields_resources() as u32;
+        }
+        (food, resources)
+    }
+
+    /// The Chebyshev radius-2 footprint around a city (the 21 fog-reveal tiles),
+    /// wrapped east/west and clamped north/south.
+    pub fn city_footprint(&self, location: Location) -> Vec<Location> {
+        let mut result = Vec::new();
+        let x0 = location.x as isize;
+        let y0 = location.y as isize;
+        for y in (y0 - 2)..=(y0 + 2) {
+            if y < 0 || y >= self.map.height as isize {
+                continue;
+            }
+            for x in (x0 - 2)..=(x0 + 2) {
+                if (x - x0).abs() == 2 && (y - y0).abs() == 2 {
+                    continue;
+                }
+                let px = x.rem_euclid(self.map.width as isize) as u16;
+                result.push(Location::new(px, y as u16));
+            }
+        }
+        result
+    }
+
+    /// Assign worked tiles so each citizen harvests a ring tile within the
+    /// footprint (the city centre is additionally always worked), preferring
+    /// the most resource-productive available tiles.
+    pub fn auto_assign_work(&mut self, city_id: CityId) {
+        let city = self
+            .cities
+            .iter()
+            .find(|city| city.id() == city_id)
+            .expect("city to assign work for exists");
+        let city_location = city.location;
+        let city_population = city.population() as usize;
+        let currently_worked_tiles_locations: Vec<Location> = city.worked_tiles().to_vec();
+
+        if currently_worked_tiles_locations.len() >= city_population {
+            return;
+        }
+
+        let mut candidates: Vec<Location> = self
+            .city_footprint(city_location)
+            .into_iter()
+            .filter(|candidate| {
+                *candidate != city_location && !currently_worked_tiles_locations.contains(candidate)
+            })
+            .collect();
+        candidates.sort_by_key(|candidate| {
+            let tile = self.map.tile_at(*candidate);
+            std::cmp::Reverse((tile.yields_resources(), tile.yields_food()))
+        });
+
+        let to_add = city_population - currently_worked_tiles_locations.len();
+        for candidate in candidates.into_iter().take(to_add) {
+            let city = self
+                .cities
+                .iter_mut()
+                .find(|city| city.id() == city_id)
+                .expect("city to assign work for exists");
+            city.add_worked_tile(candidate);
+        }
+    }
+
+    /// Tick a city for one turn, delegating the economy to the model.
+    pub(crate) fn process_city(&mut self, city_id: CityId) -> CityProcess {
+        let (food_income, resource_income) = self.city_income(city_id);
+        let tick = self
+            .cities
+            .iter_mut()
+            .find(|city| city.id() == city_id)
+            .expect("city to process exists")
+            .tick(food_income, resource_income);
+        CityProcess {
+            produced: tick.produced,
+            grew: tick.grew,
+            completed: tick.completed,
+            starving: tick.starving,
+        }
+    }
+}
+
+/// Outcome of processing a single city for one turn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CityProcess {
+    pub produced: u32,
+    pub grew: bool,
+    pub completed: Option<ProductionTarget>,
+    pub starving: bool,
 }
 
 #[cfg(test)]

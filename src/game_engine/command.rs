@@ -1,4 +1,5 @@
 use crate::model::cartography::Direction;
+use crate::model::cities::{CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 use crate::model::geography::GeographyImprovement;
 use crate::model::units::UnitId;
@@ -25,6 +26,10 @@ pub enum Command {
     FoundCity {
         unit: UnitId,
         name: String,
+    },
+    SetProductionTarget {
+        city: CityId,
+        target: ProductionTarget,
     },
     DeclareWar {
         opponent: PlayerId,

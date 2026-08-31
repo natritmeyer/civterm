@@ -66,6 +66,21 @@ impl UnitClass {
             UnitClass::Trireme | UnitClass::Sail | UnitClass::Frigate => 3,
         }
     }
+
+    pub fn resource_cost(&self) -> u32 {
+        match self {
+            UnitClass::Militia => 10,
+            UnitClass::Phalanx | UnitClass::Legion | UnitClass::Chariot => 15,
+            UnitClass::Knight
+            | UnitClass::Cavalry
+            | UnitClass::Catapult
+            | UnitClass::Diplomat
+            | UnitClass::Sail => 20,
+            UnitClass::Caravan | UnitClass::Trireme => 30,
+            UnitClass::Frigate => 40,
+            UnitClass::Settler => 60,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -129,6 +144,23 @@ mod tests {
         ] {
             assert_eq!(class.moves(), 3);
         }
+    }
+
+    #[test]
+    fn unit_production_costs() {
+        assert_eq!(UnitClass::Militia.resource_cost(), 10);
+        assert_eq!(UnitClass::Phalanx.resource_cost(), 15);
+        assert_eq!(UnitClass::Legion.resource_cost(), 15);
+        assert_eq!(UnitClass::Chariot.resource_cost(), 15);
+        assert_eq!(UnitClass::Knight.resource_cost(), 20);
+        assert_eq!(UnitClass::Cavalry.resource_cost(), 20);
+        assert_eq!(UnitClass::Catapult.resource_cost(), 20);
+        assert_eq!(UnitClass::Diplomat.resource_cost(), 20);
+        assert_eq!(UnitClass::Sail.resource_cost(), 20);
+        assert_eq!(UnitClass::Caravan.resource_cost(), 30);
+        assert_eq!(UnitClass::Trireme.resource_cost(), 30);
+        assert_eq!(UnitClass::Frigate.resource_cost(), 40);
+        assert_eq!(UnitClass::Settler.resource_cost(), 60);
     }
 
     #[test]
