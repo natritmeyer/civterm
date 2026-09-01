@@ -1,6 +1,8 @@
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use ratatui::{Frame, Terminal};
 
+use super::splash::SplashScreen;
+
 pub struct App;
 
 impl App {
@@ -19,10 +21,7 @@ impl App {
     }
 
     fn draw(frame: &mut Frame) {
-        frame.render_widget(
-            ratatui::widgets::Paragraph::new("civterm - press q to quit"),
-            frame.area(),
-        );
+        frame.render_widget(SplashScreen::new(), frame.area());
     }
 
     fn should_quit(key: KeyEvent) -> bool {
