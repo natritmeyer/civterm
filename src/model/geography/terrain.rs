@@ -109,6 +109,21 @@ impl Geography {
             Geography::Plains | Geography::Forest | Geography::Hills | Geography::Jungle => 0,
         }
     }
+
+    pub fn as_char(&self) -> char {
+        match self {
+            Geography::Ocean => '~',
+            Geography::Grassland => 'v',
+            Geography::Plains => '.',
+            Geography::Forest => '#',
+            Geography::Hills => '^',
+            Geography::Mountain => 'M',
+            Geography::Desert => 'd',
+            Geography::Tundra => 't',
+            Geography::Swamp => 's',
+            Geography::Jungle => 'T',
+        }
+    }
 }
 
 #[cfg(test)]
@@ -330,5 +345,29 @@ mod tests {
         assert_eq!(Geography::Tundra.yields_trade(), 1);
         assert_eq!(Geography::Swamp.yields_trade(), 1);
         assert_eq!(Geography::Jungle.yields_trade(), 0);
+    }
+
+    #[test]
+    fn each_geography_renders_as_a_distinct_character() {
+        let chars: Vec<char> = [
+            Geography::Ocean,
+            Geography::Grassland,
+            Geography::Plains,
+            Geography::Forest,
+            Geography::Hills,
+            Geography::Mountain,
+            Geography::Desert,
+            Geography::Tundra,
+            Geography::Swamp,
+            Geography::Jungle,
+        ]
+        .iter()
+        .map(|geography| geography.as_char())
+        .collect();
+        assert_eq!(chars.len(), 10);
+        let mut unique = chars.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 10, "every geography needs a distinct char");
     }
 }

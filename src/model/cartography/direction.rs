@@ -1,4 +1,6 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+use strum::EnumIter;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 pub enum Direction {
     N,
     NE,

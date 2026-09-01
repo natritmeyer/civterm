@@ -36,6 +36,18 @@ impl Map {
             None
         }
     }
+
+    /// Render the map as an ASCII grid, one line per row.
+    pub fn render_ascii(&self) -> String {
+        let mut out = String::with_capacity((self.width + 1) * self.height);
+        for row in &self.tiles {
+            for tile in row {
+                out.push(tile.geography.as_char());
+            }
+            out.push('\n');
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -82,5 +94,13 @@ mod tests {
         let map = Map::new(3, 2);
         assert_eq!(map.destination(Location::new(1, 0), Direction::N), None);
         assert_eq!(map.destination(Location::new(1, 1), Direction::S), None);
+    }
+
+    #[test]
+    fn render_ascii_prints_one_line_per_row() {
+        let mut map = Map::new(3, 2);
+        map.tile_at_mut(Location::new(1, 0)).geography = Geography::Grassland;
+        let rendered = map.render_ascii();
+        assert_eq!(rendered, "~v~\n~~~\n");
     }
 }

@@ -1,4 +1,5 @@
 pub mod direction;
+pub mod generation;
 pub mod location;
 pub mod map;
 pub mod tile;
