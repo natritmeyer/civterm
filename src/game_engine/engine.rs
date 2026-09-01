@@ -7,7 +7,8 @@ use crate::model::geography::{Geography, GeographyImprovement};
 use crate::model::units::{Unit, UnitId};
 
 use super::game::Game;
-use crate::game_engine::{MoveError, Rng, SettleError};
+use crate::game_engine::{MoveError, SettleError};
+use crate::utils::Rng;
 
 const DEFAULT_SEED: u64 = 0xC0FFEE;
 const HIT_POINTS: u32 = 10;

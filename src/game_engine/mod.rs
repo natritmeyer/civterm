@@ -6,7 +6,6 @@ pub mod exploration;
 pub mod game;
 pub mod game_view;
 pub mod player;
-pub mod rng;
 
 pub use command::Command;
 pub use engine::Engine;
@@ -15,4 +14,3 @@ pub use event::Event;
 pub use exploration::Exploration;
 pub use game_view::GameView;
 pub use player::Player;
-pub use rng::Rng;
