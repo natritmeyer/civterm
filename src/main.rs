@@ -15,7 +15,7 @@ fn main() -> io::Result<()> {
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let result = App.run(&mut terminal);
+    let result = App::new().run(&mut terminal);
 
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     disable_raw_mode()?;

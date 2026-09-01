@@ -26,7 +26,7 @@ const CIVTERM: [&str; 4] = [
     " ▀▀▀  ▀▀▀   ▀     ▀   ▀▀▀  ▀▀▀   ▀ ▀ ▀",
 ];
 
-const SPACE_BG: Color = Color::Rgb(12, 12, 40);
+pub(crate) const SPACE_BG: Color = Color::Rgb(12, 12, 40);
 const OCEAN_FG: Color = Color::Rgb(70, 140, 210);
 const OCEAN_BG: Color = Color::Rgb(25, 60, 150);
 const TEXT_FG: Color = Color::Rgb(80, 60, 25);
