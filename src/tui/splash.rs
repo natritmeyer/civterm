@@ -5,10 +5,18 @@ use ratatui::widgets::Widget;
 
 pub struct SplashScreen;
 
-const GLOBE_COLS: u16 = 41;
-const GLOBE_ROWS: u16 = 21;
-const TEXT_ROW: u16 = 8;
-const TEXT_COL: u16 = 1;
+const GLOBE_COLS: u16 = 61;
+const GLOBE_ROWS: u16 = 31;
+const TEXT_ROW: u16 = 13;
+
+const SCROLL_WIDTH: u16 = 46;
+const SCROLL_HEIGHT: u16 = 8;
+const SCROLL_TEXT_OFFSET: u16 = 4;
+const SCROLL_TOP_ROW: u16 = 11;
+
+const PARCH_BG: Color = Color::Rgb(222, 196, 140);
+const PARCH_FG: Color = Color::Rgb(80, 60, 25);
+const SCROLL_EDGE: Color = Color::Rgb(140, 110, 65);
 
 const CIVTERM: [&str; 4] = [
     "        ▀         █                    ",
@@ -20,23 +28,23 @@ const CIVTERM: [&str; 4] = [
 const SPACE_BG: Color = Color::Rgb(12, 12, 40);
 const OCEAN_FG: Color = Color::Rgb(70, 140, 210);
 const OCEAN_BG: Color = Color::Rgb(25, 60, 150);
-const TEXT_FG: Color = Color::White;
-const GLOBE_CX: f32 = 20.0;
-const GLOBE_CY: f32 = 10.0;
-const GLOBE_RX: f32 = 20.0;
-const GLOBE_RY: f32 = 10.0;
+const TEXT_FG: Color = Color::Rgb(80, 60, 25);
+const GLOBE_CX: f32 = 30.0;
+const GLOBE_CY: f32 = 15.0;
+const GLOBE_RX: f32 = 30.0;
+const GLOBE_RY: f32 = 15.0;
 
 const LAND: [(f32, f32, f32, f32); 7] = [
-    (9.0, 6.0, 3.4, 3.0),
-    (13.0, 13.0, 2.6, 3.4),
-    (17.5, 3.5, 2.6, 1.6),
-    (19.0, 11.5, 3.6, 4.0),
-    (28.0, 5.0, 5.2, 3.6),
-    (25.0, 10.0, 2.2, 2.2),
-    (30.5, 15.0, 2.0, 1.5),
+    (13.5, 9.0, 5.2, 4.6),
+    (19.5, 19.5, 3.9, 5.1),
+    (26.0, 5.5, 3.9, 2.4),
+    (28.5, 17.0, 5.4, 6.0),
+    (42.0, 7.5, 7.8, 5.4),
+    (37.5, 15.0, 3.3, 3.3),
+    (45.5, 22.5, 3.0, 2.3),
 ];
 
-const CLOUDS: [(usize, usize); 4] = [(6, 12), (12, 4), (24, 16), (33, 9)];
+const CLOUDS: [(usize, usize); 4] = [(9, 18), (18, 6), (36, 24), (50, 14)];
 
 impl SplashScreen {
     pub fn new() -> Self {
@@ -85,6 +93,41 @@ impl SplashScreen {
             }
         }
 
+        let scroll_x = area
+            .x
+            .saturating_add(area.width / 2)
+            .saturating_sub(SCROLL_WIDTH / 2);
+        let scroll_y = gy.saturating_add(SCROLL_TOP_ROW);
+        for row in 0..SCROLL_HEIGHT {
+            let y = scroll_y + row;
+            if y >= area.bottom() {
+                continue;
+            }
+            for col in 0..SCROLL_WIDTH {
+                let x = scroll_x + col;
+                if x >= area.right() {
+                    continue;
+                }
+                let symbol = if row == 0 {
+                    '▀'
+                } else if row == 1 || row == 6 {
+                    '█'
+                } else if row == 7 {
+                    '▄'
+                } else if col == 0 || col == SCROLL_WIDTH - 1 {
+                    '█'
+                } else {
+                    ' '
+                };
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.reset();
+                    cell.set_symbol(&symbol.to_string());
+                    cell.set_fg(if symbol == ' ' { PARCH_FG } else { SCROLL_EDGE });
+                    cell.set_bg(PARCH_BG);
+                }
+            }
+        }
+
         let letter_style = Style::default().fg(TEXT_FG).add_modifier(Modifier::BOLD);
         for (i, line) in CIVTERM.iter().enumerate() {
             let y = gy + TEXT_ROW + i as u16;
@@ -95,7 +138,7 @@ impl SplashScreen {
                 if ch == ' ' {
                     continue;
                 }
-                let x = gx + TEXT_COL + j as u16;
+                let x = scroll_x + SCROLL_TEXT_OFFSET + j as u16;
                 if x >= area.right() {
                     continue;
                 }
@@ -190,22 +233,42 @@ mod tests {
     #[test]
     fn globe_and_text_are_centred() {
         let buf = render_area(100, 60);
-        let gx = 100 / 2 - GLOBE_COLS / 2; // 30
-        let gy = 60 / 2 - GLOBE_ROWS / 2; // 20
+        let gx = 100 / 2 - GLOBE_COLS / 2; // 20
+        let gy = 60 / 2 - GLOBE_ROWS / 2; // 15
+        let sx = 100 / 2 - SCROLL_WIDTH / 2; // 27
+        let sy = gy + SCROLL_TOP_ROW; // 26
         assert_eq!(
-            buf.cell((gx + 20, gy + 17)).unwrap().style().bg,
+            buf.cell((gx + 20, gy + 25)).unwrap().style().bg,
             Some(OCEAN_BG)
         );
-        let land_at_am = buf.cell((gx + 9, gy + 6)).unwrap();
+        let land_at_am = buf.cell((gx + 13, gy + 9)).unwrap();
         assert_eq!(land_at_am.symbol(), "#");
         assert_eq!(land_at_am.style().fg, Some(Color::Green));
-        let first_text = buf.cell((gx + TEXT_COL + 8, gy + TEXT_ROW)).unwrap();
+        let first_text = buf.cell((sx + SCROLL_TEXT_OFFSET + 8, sy + 2)).unwrap();
         assert_eq!(first_text.symbol(), "▀");
         assert_eq!(first_text.style().fg, Some(TEXT_FG));
-        assert_eq!(first_text.style().bg, Some(OCEAN_BG));
-        let gap = buf.cell((gx + TEXT_COL, gy + TEXT_ROW)).unwrap();
-        assert_eq!(gap.symbol(), "~");
-        assert_eq!(gap.style().bg, Some(OCEAN_BG));
+        assert_eq!(first_text.style().bg, Some(PARCH_BG));
+        let gap = buf.cell((sx + SCROLL_TEXT_OFFSET, sy + 2)).unwrap();
+        assert_eq!(gap.symbol(), " ");
+        assert_eq!(gap.style().bg, Some(PARCH_BG));
+    }
+
+    #[test]
+    fn scroll_frames_the_banner() {
+        let buf = render_area(100, 60);
+        let sx = 100 / 2 - SCROLL_WIDTH / 2;
+        let sy = 60 / 2 - GLOBE_ROWS / 2 + SCROLL_TOP_ROW;
+        let corner = buf.cell((sx, sy)).unwrap();
+        assert_eq!(corner.symbol(), "▀");
+        assert_eq!(corner.style().fg, Some(SCROLL_EDGE));
+        let roll = buf.cell((sx, sy + 1)).unwrap();
+        assert_eq!(roll.symbol(), "█");
+        let dowel = buf.cell((sx, sy + 2)).unwrap();
+        assert_eq!(dowel.symbol(), "█");
+        let bottom = buf.cell((sx + SCROLL_WIDTH / 2, sy + 6)).unwrap();
+        assert_eq!(bottom.symbol(), "█");
+        let underside = buf.cell((sx, sy + 7)).unwrap();
+        assert_eq!(underside.symbol(), "▄");
     }
 
     #[test]
