@@ -17,6 +17,7 @@ const SCROLL_TOP_ROW: u16 = 11;
 const PARCH_BG: Color = Color::Rgb(222, 196, 140);
 const PARCH_FG: Color = Color::Rgb(80, 60, 25);
 const SCROLL_EDGE: Color = Color::Rgb(140, 110, 65);
+const ATTRIBUTION: &str = "...by Nat Ritmeyer";
 
 const CIVTERM: [&str; 4] = [
     "        ▀         █                    ",
@@ -124,6 +125,27 @@ impl SplashScreen {
                     cell.set_symbol(&symbol.to_string());
                     cell.set_fg(if symbol == ' ' { PARCH_FG } else { SCROLL_EDGE });
                     cell.set_bg(PARCH_BG);
+                }
+            }
+        }
+
+        let attrib_len = ATTRIBUTION.len() as u16;
+        let attrib_x = scroll_x + (SCROLL_WIDTH - attrib_len) / 2;
+        let attrib_y = scroll_y + 6;
+        if attrib_y < area.bottom() {
+            for (j, ch) in ATTRIBUTION.chars().enumerate() {
+                if ch == ' ' {
+                    continue;
+                }
+                let x = attrib_x + j as u16;
+                if x >= area.right() {
+                    break;
+                }
+                if let Some(cell) = buf.cell_mut((x, attrib_y)) {
+                    cell.reset();
+                    cell.set_symbol(&ch.to_string());
+                    cell.set_fg(PARCH_FG);
+                    cell.set_bg(SCROLL_EDGE);
                 }
             }
         }
@@ -265,8 +287,15 @@ mod tests {
         assert_eq!(roll.symbol(), "█");
         let dowel = buf.cell((sx, sy + 2)).unwrap();
         assert_eq!(dowel.symbol(), "█");
-        let bottom = buf.cell((sx + SCROLL_WIDTH / 2, sy + 6)).unwrap();
-        assert_eq!(bottom.symbol(), "█");
+        let attrib = buf
+            .cell((
+                sx + (SCROLL_WIDTH - ATTRIBUTION.len() as u16) / 2 + 7,
+                sy + 6,
+            ))
+            .unwrap();
+        assert_eq!(attrib.symbol(), "a");
+        assert_eq!(attrib.style().fg, Some(PARCH_FG));
+        assert_eq!(attrib.style().bg, Some(SCROLL_EDGE));
         let underside = buf.cell((sx, sy + 7)).unwrap();
         assert_eq!(underside.symbol(), "▄");
     }
