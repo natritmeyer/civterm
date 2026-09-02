@@ -8,13 +8,17 @@ use ratatui::{Frame, Terminal};
 use super::civ_selector::CivSelector;
 use super::competition_selector::CompetitionSelector;
 use super::difficulty_selector::DifficultySelector;
+use super::game_screen::GameScreen;
+use super::playing_help::PlayingHelp;
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
 use super::status_bar::{ITEMS, StatusBar};
-use crate::game_engine::{Engine, Player};
+use crate::game_engine::{Command, Engine, GameView, Player};
+use crate::model::cartography::Direction;
 use crate::model::civilizations::Civilization;
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
+use crate::model::units::UnitId;
 use strum::IntoEnumIterator;
 
 pub const STATUS_DELAY: Duration = Duration::from_secs(2);
@@ -27,6 +31,7 @@ enum Phase {
     ChoosingCompetition,
     ChoosingDifficulty,
     ReadyToStart,
+    Playing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +68,8 @@ pub struct App {
     chosen_difficulty: Option<Difficulty>,
     start_choice: StartChoice,
     engine: Option<Engine>,
+    selected_unit: Option<UnitId>,
+    show_help: bool,
 }
 
 impl Default for App {
@@ -85,6 +92,8 @@ impl App {
             chosen_difficulty: None,
             start_choice: StartChoice::Start,
             engine: None,
+            selected_unit: None,
+            show_help: false,
         }
     }
 
@@ -140,6 +149,34 @@ impl App {
                 ),
                 frame.area(),
             ),
+            Phase::Playing => {
+                if let Some(engine) = &app.engine {
+                    let area = frame.area();
+                    let focus = focus_coordinate(engine, app.selected_unit);
+                    let map_pane_width = area
+                        .width
+                        .saturating_sub(super::game_screen::LEFT_COLUMN_WIDTH);
+                    let pane_cols = (map_pane_width as usize) / 2;
+                    let camera = camera_for(
+                        focus,
+                        (engine.width(), engine.height()),
+                        (pane_cols, area.height as usize),
+                    );
+                    frame.render_widget(GameScreen::new(engine, focus, camera), area);
+                    if app.show_help {
+                        let bar = Rect {
+                            x: area.x,
+                            y: area.bottom().saturating_sub(1),
+                            width: area.width,
+                            height: 1,
+                        };
+                        frame.render_widget(
+                            PlayingHelp::new(&playing_commands(app.selected_unit.is_some())),
+                            bar,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -150,6 +187,7 @@ impl App {
             Phase::ChoosingCompetition => self.handle_competition_key(key),
             Phase::ChoosingDifficulty => self.handle_difficulty_key(key),
             Phase::ReadyToStart => self.handle_start_key(key),
+            Phase::Playing => self.handle_playing_key(key),
         }
     }
 
@@ -279,7 +317,6 @@ impl App {
             KeyCode::Char(c) => match c.to_ascii_lowercase() {
                 's' => {
                     self.start_game();
-                    self.phase = Phase::Menu;
                     false
                 }
                 'q' => true,
@@ -304,7 +341,6 @@ impl App {
             KeyCode::Enter => match self.start_choice {
                 StartChoice::Start => {
                     self.start_game();
-                    self.phase = Phase::Menu;
                     false
                 }
                 StartChoice::Quit => true,
@@ -331,18 +367,114 @@ impl App {
             let idx = rng.in_range(pool.len() as u32) as usize;
             rivals.push(pool.swap_remove(idx));
         }
-        self.engine = Some(Engine::new(
+        let mut engine = Engine::new(
             crate::game_engine::DEFAULT_MAP_WIDTH,
             crate::game_engine::DEFAULT_MAP_HEIGHT,
             Player::new(chosen),
             rivals.into_iter().map(Player::new).collect(),
-        ));
+        );
+        engine.populate_starting_world();
+        self.engine = Some(engine);
+        self.select_first_unit();
+        self.phase = Phase::Playing;
         self.reset_setup();
     }
 
     fn start_new_game(&mut self) {
         self.reset_setup();
         self.phase = Phase::ChoosingCiv;
+    }
+
+    fn handle_playing_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char(c) if c.eq_ignore_ascii_case(&'q') => {
+                self.phase = Phase::Menu;
+                false
+            }
+            KeyCode::Char('?') | KeyCode::F(1) => {
+                self.show_help = !self.show_help;
+                false
+            }
+            KeyCode::Esc => {
+                if self.show_help {
+                    self.show_help = false;
+                } else {
+                    self.phase = Phase::Menu;
+                }
+                false
+            }
+            KeyCode::Tab => {
+                self.cycle_unit_selection();
+                false
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_selected_unit(Direction::N);
+                false
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_selected_unit(Direction::S);
+                false
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.move_selected_unit(Direction::W);
+                false
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.move_selected_unit(Direction::E);
+                false
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                self.end_turn();
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn select_first_unit(&mut self) {
+        if let Some(engine) = &self.engine {
+            self.selected_unit = engine.player_units().first().map(|unit| unit.id());
+        } else {
+            self.selected_unit = None;
+        }
+    }
+
+    fn cycle_unit_selection(&mut self) {
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        let units = engine.player_units();
+        if units.is_empty() {
+            self.selected_unit = None;
+            return;
+        }
+        let next = match self.selected_unit {
+            Some(current) => {
+                let index = units
+                    .iter()
+                    .position(|unit| unit.id() == current)
+                    .unwrap_or(0);
+                (index + 1) % units.len()
+            }
+            None => 0,
+        };
+        self.selected_unit = Some(units[next].id());
+    }
+
+    fn move_selected_unit(&mut self, direction: Direction) {
+        let Some(unit) = self.selected_unit else {
+            return;
+        };
+        if let Some(engine) = &mut self.engine {
+            engine.submit(Command::Move { unit, direction });
+        }
+    }
+
+    fn end_turn(&mut self) {
+        if let Some(engine) = &mut self.engine {
+            engine.submit(Command::EndTurn);
+        }
+        self.select_first_unit();
     }
 
     fn reset_setup(&mut self) {
@@ -364,6 +496,59 @@ fn retreat(selected: usize, total: usize) -> usize {
     (selected + total - 1) % total
 }
 
+/// The command keystrokes available in the current playing context.
+fn playing_commands(selected: bool) -> Vec<(&'static str, &'static str)> {
+    let mut commands: Vec<(&'static str, &'static str)> = Vec::new();
+    if selected {
+        commands.push(("arrows", "move unit"));
+        commands.push(("f", "fortify"));
+        commands.push(("s", "sentry"));
+        commands.push(("w", "work"));
+        commands.push(("c", "cancel order"));
+    }
+    commands.push(("tab", "next unit"));
+    commands.push(("space", "end turn"));
+    commands.push(("?", "hide help"));
+    commands.push(("q", "quit"));
+    commands
+}
+
+/// Resolve the selected unit to its current map coordinate, for rendering the
+/// focus panel.
+fn focus_coordinate(engine: &Engine, selected: Option<UnitId>) -> Option<(usize, usize)> {
+    let unit = selected.and_then(|id| {
+        engine
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == id)
+    })?;
+    Some((unit.location.x as usize, unit.location.y as usize))
+}
+
+/// The world-tile coordinate for the top-left of the map pane. Centres on
+/// `focus` when there is one, clamped so the camera never shows tiles beyond a
+/// map edge. `pane` is the pane size measured in world tiles (cols, rows).
+fn camera_for(
+    focus: Option<(usize, usize)>,
+    map: (usize, usize),
+    pane: (usize, usize),
+) -> (usize, usize) {
+    let (map_w, map_h) = map;
+    let (pane_cols, pane_rows) = pane;
+    let (cx, cy) = match focus {
+        Some((x, y)) if pane_cols > 0 && pane_rows > 0 => {
+            let left = (x as isize - (pane_cols / 2) as isize).max(0);
+            let top = (y as isize - (pane_rows / 2) as isize).max(0);
+            // Keep the camera from revealing tiles off the far edge.
+            let left = map_w.saturating_sub(pane_cols).min(left as usize);
+            let top = map_h.saturating_sub(pane_rows).min(top as usize);
+            (left, top)
+        }
+        _ => (0, 0),
+    };
+    (cx, cy)
+}
+
 fn fade_progress(elapsed: Duration) -> f32 {
     let after_delay = elapsed.saturating_sub(STATUS_DELAY);
     (after_delay.as_secs_f32() / STATUS_FADE.as_secs_f32()).clamp(0.0, 1.0)
@@ -373,6 +558,7 @@ fn fade_progress(elapsed: Duration) -> f32 {
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::backend::TestBackend;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -624,7 +810,7 @@ mod tests {
         at_start(&mut app);
         app.handle_key(key(KeyCode::Enter));
         assert!(app.engine.is_some());
-        assert!(matches!(app.phase, Phase::Menu));
+        assert!(matches!(app.phase, Phase::Playing));
     }
 
     #[test]
@@ -644,7 +830,210 @@ mod tests {
         assert_eq!(app.chosen_civ, None);
         assert_eq!(app.chosen_competition, None);
         assert_eq!(app.chosen_difficulty, None);
-        assert!(matches!(app.phase, Phase::Menu));
+        assert!(matches!(app.phase, Phase::Playing));
+    }
+
+    #[test]
+    fn q_or_esc_from_the_game_returns_to_the_menu() {
+        for code in [KeyCode::Char('q'), KeyCode::Esc] {
+            let mut app = App::new();
+            at_start(&mut app);
+            app.handle_key(key(KeyCode::Char('s')));
+            assert!(matches!(app.phase, Phase::Playing));
+            app.handle_key(key(code));
+            assert!(matches!(app.phase, Phase::Menu));
+        }
+    }
+
+    #[test]
+    fn question_mark_toggles_the_command_help_bar() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        assert!(!app.show_help);
+        app.handle_key(key(KeyCode::Char('?')));
+        assert!(app.show_help);
+        app.handle_key(key(KeyCode::Char('?')));
+        assert!(!app.show_help);
+    }
+
+    #[test]
+    fn starting_the_game_selects_the_players_first_unit() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(
+            app.selected_unit,
+            engine.player_units().first().map(|unit| unit.id())
+        );
+    }
+
+    #[test]
+    fn space_ends_the_turn() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        let first_turn = app.engine.as_ref().unwrap().turn();
+
+        // With rivals, one space only passes play to the next player. Press
+        // space a bounded number of times until the turn number actually
+        // advances.
+        let mut turn = first_turn;
+        for _ in 0..8 {
+            app.handle_key(key(KeyCode::Char(' ')));
+            turn = app.engine.as_ref().unwrap().turn();
+            if turn != first_turn {
+                break;
+            }
+        }
+        assert!(
+            turn > first_turn,
+            "ending the turn did not advance the game"
+        );
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(
+            app.selected_unit,
+            engine.player_units().first().map(|unit| unit.id())
+        );
+    }
+
+    #[test]
+    fn camera_centres_on_the_focused_tile() {
+        // A 10x10 pane centred on (7, 9) half-width 5, half-height 5.
+        let camera = camera_for(Some((7, 9)), (20, 20), (10, 10));
+        assert_eq!(camera, (2, 4));
+    }
+
+    #[test]
+    fn camera_is_clamped_to_the_map_edges() {
+        // Near the origin: cannot go negative.
+        assert_eq!(camera_for(Some((0, 0)), (20, 20), (10, 10)), (0, 0));
+        // A pane larger than the map clamps to the origin.
+        assert_eq!(camera_for(Some((5, 5)), (10, 10), (40, 30)), (0, 0));
+        // Far edge: keep the rightmost column fully on the map.
+        assert_eq!(camera_for(Some((19, 0)), (20, 20), (10, 5)), (10, 0));
+        // No focus keeps the origin.
+        assert_eq!(camera_for(None, (80, 50), (40, 40)), (0, 0));
+    }
+
+    #[test]
+    fn moving_in_a_legal_direction_moves_the_selected_unit() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+
+        let engine = app.engine.as_ref().unwrap();
+        let unit = engine
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == app.selected_unit.unwrap())
+            .unwrap();
+        let before = unit.location;
+
+        // Find a neighbouring tile the settler can afford to step onto (open
+        // land costs 1 move; a settler has 1 move), regardless of the world.
+        let mut pressed = None;
+        for (code, dx, dy) in [
+            (KeyCode::Right, 1, 0),
+            (KeyCode::Left, -1, 0),
+            (KeyCode::Up, 0, -1),
+            (KeyCode::Down, 0, 1),
+        ] {
+            let nx = (before.x as isize + dx).clamp(0, engine.width() as isize - 1) as usize;
+            let ny = (before.y as isize + dy).clamp(0, engine.height() as isize - 1) as usize;
+            let terrain = engine.tile(nx, ny).geography;
+            if terrain.is_land() && terrain.movement_cost() <= 1 {
+                pressed = Some(code);
+                break;
+            }
+        }
+        let Some(code) = pressed else {
+            return; // no land neighbour; nothing legal to assert
+        };
+
+        app.handle_key(key(code));
+        let engine = app.engine.as_ref().unwrap();
+        let after = engine
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == app.selected_unit.unwrap())
+            .unwrap()
+            .location;
+        let dx = after.x as isize - before.x as isize;
+        let dy = after.y as isize - before.y as isize;
+        assert!(
+            dx.abs() + dy.abs() == 1,
+            "unit did not move by exactly one tile: {before:?} -> {after:?}"
+        );
+    }
+
+    #[test]
+    fn tab_cycles_between_the_players_units() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        let engine = app.engine.as_ref().unwrap();
+        let ids: Vec<UnitId> = engine.player_units().iter().map(|unit| unit.id()).collect();
+        if ids.len() < 2 {
+            // With a single starting settler there's nothing to cycle between.
+            return;
+        }
+        assert_eq!(app.selected_unit, Some(ids[0]));
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.selected_unit, Some(ids[1]));
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.selected_unit, Some(ids[0]));
+    }
+
+    #[test]
+    fn help_bar_overwrites_the_bottom_row_without_shifting_the_game() {
+        let render = |app: &App| {
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            terminal.draw(|frame| App::draw(frame, app)).unwrap();
+            terminal.backend().buffer().clone()
+        };
+
+        let mut begun = App::new();
+        at_start(&mut begun);
+        begun.handle_key(key(KeyCode::Char('s')));
+
+        let without_help = render(&begun);
+        begun.handle_key(key(KeyCode::Char('?')));
+        assert!(begun.show_help);
+        let with_help = render(&begun);
+
+        // The game content stays put: every row above the last is identical.
+        for y in 0..39 {
+            for x in 0..120 {
+                assert_eq!(
+                    with_help.cell((x, y)).unwrap().symbol(),
+                    without_help.cell((x, y)).unwrap().symbol(),
+                    "row {y} col {x} shifted by the help bar"
+                );
+            }
+        }
+        // The bottom row now carries the help text.
+        let bottom_with: String = (0..120)
+            .map(|x| with_help.cell((x, 39)).unwrap().symbol().to_string())
+            .collect();
+        assert!(bottom_with.contains("end turn"));
+    }
+
+    #[test]
+    fn play_commands_include_unit_actions_when_a_unit_is_focused() {
+        let commands = playing_commands(true);
+        assert!(commands.iter().any(|(k, _)| *k == "f"));
+        assert!(commands.iter().any(|(k, _)| *k == "arrows"));
+        assert!(commands.iter().any(|(k, _)| *k == "?"));
+        assert!(commands.iter().any(|(k, _)| *k == "tab"));
+    }
+
+    #[test]
+    fn play_commands_offer_navigation_when_nothing_is_focused() {
+        let commands = playing_commands(false);
+        assert!(commands.iter().any(|(k, _)| *k == "tab"));
+        assert!(!commands.iter().any(|(k, _)| *k == "f"));
     }
 
     #[test]

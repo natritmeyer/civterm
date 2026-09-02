@@ -6,9 +6,13 @@ use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::units::UnitClass;
 use strum::IntoEnumIterator;
 
+/// The gold a civilization begins a new game with.
+pub const STARTING_GOLD: u32 = 50;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Player {
     pub civilization: Civilization,
+    gold: u32,
     advancement_in_progress: Option<Advancement>,
     research_progress: u32,
     advances_made: Vec<Advancement>,
@@ -21,6 +25,7 @@ impl Player {
     pub fn new(civilization: Civilization) -> Self {
         Player {
             civilization,
+            gold: STARTING_GOLD,
             advancement_in_progress: None,
             research_progress: 0,
             advances_made: Vec::new(),
@@ -28,6 +33,10 @@ impl Player {
             at_war_with: Vec::new(),
             at_peace_with: Vec::new(),
         }
+    }
+
+    pub fn gold(&self) -> u32 {
+        self.gold
     }
 
     pub fn at_war_with(&self) -> &[PlayerId] {

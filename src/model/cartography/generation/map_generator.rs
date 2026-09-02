@@ -22,24 +22,14 @@ impl MapGenerator {
         &self.rng
     }
 
-    /// Generate a map by running the full pipeline of terrain methods,
-    /// drawing the map to the console after each step.
+    /// Generate a map by running the full pipeline of terrain methods.
     pub fn generate(&mut self, width: usize, height: usize) -> Map {
         let mut map = Map::new(width, height);
         self.set_to_ocean(&mut map);
-        self.draw("step 1: ocean", &map);
         self.set_border_tundra(&mut map);
-        self.draw("step 2: tundra borders", &map);
         self.seed_plains(&mut map, 4);
-        self.draw("step 3: plains seeds", &map);
         self.grow_continents(&mut map, 200);
-        self.draw("step 4: final map", &map);
         map
-    }
-
-    fn draw(&self, step: &str, map: &Map) {
-        println!("{step}");
-        println!("{}", map.render_ascii());
     }
 
     /// Set every tile on the map to ocean.

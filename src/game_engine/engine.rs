@@ -1,10 +1,11 @@
 use crate::game_engine::{Command, Event, GameView, Player};
 use crate::model::advancements::Advancement;
+use crate::model::cartography::generation::MapGenerator;
 use crate::model::cartography::{Direction, Location, Tile};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::geography::{Geography, GeographyImprovement};
-use crate::model::units::{Unit, UnitId};
+use crate::model::units::{Unit, UnitClass, UnitId};
 
 use super::game::Game;
 use crate::game_engine::{MoveError, SettleError};
@@ -12,6 +13,8 @@ use crate::utils::Rng;
 
 const DEFAULT_SEED: u64 = 0xC0FFEE;
 const HIT_POINTS: u32 = 10;
+/// Calendar years advanced per turn, mirroring classic Civ's early-game pacing.
+const YEARS_PER_TURN: i32 = 50;
 
 /// Default width of a generated world, mirroring classic Civ: 80 × 50.
 pub const DEFAULT_MAP_WIDTH: usize = 80;
@@ -57,6 +60,36 @@ impl Engine {
             current_player_index: PlayerId::new(0),
             events: Vec::new(),
             rng: Rng::new(seed),
+        }
+    }
+
+    /// Lay down real terrain and give every player a starting settler on a
+    /// random land tile. The settler's tile and its surroundings are revealed
+    /// to that player. Distinct starting tiles are chosen for each player.
+    pub fn populate_starting_world(&mut self) {
+        let width = self.game.map.width;
+        let height = self.game.map.height;
+
+        let mut generator = MapGenerator::with_rng(self.rng.clone());
+        let map = generator.generate(width, height);
+        self.game.map = map;
+
+        // Collect land tiles once so each player lands on a different one.
+        let mut land: Vec<Location> = (0..height)
+            .flat_map(|y| (0..width).map(move |x| Location::new(x as u16, y as u16)))
+            .filter(|location| self.game.map.tile_at(*location).geography.is_land())
+            .collect();
+
+        let player_count = self.game.players.len();
+        for index in 0..player_count {
+            if land.is_empty() {
+                break;
+            }
+            let pick = self.rng.in_range(land.len() as u32) as usize;
+            let location = land.swap_remove(pick);
+            let owner = PlayerId::new(index);
+            self.game
+                .spawn_unit(UnitClass::Settler, location, owner, CityId::new(0));
         }
     }
 
@@ -243,7 +276,11 @@ impl Engine {
         let destination = self.ensure_destination_on_map(unit.location, direction)?;
         self.ensure_medium_access(unit, destination)?;
         self.ensure_peaceful_passage(unit, destination)?;
-        let cost = self.ensure_affordable(unit, destination)?;
+        // The move is made first and the cost is then deducted from the
+        // budget, so a unit only needs *some* movement left, not a full
+        // tile's worth. A slow unit enters dense/mountain terrain but is
+        // exhausted by it; a fast unit is slowed to one tile per move.
+        let cost = self.game.map.tile_at(destination).geography.movement_cost();
         Ok((destination, cost))
     }
 
@@ -303,15 +340,6 @@ impl Engine {
             .map
             .destination(from, direction)
             .ok_or(MoveError::CannotMoveThere)
-    }
-
-    fn ensure_affordable(&self, unit: &Unit, destination: Location) -> Result<u8, MoveError> {
-        let cost = self.game.map.tile_at(destination).geography.movement_cost();
-        if unit.moves_remaining() >= cost {
-            Ok(cost)
-        } else {
-            Err(MoveError::TerrainTooDifficult(unit.id()))
-        }
     }
 
     fn fortify(&mut self, unit: UnitId) {
@@ -786,6 +814,14 @@ impl GameView for Engine {
             .find(|city| city.location.x == x as u16 && city.location.y == y as u16)
     }
 
+    fn player_units(&self) -> Vec<&Unit> {
+        self.game
+            .units
+            .iter()
+            .filter(|unit| unit.owner() == self.current_player_index)
+            .collect()
+    }
+
     fn explored(&self, x: usize, y: usize) -> bool {
         self.game.players[self.current_player_index.index()].explored_at(x, y)
     }
@@ -796,6 +832,33 @@ impl GameView for Engine {
 
     fn turn(&self) -> u32 {
         self.turn
+    }
+
+    fn year(&self) -> i32 {
+        let elapsed = (self.turn - 1) as i32 * YEARS_PER_TURN;
+        4000 - elapsed
+    }
+
+    fn gold(&self) -> u32 {
+        self.game.players[self.current_player_index.index()].gold()
+    }
+
+    fn advancement_in_progress(&self) -> Option<Advancement> {
+        self.game.advancement_in_progress(self.current_player_index)
+    }
+
+    fn research_progress(&self) -> u32 {
+        self.game.research_progress(self.current_player_index)
+    }
+
+    fn research_cost(&self) -> Option<u32> {
+        self.game
+            .advancement_in_progress(self.current_player_index)
+            .map(|advancement| advancement.cost())
+    }
+
+    fn research_income(&self) -> u32 {
+        self.game.research_income(self.current_player_index)
     }
 }
 
@@ -828,6 +891,73 @@ mod tests {
             CityId::new(0),
         );
         engine
+    }
+
+    #[test]
+    fn populate_starting_world_gives_every_player_a_settler_on_land_with_reveals() {
+        let mut engine = Engine::new(
+            12,
+            10,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.populate_starting_world();
+
+        for index in 0..engine.game.players.len() {
+            let owner = PlayerId::new(index);
+            let settler = engine
+                .game
+                .units
+                .iter()
+                .find(|unit| unit.owner() == owner && unit.unit_class == UnitClass::Settler)
+                .expect("every player starts with a settler");
+            let location = settler.location;
+            assert!(
+                engine.game.map.tile_at(location).geography.is_land(),
+                "settler must sit on land at {location:?}"
+            );
+            assert!(
+                engine.game.players[index].explored_at(location.x as usize, location.y as usize),
+                "the settler's tile is revealed"
+            );
+            assert!(
+                engine.game.players[index]
+                    .explored_at(location.x as usize + 1, location.y as usize),
+                "the tile beside the settler is revealed"
+            );
+        }
+    }
+
+    #[test]
+    fn populate_starting_world_places_each_settler_on_a_distinct_tile() {
+        let mut engine = Engine::new(
+            12,
+            10,
+            Player::new(Civilization::English),
+            (0..4)
+                .map(|i| {
+                    Player::new(match i {
+                        0 => Civilization::Roman,
+                        1 => Civilization::Greek,
+                        2 => Civilization::Zulu,
+                        _ => Civilization::American,
+                    })
+                })
+                .collect(),
+        );
+        engine.populate_starting_world();
+        let locations: Vec<(u16, u16)> = engine
+            .game
+            .units
+            .iter()
+            .map(|unit| (unit.location.x, unit.location.y))
+            .collect();
+        let unique: std::collections::HashSet<(u16, u16)> = locations.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            locations.len(),
+            "each settler lands on its own tile"
+        );
     }
 
     fn two_player_engine() -> Engine {
@@ -1142,7 +1272,7 @@ mod tests {
     }
 
     #[test]
-    fn difficult_terrain_costs_more_moves_points() {
+    fn difficult_terrain_slows_a_fast_unit_to_one_tile_at_a_time() {
         let mut engine = Engine::new(5, 1, Player::new(Civilization::English), Vec::new());
         engine.game.spawn_unit(
             UnitClass::Cavalry,
@@ -1153,28 +1283,34 @@ mod tests {
         engine.game.map.tile_at_mut(Location::new(0, 0)).geography = Geography::Grassland;
         engine.game.map.tile_at_mut(Location::new(1, 0)).geography = Geography::Forest;
         engine.game.map.tile_at_mut(Location::new(2, 0)).geography = Geography::Forest;
+        // Grassland the unit stands on does not cost movement; entering the
+        // second forest has an empty budget by then, so it stays put.
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
         });
         assert_eq!(engine.game.units[0].location, Location::new(1, 0));
+        // Cavalry has 3 moves; a forest costs 2, so one tile leaves 1 left.
         assert_eq!(engine.game.units[0].moves_remaining(), 1);
+        // Entering the second forest with only 1 left still moves but drains
+        // the budget to zero (move first, then deduct the full cost).
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+        assert_eq!(engine.game.units[0].location, Location::new(2, 0));
+        assert_eq!(engine.game.units[0].moves_remaining(), 0);
+        // With no movement left the unit cannot take another tile.
         let events = engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
         });
-        assert_eq!(events[0].message(), "Terrain too difficult");
-        assert_eq!(engine.game.units[0].location, Location::new(1, 0));
-        engine.submit(Command::Move {
-            unit: UnitId::new(0),
-            direction: Direction::W,
-        });
-        assert_eq!(engine.game.units[0].location, Location::new(0, 0));
-        assert_eq!(engine.game.units[0].moves_remaining(), 0);
+        assert_eq!(events[0].message(), "Unit 0 has no moves left");
+        assert_eq!(engine.game.units[0].location, Location::new(2, 0));
     }
 
     #[test]
-    fn a_unit_without_enough_moves_cannot_enter_difficult_terrain() {
+    fn a_slow_unit_can_enter_difficult_terrain_at_cost_of_its_movement() {
         let mut engine = Engine::new(5, 1, Player::new(Civilization::English), Vec::new());
         engine.game.spawn_unit(
             UnitClass::Settler,
@@ -1183,13 +1319,14 @@ mod tests {
             CityId::new(0),
         );
         engine.game.map.tile_at_mut(Location::new(1, 0)).geography = Geography::Forest;
-        let events = engine.submit(Command::Move {
+        // A settler has 1 move; entering the forest still happens because the
+        // move is made first, then the 2-cost forest drains the budget.
+        engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
         });
-        assert_eq!(events[0].message(), "Terrain too difficult");
-        assert_eq!(engine.game.units[0].location, Location::new(0, 0));
-        assert_eq!(engine.game.units[0].moves_remaining(), 1);
+        assert_eq!(engine.game.units[0].location, Location::new(1, 0));
+        assert_eq!(engine.game.units[0].moves_remaining(), 0);
     }
 
     #[test]
