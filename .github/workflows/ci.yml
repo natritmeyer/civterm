@@ -20,14 +20,5 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Format check
-        run: cargo fmt --all -- --check
-
-      - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Build
-        run: cargo build
-
-      - name: Test
-        run: cargo test
+      - name: Build and test (make build)
+        run: make build
