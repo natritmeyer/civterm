@@ -281,7 +281,10 @@ pub(crate) struct CityProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::cartography::Tile;
+    use crate::model::cities::CityImprovement;
     use crate::model::civilizations::Civilization;
+    use crate::model::geography::Geography;
 
     fn player() -> PlayerId {
         PlayerId::new(0)
@@ -480,5 +483,294 @@ mod tests {
         game.make_peace(PlayerId::new(0), PlayerId::new(1));
         assert!(!game.at_war(PlayerId::new(0), PlayerId::new(1)));
         assert!(game.at_peace(PlayerId::new(0), PlayerId::new(1)));
+    }
+
+    #[test]
+    fn met_reflects_war_or_peace() {
+        let mut game = Game::new(
+            3,
+            2,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        assert!(!game.met(PlayerId::new(0), PlayerId::new(1)));
+        game.make_peace(PlayerId::new(0), PlayerId::new(1));
+        assert!(game.met(PlayerId::new(0), PlayerId::new(1)));
+        assert!(game.met(PlayerId::new(1), PlayerId::new(0)));
+        game.declare_war(PlayerId::new(0), PlayerId::new(1));
+        assert!(game.met(PlayerId::new(0), PlayerId::new(1)));
+        assert!(!game.met(PlayerId::new(0), PlayerId::new(0)));
+    }
+
+    #[test]
+    fn revealing_around_a_city_marks_its_footprint_for_the_owner() {
+        let mut game = Game::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        game.reveal_tiles_surrounding_city_at(PlayerId::new(0), Location::new(2, 2));
+        for y in 0..5 {
+            for x in 0..5 {
+                let corner = (x == 0 || x == 4) && (y == 0 || y == 4);
+                assert_eq!(
+                    game.players[0].explored_at(x, y),
+                    !corner,
+                    "tile ({x}, {y})"
+                );
+            }
+        }
+        assert!(!game.players[1].explored_at(2, 2));
+    }
+
+    #[test]
+    fn disbanding_units_sorted_by_home_city_removes_only_those() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        let first = game.spawn_unit(UnitClass::Legion, Location::new(0, 0), player(), home());
+        let second = game.spawn_unit(UnitClass::Legion, Location::new(1, 0), player(), home());
+        let other = game.spawn_unit(
+            UnitClass::Diplomat,
+            Location::new(2, 0),
+            player(),
+            CityId::new(1),
+        );
+        assert_eq!(game.disband_units_homed_to(home()), 2);
+        assert_eq!(game.units.len(), 1);
+        assert!(game.units.iter().any(|unit| unit.id() == other));
+        assert!(!game.units.iter().any(|unit| unit.id() == first));
+        assert!(!game.units.iter().any(|unit| unit.id() == second));
+    }
+
+    #[test]
+    fn disbanding_with_no_matching_home_disbands_nothing() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            player(),
+            CityId::new(1),
+        );
+        assert_eq!(game.disband_units_homed_to(home()), 0);
+        assert_eq!(game.units.len(), 1);
+    }
+
+    #[test]
+    fn owned_units_returns_only_that_owners_units() {
+        let mut game = Game::new(
+            3,
+            2,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        let mine_first = game.spawn_unit(UnitClass::Settler, Location::new(0, 0), player(), home());
+        let mine_second = game.spawn_unit(UnitClass::Legion, Location::new(1, 0), player(), home());
+        let theirs = game.spawn_unit(
+            UnitClass::Diplomat,
+            Location::new(2, 0),
+            PlayerId::new(1),
+            CityId::new(0),
+        );
+        assert_eq!(game.owned_units(player()), vec![mine_first, mine_second]);
+        assert_eq!(game.owned_units(PlayerId::new(1)), vec![theirs]);
+    }
+
+    #[test]
+    fn city_income_sums_city_centre_and_worked_tiles() {
+        let mut game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
+        let london = game.add_city(player(), "London", Location::new(2, 2));
+        let grassland = Location::new(1, 2);
+        *game.map.tile_at_mut(grassland) = Tile::new(Geography::Grassland);
+        let mut plains = Tile::new(Geography::Plains);
+        plains.irrigate().unwrap();
+        *game.map.tile_at_mut(Location::new(3, 2)) = plains;
+        game.cities[0].add_worked_tile(grassland);
+        game.cities[0].add_worked_tile(Location::new(3, 2));
+        // centre ocean 2/0 + grassland 2/0 + irrigated plains 3/1
+        assert_eq!(game.city_income(london), (7, 1));
+    }
+
+    #[test]
+    fn research_income_sums_the_players_city_research() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        game.add_city(player(), "London", Location::new(1, 0));
+        game.add_city(player(), "York", Location::new(1, 1));
+        assert_eq!(game.research_income(player()), 2);
+        for _ in 0..3 {
+            game.cities[0].grow();
+        }
+        assert_eq!(game.research_income(player()), 5);
+        game.cities[0].add_improvement(CityImprovement::Library);
+        assert_eq!(game.research_income(player()), 7);
+    }
+
+    #[test]
+    fn can_research_requires_prerequisites_and_newness() {
+        let mut game = Game::new(3, 1, Player::new(Civilization::English), Vec::new());
+        game.add_city(player(), "London", Location::new(1, 0));
+        for _ in 0..8 {
+            game.cities[0].grow();
+        }
+        game.cities[0].add_improvement(CityImprovement::Library);
+        game.cities[0].add_improvement(CityImprovement::University);
+        assert_eq!(game.research_income(player()), 20);
+
+        assert!(game.can_research(player(), Advancement::Wheel));
+        assert!(!game.can_research(player(), Advancement::Currency));
+        assert!(!game.can_research(player(), Advancement::Astronomy));
+
+        game.set_research_target(player(), Advancement::Wheel);
+        assert_eq!(game.advance_research(player()), None);
+        assert_eq!(game.advance_research(player()), Some(Advancement::Wheel));
+        assert!(!game.can_research(player(), Advancement::Wheel));
+
+        game.set_research_target(player(), Advancement::BronzeWorking);
+        assert_eq!(game.advance_research(player()), None);
+        assert_eq!(
+            game.advance_research(player()),
+            Some(Advancement::BronzeWorking)
+        );
+        assert!(game.can_research(player(), Advancement::Currency));
+    }
+
+    #[test]
+    fn research_state_is_exposed_through_the_game() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        assert_eq!(game.advancement_in_progress(player()), None);
+        game.begin_research(player());
+        assert_eq!(
+            game.advancement_in_progress(player()),
+            Some(Advancement::Construction)
+        );
+        assert_eq!(game.research_progress(player()), 0);
+        game.set_research_target(player(), Advancement::Wheel);
+        assert_eq!(
+            game.advancement_in_progress(player()),
+            Some(Advancement::Wheel)
+        );
+    }
+
+    #[test]
+    fn research_progress_accumulates_and_resets_on_discovery() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        game.add_city(player(), "London", Location::new(1, 0));
+        for _ in 0..3 {
+            game.cities[0].grow();
+        }
+        game.cities[0].add_improvement(CityImprovement::Library);
+        assert_eq!(game.research_income(player()), 6);
+
+        game.set_research_target(player(), Advancement::Wheel);
+        game.advance_research(player());
+        assert_eq!(game.research_progress(player()), 6);
+        for _ in 0..6 {
+            game.advance_research(player());
+        }
+        assert_eq!(game.research_progress(player()), 0);
+        assert_eq!(game.advancement_in_progress(player()), None);
+        assert!(game.players[0].has_advancement(Advancement::Wheel));
+    }
+
+    #[test]
+    fn city_footprint_is_the_21_tile_ring_diamond() {
+        let game = Game::new(7, 7, Player::new(Civilization::English), Vec::new());
+        let footprint = game.city_footprint(Location::new(3, 3));
+        assert_eq!(footprint.len(), 21);
+        assert!(footprint.contains(&Location::new(3, 3)));
+        assert!(footprint.contains(&Location::new(3, 1)));
+        assert!(footprint.contains(&Location::new(5, 3)));
+        assert!(footprint.contains(&Location::new(1, 2)));
+        assert!(!footprint.contains(&Location::new(1, 1)));
+        assert!(!footprint.contains(&Location::new(5, 5)));
+    }
+
+    #[test]
+    fn city_footprint_wraps_around_east_and_west() {
+        let game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
+        let footprint = game.city_footprint(Location::new(0, 2));
+        assert!(footprint.contains(&Location::new(4, 2)));
+        assert!(footprint.contains(&Location::new(1, 2)));
+        assert_eq!(footprint.len(), 21);
+    }
+
+    #[test]
+    fn city_footprint_clamps_north_and_south() {
+        let game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
+        let footprint = game.city_footprint(Location::new(2, 0));
+        assert!(footprint.contains(&Location::new(2, 0)));
+        assert!(footprint.contains(&Location::new(2, 2)));
+        assert!(!footprint.iter().any(|location| location.y >= 3));
+        assert_eq!(footprint.len(), 13);
+    }
+
+    #[test]
+    fn auto_assign_work_chooses_the_most_resource_productive_tiles() {
+        let mut game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
+        let london = game.add_city(player(), "London", Location::new(2, 2));
+        game.cities[0].grow();
+        *game.map.tile_at_mut(Location::new(3, 2)) = Tile::new(Geography::Desert);
+        *game.map.tile_at_mut(Location::new(1, 2)) = Tile::new(Geography::Desert);
+        game.auto_assign_work(london);
+        let worked = game.cities[0].worked_tiles().to_vec();
+        assert_eq!(worked.len(), 2);
+        assert!(worked.contains(&Location::new(3, 2)));
+        assert!(worked.contains(&Location::new(1, 2)));
+    }
+
+    #[test]
+    fn auto_assign_work_leaves_a_fully_worked_city_alone() {
+        let mut game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
+        let london = game.add_city(player(), "London", Location::new(2, 2));
+        game.cities[0].add_worked_tile(Location::new(3, 2));
+        game.auto_assign_work(london);
+        assert_eq!(game.cities[0].worked_tiles().len(), 1);
+    }
+
+    #[test]
+    fn processing_a_city_grows_it_and_reports_the_outcome() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        let mut centre = Tile::new(Geography::Grassland);
+        centre.irrigate().unwrap();
+        *game.map.tile_at_mut(Location::new(1, 0)) = centre;
+        let london = game.add_city(player(), "London", Location::new(1, 0));
+        let first = game.process_city(london);
+        assert!(!first.grew);
+        assert!(!first.starving);
+        let second = game.process_city(london);
+        assert!(second.grew);
+        assert_eq!(game.cities[0].population(), 2);
+    }
+
+    #[test]
+    fn processing_a_starving_city_reports_starvation() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        *game.map.tile_at_mut(Location::new(1, 0)) = Tile::new(Geography::Mountain);
+        let london = game.add_city(player(), "London", Location::new(1, 0));
+        let outcome = game.process_city(london);
+        assert!(outcome.starving);
+        assert_eq!(outcome.produced, 1);
+        assert!(!outcome.grew);
+        assert_eq!(game.cities[0].food(), 0);
+    }
+
+    #[test]
+    fn processing_a_city_completes_production_when_resources_suffice() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        let mut centre = Tile::new(Geography::Mountain);
+        centre.mine().unwrap();
+        *game.map.tile_at_mut(Location::new(1, 0)) = centre;
+        let london = game.add_city(player(), "London", Location::new(1, 0));
+        game.cities[0].set_production(ProductionTarget::Unit(UnitClass::Militia));
+        for _ in 0..4 {
+            let outcome = game.process_city(london);
+            assert_eq!(outcome.completed, None);
+        }
+        let fifth = game.process_city(london);
+        assert_eq!(
+            fifth.completed,
+            Some(ProductionTarget::Unit(UnitClass::Militia))
+        );
+        assert_eq!(game.cities[0].production_target(), None);
+        assert_eq!(game.cities[0].resource_stored(), 0);
     }
 }
