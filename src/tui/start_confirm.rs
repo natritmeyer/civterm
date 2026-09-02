@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
 use super::splash::SPACE_BG;
-use super::theme::{ACCENT, DIM, draw_text};
+use super::theme::{ACCENT, DIM, HIGHLIGHT_BG, draw_text};
 use crate::model::civilizations::Civilization;
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
@@ -21,6 +21,7 @@ const VALUE_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
 
 #[derive(Clone, Copy)]
 pub struct StartConfirm {
+    selected: usize,
     civilization: Civilization,
     competition: Competition,
     difficulty: Difficulty,
@@ -31,8 +32,10 @@ impl StartConfirm {
         civilization: Civilization,
         competition: Competition,
         difficulty: Difficulty,
+        selected: usize,
     ) -> Self {
         Self {
+            selected,
             civilization,
             competition,
             difficulty,
@@ -98,22 +101,24 @@ impl Widget for StartConfirm {
             self.difficulty.display_name(),
         );
 
-        draw_text(
-            buf,
-            area.right(),
-            cx.saturating_sub(2),
-            top + 7,
-            "▸ Start",
-            START_STYLE,
-        );
-        draw_text(
-            buf,
-            area.right(),
-            cx.saturating_sub(2),
-            top + 8,
-            "▸ Quit",
-            QUIT_STYLE,
-        );
+        let options = [
+            (top + 7, "Start", START_STYLE),
+            (top + 8, "Quit", QUIT_STYLE),
+        ];
+        for (i, (y, text, style)) in options.iter().enumerate() {
+            let y = *y;
+            let is_selected = i == self.selected;
+            if is_selected {
+                let band_end = (cx.saturating_sub(2) + 1 + text.len() as u16).min(area.right());
+                for x in cx.saturating_sub(2)..band_end {
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_symbol(" ");
+                        cell.set_bg(HIGHLIGHT_BG);
+                    }
+                }
+            }
+            draw_text(buf, area.right(), cx.saturating_sub(2), y, text, *style);
+        }
 
         let footer_y = area.bottom().saturating_sub(1);
         draw_text(
@@ -156,7 +161,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    StartConfirm::new(civilization, competition, difficulty),
+                    StartConfirm::new(civilization, competition, difficulty, 0),
                     frame.area(),
                 )
             })
@@ -238,8 +243,22 @@ mod tests {
         let quit_row: String = (0..100)
             .filter_map(|x| buf.cell((x, 28)).map(|c| c.symbol().to_string()))
             .collect();
-        assert_eq!(start_row.trim(), "▸ Start");
-        assert_eq!(quit_row.trim(), "▸ Quit");
+        assert_eq!(start_row.trim(), "Start");
+        assert_eq!(quit_row.trim(), "Quit");
+    }
+
+    #[test]
+    fn the_selected_option_is_highlighted() {
+        let buf = render();
+        let y = 27;
+        for x in 48..(48 + 5) {
+            assert_eq!(
+                buf.cell((x, y)).unwrap().style().bg,
+                Some(HIGHLIGHT_BG),
+                "column {x} should be highlighted"
+            );
+        }
+        assert_ne!(buf.cell((48, 28)).unwrap().style().bg, Some(HIGHLIGHT_BG));
     }
 
     #[test]

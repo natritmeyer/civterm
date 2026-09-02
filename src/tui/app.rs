@@ -29,6 +29,28 @@ enum Phase {
     ReadyToStart,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StartChoice {
+    Start,
+    Quit,
+}
+
+impl StartChoice {
+    fn next(self) -> Self {
+        match self {
+            StartChoice::Start => StartChoice::Quit,
+            StartChoice::Quit => StartChoice::Start,
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            StartChoice::Start => 0,
+            StartChoice::Quit => 1,
+        }
+    }
+}
+
 pub struct App {
     started_at: Instant,
     selected: usize,
@@ -39,6 +61,7 @@ pub struct App {
     chosen_competition: Option<Competition>,
     difficulty_index: usize,
     chosen_difficulty: Option<Difficulty>,
+    start_choice: StartChoice,
     engine: Option<Engine>,
 }
 
@@ -60,6 +83,7 @@ impl App {
             chosen_competition: None,
             difficulty_index: 0,
             chosen_difficulty: None,
+            start_choice: StartChoice::Start,
             engine: None,
         }
     }
@@ -112,6 +136,7 @@ impl App {
                     app.chosen_civ.unwrap(),
                     app.chosen_competition.unwrap(),
                     app.chosen_difficulty.unwrap(),
+                    app.start_choice.index(),
                 ),
                 frame.area(),
             ),
@@ -258,7 +283,31 @@ impl App {
                     false
                 }
                 'q' => true,
+                'k' => {
+                    self.start_choice = self.start_choice.next();
+                    false
+                }
+                'j' => {
+                    self.start_choice = self.start_choice.next();
+                    false
+                }
                 _ => false,
+            },
+            KeyCode::Up => {
+                self.start_choice = self.start_choice.next();
+                false
+            }
+            KeyCode::Down => {
+                self.start_choice = self.start_choice.next();
+                false
+            }
+            KeyCode::Enter => match self.start_choice {
+                StartChoice::Start => {
+                    self.start_game();
+                    self.phase = Phase::Menu;
+                    false
+                }
+                StartChoice::Quit => true,
             },
             KeyCode::Esc => {
                 self.phase = Phase::ChoosingDifficulty;
@@ -303,6 +352,7 @@ impl App {
         self.chosen_competition = None;
         self.difficulty_index = 0;
         self.chosen_difficulty = None;
+        self.start_choice = StartChoice::Start;
     }
 }
 
@@ -549,6 +599,40 @@ mod tests {
             at_start(&mut app);
             assert!(app.handle_key(key(code)));
         }
+    }
+
+    #[test]
+    fn arrows_and_j_k_move_the_start_selection() {
+        let mut app = App::new();
+        at_start(&mut app);
+        assert_eq!(app.start_choice, StartChoice::Start);
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.start_choice, StartChoice::Quit);
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(app.start_choice, StartChoice::Start);
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.start_choice, StartChoice::Quit);
+        app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(app.start_choice, StartChoice::Start);
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.start_choice, StartChoice::Quit);
+    }
+
+    #[test]
+    fn enter_on_the_selected_start_option_begins() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.engine.is_some());
+        assert!(matches!(app.phase, Phase::Menu));
+    }
+
+    #[test]
+    fn enter_on_quit_exits_from_the_start_prompt() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Down));
+        assert!(app.handle_key(key(KeyCode::Enter)));
     }
 
     #[test]
