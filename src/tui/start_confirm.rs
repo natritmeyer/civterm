@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
 use super::splash::SPACE_BG;
-use super::theme::{draw_text, ACCENT, DIM};
+use super::theme::{ACCENT, DIM, draw_text};
 use crate::model::civilizations::Civilization;
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
@@ -136,8 +136,8 @@ fn draw_row(buf: &mut Buffer, right: u16, x: u16, y: u16, label: &'static str, v
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     fn render() -> Buffer {
         render_with(
