@@ -8,7 +8,7 @@ pub mod game_view;
 pub mod player;
 
 pub use command::Command;
-pub use engine::Engine;
+pub use engine::{DEFAULT_MAP_HEIGHT, DEFAULT_MAP_WIDTH, Engine};
 pub use errors::{MoveError, SettleError};
 pub use event::Event;
 pub use exploration::Exploration;

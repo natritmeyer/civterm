@@ -3,6 +3,7 @@ pub mod civ_selector;
 pub mod competition_selector;
 pub mod difficulty_selector;
 pub mod splash;
+pub mod start_confirm;
 pub mod status_bar;
 pub mod theme;
 pub use app::App;
