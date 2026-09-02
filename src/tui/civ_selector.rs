@@ -5,6 +5,7 @@ use ratatui::widgets::Widget;
 use strum::IntoEnumIterator;
 
 use super::splash::SPACE_BG;
+use super::theme::{ACCENT, DIM, HIGHLIGHT_BG, draw_text};
 use crate::model::civilizations::Civilization;
 
 fn color_of(civ: Civilization) -> Color {
@@ -29,9 +30,6 @@ fn color_of(civ: Civilization) -> Color {
 const HEADER: &str = "CHOOSE YOUR CIVILIZATION";
 const SUBTITLE: &str = "Build an empire that will stand the test of time";
 const FOOTER: &str = "↑ ↓ choose a civilization   ·   Enter select   ·   Esc back";
-const ACCENT: Color = Color::Rgb(212, 175, 55);
-const DIM: Color = Color::Rgb(120, 120, 160);
-const HIGHLIGHT_BG: Color = Color::Rgb(45, 45, 95);
 const LIST_X_OFFSET: u16 = 6;
 const LIST_TOP: u16 = 4;
 const BAND_WIDTH: u16 = 20;
@@ -62,18 +60,6 @@ fn divider_x(area: Rect) -> u16 {
 
 fn detail_x(area: Rect) -> u16 {
     divider_x(area) + 3
-}
-
-fn draw_text(buf: &mut Buffer, area_right: u16, x: u16, y: u16, text: &str, style: Style) {
-    for (offset, ch) in (x..).zip(text.chars()) {
-        if offset >= area_right {
-            return;
-        }
-        if let Some(cell) = buf.cell_mut((offset, y)) {
-            cell.set_symbol(&ch.to_string());
-            cell.set_style(style);
-        }
-    }
 }
 
 impl Widget for CivSelector {

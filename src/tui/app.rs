@@ -6,9 +6,11 @@ use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
 use super::civ_selector::CivSelector;
+use super::difficulty_selector::DifficultySelector;
 use super::splash::SplashScreen;
 use super::status_bar::{ITEMS, StatusBar};
 use crate::model::civilizations::Civilization;
+use crate::model::difficulty::Difficulty;
 use strum::IntoEnumIterator;
 
 pub const STATUS_DELAY: Duration = Duration::from_secs(2);
@@ -18,6 +20,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 enum Phase {
     Menu,
     ChoosingCiv,
+    ChoosingDifficulty,
 }
 
 pub struct App {
@@ -26,6 +29,8 @@ pub struct App {
     phase: Phase,
     civ_index: usize,
     chosen_civ: Option<Civilization>,
+    difficulty_index: usize,
+    chosen_difficulty: Option<Difficulty>,
 }
 
 impl Default for App {
@@ -42,6 +47,8 @@ impl App {
             phase: Phase::Menu,
             civ_index: 0,
             chosen_civ: None,
+            difficulty_index: 0,
+            chosen_difficulty: None,
         }
     }
 
@@ -80,6 +87,10 @@ impl App {
                 CivSelector::new(app.civ_index, app.chosen_civ),
                 frame.area(),
             ),
+            Phase::ChoosingDifficulty => frame.render_widget(
+                DifficultySelector::new(app.difficulty_index, app.chosen_difficulty),
+                frame.area(),
+            ),
         }
     }
 
@@ -87,6 +98,7 @@ impl App {
         match self.phase {
             Phase::Menu => self.handle_menu_key(key),
             Phase::ChoosingCiv => self.handle_civ_key(key),
+            Phase::ChoosingDifficulty => self.handle_difficulty_key(key),
         }
     }
 
@@ -141,6 +153,8 @@ impl App {
             }
             KeyCode::Enter => {
                 self.chosen_civ = Civilization::iter().nth(self.civ_index);
+                self.phase = Phase::ChoosingDifficulty;
+                self.difficulty_index = 0;
                 false
             }
             KeyCode::Esc => {
@@ -151,10 +165,38 @@ impl App {
         }
     }
 
+    fn handle_difficulty_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char(c) if c.eq_ignore_ascii_case(&'q') => {
+                self.phase = Phase::Menu;
+                false
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.difficulty_index = retreat(self.difficulty_index, Difficulty::iter().count());
+                false
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.difficulty_index = advance(self.difficulty_index, Difficulty::iter().count());
+                false
+            }
+            KeyCode::Enter => {
+                self.chosen_difficulty = Difficulty::iter().nth(self.difficulty_index);
+                false
+            }
+            KeyCode::Esc => {
+                self.phase = Phase::ChoosingCiv;
+                false
+            }
+            _ => false,
+        }
+    }
+
     fn start_new_game(&mut self) {
         self.phase = Phase::ChoosingCiv;
         self.civ_index = 0;
         self.chosen_civ = None;
+        self.difficulty_index = 0;
+        self.chosen_difficulty = None;
     }
 }
 
@@ -244,13 +286,76 @@ mod tests {
     }
 
     #[test]
-    fn choosing_a_civ_stores_it() {
+    fn choosing_a_civ_stores_it_and_moves_to_difficulty() {
         let mut app = App::new();
         app.start_new_game();
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Enter));
         assert_eq!(app.chosen_civ, Some(Civilization::Babylonian));
+        assert!(matches!(app.phase, Phase::ChoosingDifficulty));
+    }
+
+    #[test]
+    fn difficulty_arrows_and_j_k_move_the_selection() {
+        let mut app = App::new();
+        app.start_new_game();
+        app.handle_key(key(KeyCode::Enter)); // accept default civ, on to difficulty
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.difficulty_index, 1);
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(app.difficulty_index, 2);
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.difficulty_index, 1);
+        app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(app.difficulty_index, 0);
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.difficulty_index, Difficulty::iter().count() - 1);
+    }
+
+    #[test]
+    fn choosing_a_difficulty_stores_it() {
+        let mut app = App::new();
+        app.start_new_game();
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.chosen_difficulty, Some(Difficulty::Normal));
+    }
+
+    #[test]
+    fn esc_from_difficulty_returns_to_the_civ_selector() {
+        let mut app = App::new();
+        app.start_new_game();
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.phase, Phase::ChoosingCiv));
+        assert_eq!(app.chosen_civ, Some(Civilization::American));
+    }
+
+    #[test]
+    fn q_from_difficulty_returns_to_the_menu() {
+        for code in [KeyCode::Char('q'), KeyCode::Char('Q')] {
+            let mut app = App::new();
+            app.start_new_game();
+            app.handle_key(key(KeyCode::Enter));
+            assert!(!app.handle_key(key(code)));
+            assert!(matches!(app.phase, Phase::Menu));
+        }
+    }
+
+    #[test]
+    fn starting_a_new_game_resets_difficulty() {
+        let mut app = App::new();
+        app.start_new_game();
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.chosen_difficulty, Some(Difficulty::Normal));
+        app.start_new_game();
+        assert_eq!(app.chosen_difficulty, None);
+        assert_eq!(app.difficulty_index, 0);
+        assert!(matches!(app.phase, Phase::ChoosingCiv));
     }
 
     #[test]
