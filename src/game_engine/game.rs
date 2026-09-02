@@ -44,7 +44,7 @@ impl Game {
             || self.players[b.index()].at_peace_with.contains(&a)
     }
 
-    pub fn met(&self, a: PlayerId, b: PlayerId) -> bool {
+    pub fn have_met(&self, a: PlayerId, b: PlayerId) -> bool {
         self.at_war(a, b) || self.at_peace(a, b)
     }
 
@@ -493,13 +493,13 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        assert!(!game.met(PlayerId::new(0), PlayerId::new(1)));
+        assert!(!game.have_met(PlayerId::new(0), PlayerId::new(1)));
         game.make_peace(PlayerId::new(0), PlayerId::new(1));
-        assert!(game.met(PlayerId::new(0), PlayerId::new(1)));
-        assert!(game.met(PlayerId::new(1), PlayerId::new(0)));
+        assert!(game.have_met(PlayerId::new(0), PlayerId::new(1)));
+        assert!(game.have_met(PlayerId::new(1), PlayerId::new(0)));
         game.declare_war(PlayerId::new(0), PlayerId::new(1));
-        assert!(game.met(PlayerId::new(0), PlayerId::new(1)));
-        assert!(!game.met(PlayerId::new(0), PlayerId::new(0)));
+        assert!(game.have_met(PlayerId::new(0), PlayerId::new(1)));
+        assert!(!game.have_met(PlayerId::new(0), PlayerId::new(0)));
     }
 
     #[test]

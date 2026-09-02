@@ -465,7 +465,7 @@ impl Engine {
         contacts.sort_unstable();
         contacts.dedup();
         for other in contacts {
-            if self.game.met(owner, other) {
+            if self.game.have_met(owner, other) {
                 continue;
             }
             self.game.make_peace(owner, other);
@@ -2160,7 +2160,7 @@ mod tests {
             PlayerId::new(1),
             CityId::new(1),
         );
-        assert!(!engine.game.met(PlayerId::new(0), PlayerId::new(1)));
+        assert!(!engine.game.have_met(PlayerId::new(0), PlayerId::new(1)));
         let events = engine.submit(Command::Move {
             unit: legion,
             direction: Direction::E,
@@ -2279,7 +2279,7 @@ mod tests {
             format!("Unit {} moves E", legion.index())
         );
         assert_eq!(events.len(), 1);
-        assert!(!engine.game.met(PlayerId::new(0), PlayerId::new(0)));
+        assert!(!engine.game.have_met(PlayerId::new(0), PlayerId::new(0)));
     }
 
     #[test]
