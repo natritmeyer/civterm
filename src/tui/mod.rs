@@ -1,5 +1,6 @@
 pub mod app;
 pub mod civ_selector;
+pub mod competition_selector;
 pub mod difficulty_selector;
 pub mod splash;
 pub mod status_bar;
