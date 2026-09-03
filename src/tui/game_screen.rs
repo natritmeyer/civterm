@@ -5,6 +5,7 @@ use ratatui::widgets::Widget;
 
 use super::theme::{ACCENT, DIM, draw_text};
 use crate::game_engine::GameView;
+use crate::model::geography::Geography;
 use crate::model::units::UnitClass;
 
 /// Fixed width of the left-hand information column.
@@ -12,23 +13,23 @@ pub const LEFT_COLUMN_WIDTH: u16 = 36;
 
 const TILE_WIDTH: usize = 2;
 
-fn terrain_colors(terrain: char) -> (Color, Color) {
+fn terrain_colors(terrain: Geography) -> (Color, Color) {
+    use Geography::*;
     match terrain {
-        '~' => (Color::Rgb(40, 90, 160), Color::Rgb(20, 40, 80)),
-        '.' => (Color::Rgb(185, 205, 110), Color::Rgb(80, 95, 45)),
-        'v' => (Color::Rgb(140, 210, 90), Color::Rgb(45, 95, 40)),
-        '#' => (Color::Rgb(60, 150, 60), Color::Rgb(25, 70, 30)),
-        '^' => (Color::Rgb(150, 130, 90), Color::Rgb(70, 60, 40)),
-        'M' => (Color::Rgb(170, 170, 180), Color::Rgb(80, 80, 90)),
-        'd' => (Color::Rgb(210, 200, 130), Color::Rgb(110, 100, 50)),
-        't' => (Color::Rgb(170, 200, 200), Color::Rgb(70, 90, 90)),
-        's' => (Color::Rgb(90, 150, 120), Color::Rgb(40, 80, 60)),
-        'T' => (Color::Rgb(60, 160, 80), Color::Rgb(25, 75, 40)),
-        _ => (Color::Rgb(120, 200, 90), Color::Rgb(40, 90, 40)),
+        Ocean => (Color::Rgb(40, 90, 160), Color::Rgb(20, 40, 80)),
+        Plains => (Color::Rgb(185, 205, 110), Color::Rgb(80, 95, 45)),
+        Jungle => (Color::Rgb(140, 210, 90), Color::Rgb(45, 95, 40)),
+        Forest => (Color::Rgb(60, 150, 60), Color::Rgb(25, 70, 30)),
+        Hills => (Color::Rgb(150, 130, 90), Color::Rgb(70, 60, 40)),
+        Mountain => (Color::Rgb(170, 170, 180), Color::Rgb(80, 80, 90)),
+        Desert => (Color::Rgb(210, 200, 130), Color::Rgb(110, 100, 50)),
+        Tundra => (Color::Rgb(170, 200, 200), Color::Rgb(70, 90, 90)),
+        Swamp => (Color::Rgb(90, 150, 120), Color::Rgb(40, 80, 60)),
+        Grassland => (Color::Rgb(60, 160, 80), Color::Rgb(25, 75, 40)),
     }
 }
 
-fn tile_style(explored: bool, terrain: char) -> Style {
+fn tile_style(explored: bool, terrain: Geography) -> Style {
     if !explored {
         return Style::default()
             .fg(Color::Rgb(20, 20, 20))
@@ -82,7 +83,7 @@ impl<'a> GameScreen<'a> {
                 } else {
                     let tile = self.view.tile(src_x, src_y);
                     let explored = self.view.explored(src_x, src_y);
-                    let terrain = tile.geography.as_char();
+                    let terrain = tile.geography;
                     let mut style = tile_style(explored, terrain);
 
                     let unit = self.view.units_at(src_x, src_y);
@@ -93,7 +94,7 @@ impl<'a> GameScreen<'a> {
                     } else if let Some(u) = unit.first() {
                         (first_letter(u.unit_class), false, true)
                     } else {
-                        (terrain, false, false)
+                        (terrain.as_char(), false, false)
                     };
 
                     if uses_city {

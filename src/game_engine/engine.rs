@@ -47,6 +47,12 @@ impl Engine {
         Engine::with_seed(width, height, first, rest, DEFAULT_SEED)
     }
 
+    /// Build an engine whose RNG is seeded from the system clock, so a new
+    /// game draws a fresh random world (map + starting positions).
+    pub fn new_random(width: usize, height: usize, first: Player, rest: Vec<Player>) -> Self {
+        Engine::with_seed(width, height, first, rest, crate::utils::random_seed())
+    }
+
     pub fn with_seed(
         width: usize,
         height: usize,
@@ -75,9 +81,13 @@ impl Engine {
         self.game.map = map;
 
         // Collect land tiles once so each player lands on a different one.
+        // Tundra is excluded: no civilization starts in the tundra wastes.
         let mut land: Vec<Location> = (0..height)
             .flat_map(|y| (0..width).map(move |x| Location::new(x as u16, y as u16)))
-            .filter(|location| self.game.map.tile_at(*location).geography.is_land())
+            .filter(|location| {
+                let geography = self.game.map.tile_at(*location).geography;
+                geography.is_land() && geography != Geography::Tundra
+            })
             .collect();
 
         let player_count = self.game.players.len();
@@ -957,6 +967,48 @@ mod tests {
             unique.len(),
             locations.len(),
             "each settler lands on its own tile"
+        );
+    }
+
+    #[test]
+    fn no_settler_starts_on_tundra() {
+        let mut engine = Engine::new(
+            12,
+            10,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        engine.populate_starting_world();
+        for unit in engine.game.units.iter() {
+            if unit.unit_class == UnitClass::Settler {
+                assert_ne!(
+                    engine.game.map.tile_at(unit.location).geography,
+                    Geography::Tundra,
+                    "a settler was placed on tundra at {:?}",
+                    unit.location
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn different_seeds_produce_different_worlds() {
+        let signature = |seed: u64| {
+            let mut engine =
+                Engine::with_seed(24, 16, Player::new(Civilization::English), Vec::new(), seed);
+            engine.populate_starting_world();
+            let mut terrain = Vec::new();
+            for y in 0..engine.height() {
+                for x in 0..engine.width() {
+                    terrain.push(engine.tile(x, y).geography.as_char());
+                }
+            }
+            terrain
+        };
+        assert_ne!(
+            signature(7),
+            signature(8),
+            "different seeds should generate different terrain"
         );
     }
 

@@ -166,9 +166,9 @@ impl App {
                     if app.show_help {
                         let bar = Rect {
                             x: area.x,
-                            y: area.bottom().saturating_sub(1),
+                            y: area.bottom().saturating_sub(2),
                             width: area.width,
-                            height: 1,
+                            height: 2,
                         };
                         frame.render_widget(
                             PlayingHelp::new(&playing_commands(app.selected_unit.is_some())),
@@ -361,13 +361,15 @@ impl App {
         let chosen = self.chosen_civ.unwrap();
         let mut pool: Vec<Civilization> =
             Civilization::iter().filter(|civ| *civ != chosen).collect();
-        let mut rng = crate::utils::Rng::new(0x5EED);
+        // Seed the rival draw (and the map, inside `Engine::new_random`) from
+        // the system clock so each new game randomizes both.
+        let mut rng = crate::utils::Rng::new(crate::utils::random_seed());
         let mut rivals = Vec::with_capacity(rival_count);
         while rivals.len() < rival_count.min(pool.len()) {
             let idx = rng.in_range(pool.len() as u32) as usize;
             rivals.push(pool.swap_remove(idx));
         }
-        let mut engine = Engine::new(
+        let mut engine = Engine::new_random(
             crate::game_engine::DEFAULT_MAP_WIDTH,
             crate::game_engine::DEFAULT_MAP_HEIGHT,
             Player::new(chosen),
@@ -421,6 +423,22 @@ impl App {
             }
             KeyCode::Right | KeyCode::Char('l') => {
                 self.move_selected_unit(Direction::E);
+                false
+            }
+            KeyCode::Char('y') => {
+                self.move_selected_unit(Direction::NW);
+                false
+            }
+            KeyCode::Char('u') => {
+                self.move_selected_unit(Direction::NE);
+                false
+            }
+            KeyCode::Char('b') => {
+                self.move_selected_unit(Direction::SW);
+                false
+            }
+            KeyCode::Char('n') => {
+                self.move_selected_unit(Direction::SE);
                 false
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
@@ -500,15 +518,16 @@ fn retreat(selected: usize, total: usize) -> usize {
 fn playing_commands(selected: bool) -> Vec<(&'static str, &'static str)> {
     let mut commands: Vec<(&'static str, &'static str)> = Vec::new();
     if selected {
-        commands.push(("arrows", "move unit"));
+        commands.push(("arrows", "move"));
+        commands.push(("y/u/b/n", "diag"));
         commands.push(("f", "fortify"));
         commands.push(("s", "sentry"));
         commands.push(("w", "work"));
-        commands.push(("c", "cancel order"));
+        commands.push(("c", "cancel"));
     }
     commands.push(("tab", "next unit"));
     commands.push(("space", "end turn"));
-    commands.push(("?", "hide help"));
+    commands.push(("?", "help"));
     commands.push(("q", "quit"));
     commands
 }
@@ -969,6 +988,54 @@ mod tests {
     }
 
     #[test]
+    fn diagonal_commands_move_the_selected_unit_diagonally() {
+        // y/u/b/n map to NW/NE/SW/SE.
+        for (code, tile_dx, tile_dy) in [
+            (KeyCode::Char('y'), -1, -1),
+            (KeyCode::Char('u'), 1, -1),
+            (KeyCode::Char('b'), -1, 1),
+            (KeyCode::Char('n'), 1, 1),
+        ] {
+            let mut app = App::new();
+            at_start(&mut app);
+            app.handle_key(key(KeyCode::Char('s'))); // begin the game
+
+            let engine = app.engine.as_ref().unwrap();
+            let unit = engine
+                .player_units()
+                .into_iter()
+                .find(|u| u.id() == app.selected_unit.unwrap())
+                .unwrap();
+            let before = unit.location;
+
+            let nx = (before.x as isize + tile_dx).clamp(0, engine.width() as isize - 1);
+            let ny = (before.y as isize + tile_dy).clamp(0, engine.height() as isize - 1);
+            let terrain = engine.tile(nx as usize, ny as usize).geography;
+            if nx == before.x as isize + tile_dx
+                && ny == before.y as isize + tile_dy
+                && terrain.is_land()
+                && terrain.movement_cost() <= 1
+            {
+                app.handle_key(key(code));
+                let engine = app.engine.as_ref().unwrap();
+                let after = engine
+                    .player_units()
+                    .into_iter()
+                    .find(|u| u.id() == app.selected_unit.unwrap())
+                    .unwrap()
+                    .location;
+                let dx = after.x as isize - before.x as isize;
+                let dy = after.y as isize - before.y as isize;
+                assert_eq!(
+                    (dx, dy),
+                    (tile_dx, tile_dy),
+                    "diagonal key did not move the unit as expected: {before:?} -> {after:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn tab_cycles_between_the_players_units() {
         let mut app = App::new();
         at_start(&mut app);
@@ -987,7 +1054,7 @@ mod tests {
     }
 
     #[test]
-    fn help_bar_overwrites_the_bottom_row_without_shifting_the_game() {
+    fn help_bar_overwrites_the_bottom_two_rows_without_shifting_the_game() {
         let render = |app: &App| {
             let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
             terminal.draw(|frame| App::draw(frame, app)).unwrap();
@@ -1003,8 +1070,9 @@ mod tests {
         assert!(begun.show_help);
         let with_help = render(&begun);
 
-        // The game content stays put: every row above the last is identical.
-        for y in 0..39 {
+        // The help bar is two rows deep and overwrites the bottom two rows;
+        // every row above them is identical.
+        for y in 0..38 {
             for x in 0..120 {
                 assert_eq!(
                     with_help.cell((x, y)).unwrap().symbol(),
@@ -1013,11 +1081,13 @@ mod tests {
                 );
             }
         }
-        // The bottom row now carries the help text.
-        let bottom_with: String = (0..120)
-            .map(|x| with_help.cell((x, 39)).unwrap().symbol().to_string())
+        // The help text spans the bottom two rows.
+        let bottom_rows: String = (0..120)
+            .map(|x| with_help.cell((x, 38)).unwrap().symbol().to_string())
+            .chain((0..120).map(|x| with_help.cell((x, 39)).unwrap().symbol().to_string()))
             .collect();
-        assert!(bottom_with.contains("end turn"));
+        assert!(bottom_rows.contains("end turn"));
+        assert!(bottom_rows.contains("move"));
     }
 
     #[test]

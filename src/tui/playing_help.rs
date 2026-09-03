@@ -26,54 +26,77 @@ impl<'a> Widget for PlayingHelp<'a> {
         if area.height == 0 {
             return;
         }
-        let total = self
-            .commands
-            .iter()
-            .map(|(key, desc)| key.len() + 1 + desc.len())
-            .sum::<usize>()
-            + GAP * self.commands.len().saturating_sub(1);
-        let mut x = area.x + area.width.saturating_sub(total as u16) / 2;
-        for (i, (key, desc)) in self.commands.iter().enumerate() {
-            for (j, ch) in key.chars().enumerate() {
-                if x >= area.right() {
-                    return;
+        // Greedily pack commands into rows that each fit `area.width`,
+        // wrapping onto the next row when a command would overflow. Each row
+        // is then centred within the area.
+        let mut rows: Vec<(Vec<&(&'a str, &'a str)>, usize)> = Vec::new();
+        for cmd in self.commands {
+            let width = cmd.0.len() + 1 + cmd.1.len();
+            if let Some((items, used)) = rows.last_mut() {
+                let with_gap = if *used == 0 {
+                    width
+                } else {
+                    *used + GAP + width
+                };
+                if with_gap <= area.width as usize {
+                    *used = with_gap;
+                    items.push(cmd);
+                    continue;
                 }
-                if let Some(cell) = buf.cell_mut((x, area.y)) {
-                    cell.reset();
-                    cell.set_symbol(&ch.to_string());
-                    cell.set_bg(BAR_BG);
-                    let mut style = Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
-                    if j == 0 {
-                        style = style.add_modifier(Modifier::UNDERLINED);
-                    }
-                    cell.set_style(style);
-                }
-                x += 1;
             }
-            x += 1;
-            for ch in desc.chars() {
-                if x >= area.right() {
-                    return;
-                }
-                if let Some(cell) = buf.cell_mut((x, area.y)) {
-                    cell.reset();
-                    cell.set_symbol(&ch.to_string());
-                    cell.set_bg(BAR_BG);
-                    cell.set_style(Style::default().fg(DIM));
-                }
-                x += 1;
-            }
-            if i + 1 < self.commands.len() {
-                for _ in 0..GAP {
+            rows.push((vec![cmd], width));
+        }
+
+        for (row, (items, _)) in rows.iter().enumerate().take(area.height as usize) {
+            let row_total = items
+                .iter()
+                .map(|c| c.0.len() + 1 + c.1.len())
+                .sum::<usize>()
+                + GAP * items.len().saturating_sub(1);
+            let mut x = area.x + area.width.saturating_sub(row_total as u16) / 2;
+            let y = area.y + row as u16;
+            for (i, (key, desc)) in items.iter().enumerate() {
+                for (j, ch) in key.chars().enumerate() {
                     if x >= area.right() {
-                        return;
+                        break;
                     }
-                    if let Some(cell) = buf.cell_mut((x, area.y)) {
+                    if let Some(cell) = buf.cell_mut((x, y)) {
                         cell.reset();
-                        cell.set_symbol(" ");
+                        cell.set_symbol(&ch.to_string());
                         cell.set_bg(BAR_BG);
+                        let mut style = Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
+                        if j == 0 {
+                            style = style.add_modifier(Modifier::UNDERLINED);
+                        }
+                        cell.set_style(style);
                     }
                     x += 1;
+                }
+                x += 1;
+                for ch in desc.chars() {
+                    if x >= area.right() {
+                        break;
+                    }
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.reset();
+                        cell.set_symbol(&ch.to_string());
+                        cell.set_bg(BAR_BG);
+                        cell.set_style(Style::default().fg(DIM));
+                    }
+                    x += 1;
+                }
+                if i + 1 < items.len() {
+                    for _ in 0..GAP {
+                        if x >= area.right() {
+                            break;
+                        }
+                        if let Some(cell) = buf.cell_mut((x, y)) {
+                            cell.reset();
+                            cell.set_symbol(" ");
+                            cell.set_bg(BAR_BG);
+                        }
+                        x += 1;
+                    }
                 }
             }
         }
@@ -119,5 +142,32 @@ mod tests {
     #[test]
     fn empty_help_renders_without_panicking() {
         let _buf = render(&[]);
+    }
+
+    #[test]
+    fn commands_wrap_across_two_rows_when_the_first_is_full() {
+        // Not all commands fit on one 40-wide row, so the tail wraps onto row 1.
+        let mut terminal = Terminal::new(TestBackend::new(40, 2)).unwrap();
+        let commands = [
+            ("arrows", "move"),
+            ("y/u/b/n", "diag"),
+            ("tab", "next unit"),
+            ("space", "end turn"),
+        ];
+        terminal
+            .draw(|frame| frame.render_widget(PlayingHelp::new(&commands), frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row0: String = (0..40)
+            .map(|x| buffer.cell((x, 0)).unwrap().symbol().to_string())
+            .collect();
+        let row1: String = (0..40)
+            .map(|x| buffer.cell((x, 1)).unwrap().symbol().to_string())
+            .collect();
+        assert!(row0.contains("arrows"));
+        assert!(
+            row1.contains("end turn"),
+            "overflow did not wrap onto row 1: {row1:?}"
+        );
     }
 }

@@ -3,6 +3,20 @@ pub struct Rng {
     state: u64,
 }
 
+/// A fresh non-deterministic seed derived from hashing the system clock.
+pub fn random_seed() -> u64 {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u64(nanos);
+    hasher.finish()
+}
+
 impl Rng {
     pub fn new(seed: u64) -> Self {
         Rng {

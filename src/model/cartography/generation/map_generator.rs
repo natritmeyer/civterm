@@ -29,7 +29,34 @@ impl MapGenerator {
         self.set_border_tundra(&mut map);
         self.seed_plains(&mut map, 4);
         self.grow_continents(&mut map, 200);
+        self.fill_enclosed_water_with_grass(&mut map);
         map
+    }
+
+    /// Convert any water tile that borders land in all but one direction into
+    /// grassland, so inland lakes and lagoons left over from continent growth
+    /// become walkable land on the final map. Off-map directions count as
+    /// neither land nor water, so edge tiles need every on-map neighbour to be
+    /// land to qualify.
+    pub fn fill_enclosed_water_with_grass(&self, map: &mut Map) {
+        let candidates: Vec<Location> = (0..map.height)
+            .flat_map(|y| (0..map.width).map(move |x| Location::new(x as u16, y as u16)))
+            .filter(|location| map.tile_at(*location).geography.is_water())
+            .collect();
+        for location in candidates {
+            let land = Direction::iter()
+                .filter_map(|direction| map.destination(location, direction))
+                .filter(|neighbour| map.tile_at(*neighbour).geography.is_land())
+                .count();
+            let water = Direction::iter()
+                .filter_map(|direction| map.destination(location, direction))
+                .filter(|neighbour| map.tile_at(*neighbour).geography.is_water())
+                .count();
+            // All but one direction land: zero or one water neighbour.
+            if water <= 1 && land + water >= 2 {
+                map.tile_at_mut(location).geography = Geography::Grassland;
+            }
+        }
     }
 
     /// Set every tile on the map to ocean.
@@ -430,6 +457,63 @@ mod tests {
         let mut generator = MapGenerator::new(1);
         let map = generator.generate(80, 50);
         assert!(land_count(&map) > 0);
+    }
+
+    #[test]
+    fn enclosed_water_tiles_become_grassland() {
+        let generator = MapGenerator::new(1);
+        let mut map = Map::new(5, 5);
+        generator.set_to_ocean(&mut map);
+        // Fully ring the centre tile (2,2): zero water neighbours.
+        for y in 0..5 {
+            for x in 0..5 {
+                if x != 2 || y != 2 {
+                    map.tile_at_mut(Location::new(x as u16, y as u16)).geography =
+                        Geography::Grassland;
+                }
+            }
+        }
+        generator.fill_enclosed_water_with_grass(&mut map);
+        assert_eq!(
+            map.tile_at(Location::new(2, 2)).geography,
+            Geography::Grassland,
+            "a fully enclosed water tile should fill in"
+        );
+    }
+
+    #[test]
+    fn a_one_empty_neighbour_water_tile_is_filled() {
+        let generator = MapGenerator::new(1);
+        let mut map = Map::new(5, 5);
+        generator.set_to_ocean(&mut map);
+        // Centre (2,2): make seven of its eight neighbours land, leaving one
+        // open water neighbour so the centre has all-but-one land borders.
+        for (x, y) in [(1, 1), (3, 1), (1, 2), (3, 2), (1, 3), (2, 3), (3, 3)] {
+            map.tile_at_mut(Location::new(x, y)).geography = Geography::Grassland;
+        }
+        generator.fill_enclosed_water_with_grass(&mut map);
+        assert_eq!(
+            map.tile_at(Location::new(2, 2)).geography,
+            Geography::Grassland,
+            "a tile with all but one land neighbour should fill in"
+        );
+    }
+
+    #[test]
+    fn open_water_stays_water() {
+        let generator = MapGenerator::new(1);
+        let mut map = Map::new(4, 4);
+        generator.set_to_ocean(&mut map);
+        // (1,1) has several water neighbours (open ocean), so it must not be
+        // converted even though it also touches some land.
+        map.tile_at_mut(Location::new(0, 0)).geography = Geography::Grassland;
+        map.tile_at_mut(Location::new(0, 1)).geography = Geography::Grassland;
+        generator.fill_enclosed_water_with_grass(&mut map);
+        assert_eq!(
+            map.tile_at(Location::new(1, 1)).geography,
+            Geography::Ocean,
+            "open water should remain ocean"
+        );
     }
 
     fn land_count(map: &Map) -> usize {
