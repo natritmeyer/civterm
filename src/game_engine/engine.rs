@@ -840,6 +840,10 @@ impl GameView for Engine {
         self.game.players[self.current_player_index.index()].civilization
     }
 
+    fn civilization_of(&self, player: PlayerId) -> Civilization {
+        self.game.players[player.index()].civilization
+    }
+
     fn turn(&self) -> u32 {
         self.turn
     }

@@ -1,7 +1,7 @@
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Tile;
 use crate::model::cities::City;
-use crate::model::civilizations::Civilization;
+use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::units::Unit;
 
 pub trait GameView {
@@ -14,6 +14,8 @@ pub trait GameView {
     fn player_units(&self) -> Vec<&Unit>;
     fn explored(&self, x: usize, y: usize) -> bool;
     fn current_player(&self) -> Civilization;
+    /// The civilization governing the given player.
+    fn civilization_of(&self, player: PlayerId) -> Civilization;
     fn turn(&self) -> u32;
     /// The calendar year corresponding to the current turn.
     fn year(&self) -> i32;

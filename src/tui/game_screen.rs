@@ -131,16 +131,19 @@ impl<'a> GameScreen<'a> {
                     let unit = self.view.units_at(src_x, src_y);
                     let city = self.view.city_at(src_x, src_y);
 
-                    let (symbol, uses_city, is_unit) = if let Some(city) = city {
-                        (city.name.chars().next().unwrap_or('*'), true, false)
+                    let (symbol, uses_city, is_unit) = if explored && let Some(city) = city {
+                        // A city occupies the whole tile: show its population
+                        // on a background of the owning civilization's colour.
+                        (population_digit(city.population()), true, false)
                     } else if let Some(u) = unit.first() {
                         (first_letter(u.unit_class), false, true)
                     } else {
                         (terrain.as_char(), false, false)
                     };
 
-                    if uses_city {
-                        style = style.fg(ACCENT);
+                    if uses_city && let Some(city) = city {
+                        style =
+                            style.bg(civilization_color(self.view.civilization_of(city.owner())));
                     }
                     if is_unit {
                         style = style
@@ -385,6 +388,15 @@ fn first_letter(unit_class: UnitClass) -> char {
     format!("{unit_class:?}").chars().next().unwrap_or('?')
 }
 
+/// The digit shown on a city tile: its population, clipped to a single char.
+fn population_digit(population: u32) -> char {
+    if population >= 10 {
+        '9'
+    } else {
+        char::from_digit(population, 10).unwrap_or('0')
+    }
+}
+
 fn format_year(year: i32) -> String {
     if year < 0 {
         format!("{} BC", -year)
@@ -462,6 +474,8 @@ mod tests {
         w: usize,
         h: usize,
         tile: crate::model::cartography::Tile,
+        city: Option<crate::model::cities::City>,
+        explored: bool,
     }
 
     impl GameView for FakeView {
@@ -478,15 +492,18 @@ mod tests {
             Vec::new()
         }
         fn city_at(&self, _x: usize, _y: usize) -> Option<&crate::model::cities::City> {
-            None
+            self.city.as_ref()
         }
         fn player_units(&self) -> Vec<&crate::model::units::Unit> {
             Vec::new()
         }
         fn explored(&self, _x: usize, _y: usize) -> bool {
-            true
+            self.explored
         }
         fn current_player(&self) -> Civilization {
+            Civilization::English
+        }
+        fn civilization_of(&self, _player: crate::model::civilizations::PlayerId) -> Civilization {
             Civilization::English
         }
         fn turn(&self) -> u32 {
@@ -517,6 +534,8 @@ mod tests {
             w: 80,
             h: 50,
             tile: crate::model::cartography::Tile::new(crate::model::geography::Terrain::Ocean),
+            city: None,
+            explored: true,
         }
     }
 
@@ -831,6 +850,91 @@ mod tests {
             cell.style().bg,
             Some(civilization_color(Civilization::English)),
             "an idle unit with zero moves left should not flash even on-phase"
+        );
+    }
+
+    #[test]
+    fn a_city_is_rendered_with_its_population_on_a_civ_coloured_tile() {
+        let (mut engine, fx, fy, id, camera) = settler_engine();
+        engine.submit(crate::game_engine::Command::FoundCity {
+            unit: id,
+            name: "English".to_string(),
+        });
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(
+                        &engine,
+                        Some((fx, fy)),
+                        camera,
+                        None,
+                        Duration::from_millis(200),
+                    ),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let px = LEFT_COLUMN_WIDTH as usize + (fx - camera.0) * 2;
+        let py = fy - camera.1;
+        let cell = terminal
+            .backend()
+            .buffer()
+            .cell((px as u16, py as u16))
+            .unwrap();
+        assert_eq!(
+            cell.symbol(),
+            "1",
+            "a population-1 city should display its population digit"
+        );
+        assert_eq!(
+            cell.style().bg,
+            Some(civilization_color(Civilization::English)),
+            "a city tile should take its civilization's colour"
+        );
+    }
+
+    #[test]
+    fn a_city_on_an_unexplored_tile_stays_hidden() {
+        let city = crate::model::cities::City::new(
+            "Hidden",
+            crate::model::cartography::Location::new(0, 0),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(0),
+        );
+        let view = FakeView {
+            w: 80,
+            h: 50,
+            tile: crate::model::cartography::Tile::new(crate::model::geography::Terrain::Grassland),
+            city: Some(city),
+            explored: false,
+        };
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let px = LEFT_COLUMN_WIDTH as usize;
+        let py = 1;
+        let cell = terminal
+            .backend()
+            .buffer()
+            .cell((px as u16, py as u16))
+            .unwrap();
+        assert_ne!(
+            cell.symbol(),
+            "1",
+            "an undiscovered city must not reveal its population"
+        );
+        assert_ne!(
+            cell.style().bg,
+            Some(civilization_color(Civilization::English)),
+            "an undiscovered city must not show its civilization colour"
         );
     }
 

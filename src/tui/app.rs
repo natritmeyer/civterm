@@ -18,7 +18,7 @@ use crate::model::cartography::Direction;
 use crate::model::civilizations::Civilization;
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
-use crate::model::units::UnitId;
+use crate::model::units::{UnitClass, UnitId};
 use strum::IntoEnumIterator;
 
 pub const STATUS_DELAY: Duration = Duration::from_secs(2);
@@ -180,7 +180,10 @@ impl App {
                             height: 2,
                         };
                         frame.render_widget(
-                            PlayingHelp::new(&playing_commands(app.selected_unit.is_some())),
+                            PlayingHelp::new(&playing_commands(
+                                app.selected_unit.is_some(),
+                                selected_can_found(app, engine),
+                            )),
                             bar,
                         );
                     }
@@ -454,6 +457,10 @@ impl App {
                 self.end_turn();
                 false
             }
+            KeyCode::Char('v') => {
+                self.found_selected_city();
+                false
+            }
             _ => false,
         }
     }
@@ -497,6 +504,16 @@ impl App {
         }
     }
 
+    fn found_selected_city(&mut self) {
+        let Some(unit) = self.selected_unit else {
+            return;
+        };
+        if let Some(engine) = &mut self.engine {
+            let name = city_name_for(engine, unit);
+            engine.submit(Command::FoundCity { unit, name });
+        }
+    }
+
     fn end_turn(&mut self) {
         if let Some(engine) = &mut self.engine {
             engine.submit(Command::EndTurn);
@@ -523,8 +540,21 @@ fn retreat(selected: usize, total: usize) -> usize {
     (selected + total - 1) % total
 }
 
+/// The name for the next city founded by the given settler's civilization:
+/// the civilization's display name.
+fn city_name_for(engine: &Engine, unit: UnitId) -> String {
+    let unit = engine.player_units().into_iter().find(|u| u.id() == unit);
+    let Some(unit) = unit else {
+        return "City".to_string();
+    };
+    engine
+        .civilization_of(unit.owner())
+        .display_name()
+        .to_string()
+}
+
 /// The command keystrokes available in the current playing context.
-fn playing_commands(selected: bool) -> Vec<(&'static str, &'static str)> {
+fn playing_commands(selected: bool, can_found: bool) -> Vec<(&'static str, &'static str)> {
     let mut commands: Vec<(&'static str, &'static str)> = Vec::new();
     if selected {
         commands.push(("arrows", "move"));
@@ -533,12 +563,27 @@ fn playing_commands(selected: bool) -> Vec<(&'static str, &'static str)> {
         commands.push(("s", "sentry"));
         commands.push(("w", "work"));
         commands.push(("c", "cancel"));
+        if can_found {
+            commands.push(("v", "found"));
+        }
     }
     commands.push(("tab", "next unit"));
     commands.push(("space", "end turn"));
     commands.push(("?", "help"));
     commands.push(("q", "quit"));
     commands
+}
+
+/// Whether the selected unit is a settler that can found a city.
+fn selected_can_found(app: &App, engine: &Engine) -> bool {
+    let Some(unit) = app.selected_unit else {
+        return false;
+    };
+    engine
+        .player_units()
+        .into_iter()
+        .find(|u| u.id() == unit)
+        .is_some_and(|u| u.unit_class == UnitClass::Settler)
 }
 
 /// Resolve the selected unit to its current map coordinate, for rendering the
@@ -997,6 +1042,43 @@ mod tests {
     }
 
     #[test]
+    fn v_founds_a_city_with_the_selected_settler() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        let engine = app.engine.as_ref().unwrap();
+        // The game begins with a single settler.
+        assert_eq!(engine.player_units().len(), 1);
+        let settler = engine.player_units()[0];
+        assert_eq!(settler.unit_class, UnitClass::Settler);
+        let location = settler.location;
+
+        app.handle_key(key(KeyCode::Char('v')));
+
+        let engine = app.engine.as_ref().unwrap();
+        // The settler is consumed and a city now sits on its tile.
+        assert!(
+            engine.player_units().is_empty(),
+            "the founding settler should be consumed"
+        );
+        let city = engine
+            .city_at(location.x as usize, location.y as usize)
+            .unwrap();
+        assert_eq!(city.population(), 1);
+    }
+
+    #[test]
+    fn a_founded_city_is_named_for_its_civilization() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        let engine = app.engine.as_ref().unwrap();
+        let settler = engine.player_units()[0];
+        let name = city_name_for(engine, settler.id());
+        assert_eq!(name, "American");
+    }
+
+    #[test]
     fn diagonal_commands_move_the_selected_unit_diagonally() {
         // y/u/b/n map to NW/NE/SW/SE.
         for (code, tile_dx, tile_dy) in [
@@ -1101,7 +1183,7 @@ mod tests {
 
     #[test]
     fn play_commands_include_unit_actions_when_a_unit_is_focused() {
-        let commands = playing_commands(true);
+        let commands = playing_commands(true, false);
         assert!(commands.iter().any(|(k, _)| *k == "f"));
         assert!(commands.iter().any(|(k, _)| *k == "arrows"));
         assert!(commands.iter().any(|(k, _)| *k == "?"));
@@ -1109,8 +1191,16 @@ mod tests {
     }
 
     #[test]
+    fn found_city_only_shows_for_a_selected_settler() {
+        let commands = playing_commands(true, true);
+        assert!(commands.iter().any(|(k, _)| *k == "v"));
+        let commands = playing_commands(true, false);
+        assert!(!commands.iter().any(|(k, _)| *k == "v"));
+    }
+
+    #[test]
     fn play_commands_offer_navigation_when_nothing_is_focused() {
-        let commands = playing_commands(false);
+        let commands = playing_commands(false, false);
         assert!(commands.iter().any(|(k, _)| *k == "tab"));
         assert!(!commands.iter().any(|(k, _)| *k == "f"));
     }
