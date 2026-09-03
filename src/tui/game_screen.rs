@@ -110,6 +110,11 @@ impl<'a> GameScreen<'a> {
         }
 
         let flashing = self.flash_phase();
+        // City labels are drawn in a second pass, after every tile row has been
+        // painted, so a label on one row's tiles is not overwritten by the next
+        // map row below it.
+        let mut city_labels: Vec<(u16, u16, String)> = Vec::new();
+
         // Tiles are shown at 1:1; `camera` is the top-left world tile. World
         // tiles outside the map (when scrolled up against an edge) render as
         // void.
@@ -120,8 +125,8 @@ impl<'a> GameScreen<'a> {
                 let cx = area.x + (col * TILE_WIDTH) as u16;
                 let cy = area.y + row as u16;
 
-                let (symbol, style) = if src_x >= map_w || src_y >= map_h {
-                    (' ', Style::default().bg(Color::Rgb(6, 6, 22)))
+                let (symbol, style, city_name) = if src_x >= map_w || src_y >= map_h {
+                    (' ', Style::default().bg(Color::Rgb(6, 6, 22)), None)
                 } else {
                     let tile = self.view.tile(src_x, src_y);
                     let explored = self.view.explored(src_x, src_y);
@@ -131,21 +136,23 @@ impl<'a> GameScreen<'a> {
                     let unit = self.view.units_at(src_x, src_y);
                     let city = self.view.city_at(src_x, src_y);
 
-                    let (symbol, uses_city, is_unit) = if explored && let Some(city) = city {
+                    let (symbol, city_name) = if explored && let Some(city) = city {
                         // A city occupies the whole tile: show its population
                         // on a background of the owning civilization's colour.
-                        (population_digit(city.population()), true, false)
+                        (population_digit(city.population()), Some(city.name.clone()))
                     } else if let Some(u) = unit.first() {
-                        (first_letter(u.unit_class), false, true)
+                        (first_letter(u.unit_class), None)
                     } else {
-                        (terrain.as_char(), false, false)
+                        (terrain.as_char(), None)
                     };
 
-                    if uses_city && let Some(city) = city {
+                    if city_name.is_some()
+                        && let Some(city) = city
+                    {
                         style =
                             style.bg(civilization_color(self.view.civilization_of(city.owner())));
                     }
-                    if is_unit {
+                    if city_name.is_none() && !unit.is_empty() {
                         style = style
                             .add_modifier(Modifier::BOLD)
                             .add_modifier(Modifier::UNDERLINED);
@@ -164,7 +171,7 @@ impl<'a> GameScreen<'a> {
                         style = style.bg(civilization_color(self.view.current_player()));
                     }
 
-                    (symbol, style)
+                    (symbol, style, city_name)
                 };
 
                 if let Some(cell) = buf.cell_mut((cx, cy)) {
@@ -177,7 +184,18 @@ impl<'a> GameScreen<'a> {
                     cell.set_symbol(" ");
                     cell.set_style(style);
                 }
+
+                // A discovered city will show its name centred on the row below the
+                // tile; defer drawing until every tile row has been painted.
+                if let Some(name) = city_name {
+                    city_labels.push((cx, cy + 1, name));
+                }
             }
+        }
+
+        // Second pass: city name labels, so they sit on top of the map.
+        for (tile_cx, row_y, name) in city_labels {
+            draw_city_label(buf, tile_cx, row_y, &name);
         }
     }
 
@@ -394,6 +412,29 @@ fn population_digit(population: u32) -> char {
         '9'
     } else {
         char::from_digit(population, 10).unwrap_or('0')
+    }
+}
+
+/// The yellow used for city labels.
+const CITY_LABEL_FG: Color = Color::Rgb(255, 215, 0);
+
+/// Draw `name` centred beneath a city tile spanning the two cells that begin
+/// at `tile_cx`, on the row `row_y`, in yellow.
+fn draw_city_label(buf: &mut Buffer, tile_cx: u16, row_y: u16, name: &str) {
+    // The two-cell tile is centred on its second cell; centre the name there.
+    let center_col = tile_cx as isize + 1;
+    let len = name.len();
+    let start = center_col - (len / 2) as isize;
+
+    for (i, ch) in name.chars().enumerate() {
+        let col = start + i as isize;
+        if col < 0 {
+            continue;
+        }
+        if let Some(cell) = buf.cell_mut((col as u16, row_y)) {
+            cell.set_symbol(&ch.to_string());
+            cell.set_style(Style::default().fg(CITY_LABEL_FG).bold());
+        }
     }
 }
 
@@ -858,7 +899,7 @@ mod tests {
         let (mut engine, fx, fy, id, camera) = settler_engine();
         engine.submit(crate::game_engine::Command::FoundCity {
             unit: id,
-            name: "English".to_string(),
+            name: "London".to_string(),
         });
 
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -893,6 +934,29 @@ mod tests {
             Some(civilization_color(Civilization::English)),
             "a city tile should take its civilization's colour"
         );
+
+        // The city's name is centred beneath the tile.
+        let name = "London";
+        let center_col = (px + 1) as isize;
+        let start = center_col - (name.len() / 2) as isize;
+        for (i, ch) in name.chars().enumerate() {
+            let col = (start + i as isize) as u16;
+            let cell = terminal
+                .backend()
+                .buffer()
+                .cell((col, py as u16 + 1))
+                .unwrap();
+            assert_eq!(
+                cell.symbol(),
+                ch.to_string(),
+                "city name char {i} at column {col}"
+            );
+            assert_eq!(
+                cell.style().fg,
+                Some(CITY_LABEL_FG),
+                "city name char {i} should be yellow"
+            );
+        }
     }
 
     #[test]
@@ -935,6 +999,22 @@ mod tests {
             cell.style().bg,
             Some(civilization_color(Civilization::English)),
             "an undiscovered city must not show its civilization colour"
+        );
+        // No name is drawn beneath the hidden city.
+        let mut label = String::new();
+        for x in px..(px + 8) {
+            let c = terminal
+                .backend()
+                .buffer()
+                .cell((x as u16, py as u16 + 1))
+                .unwrap()
+                .symbol()
+                .to_string();
+            label.push_str(&c);
+        }
+        assert!(
+            !label.contains("Hidden"),
+            "an undiscovered city must not reveal its name (got {label:?})"
         );
     }
 

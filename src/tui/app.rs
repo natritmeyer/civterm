@@ -549,7 +549,7 @@ fn city_name_for(engine: &Engine, unit: UnitId) -> String {
     };
     engine
         .civilization_of(unit.owner())
-        .display_name()
+        .capital_name()
         .to_string()
 }
 
@@ -1068,14 +1068,14 @@ mod tests {
     }
 
     #[test]
-    fn a_founded_city_is_named_for_its_civilization() {
+    fn a_founded_city_is_named_after_its_civilizations_capital() {
         let mut app = App::new();
         at_start(&mut app);
         app.handle_key(key(KeyCode::Char('s')));
         let engine = app.engine.as_ref().unwrap();
         let settler = engine.player_units()[0];
         let name = city_name_for(engine, settler.id());
-        assert_eq!(name, "American");
+        assert_eq!(name, "Washington");
     }
 
     #[test]

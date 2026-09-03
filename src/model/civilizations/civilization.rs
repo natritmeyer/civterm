@@ -39,6 +39,25 @@ impl Civilization {
         }
     }
 
+    pub fn capital_name(&self) -> &'static str {
+        match self {
+            Civilization::American => "Washington",
+            Civilization::Aztec => "Tenochtitlan",
+            Civilization::Babylonian => "Babylon",
+            Civilization::Chinese => "Beijing",
+            Civilization::Egyptian => "Thebes",
+            Civilization::English => "London",
+            Civilization::French => "Paris",
+            Civilization::German => "Berlin",
+            Civilization::Greek => "Athens",
+            Civilization::Indian => "Delhi",
+            Civilization::Mongol => "Karakorum",
+            Civilization::Roman => "Rome",
+            Civilization::Russian => "Moscow",
+            Civilization::Zulu => "Zimbabwe",
+        }
+    }
+
     pub fn motto(&self) -> &'static str {
         match self {
             Civilization::American => "Life, liberty, and happiness",
@@ -99,6 +118,16 @@ mod tests {
         assert_eq!(Civilization::Roman.ruler(), Ruler::JuliusCaesar);
         assert_eq!(Civilization::Russian.ruler(), Ruler::Stalin);
         assert_eq!(Civilization::Zulu.ruler(), Ruler::Shaka);
+    }
+
+    #[test]
+    fn each_civilization_has_a_capital_name() {
+        for civ in Civilization::iter() {
+            assert!(!civ.capital_name().is_empty());
+        }
+        assert_eq!(Civilization::English.capital_name(), "London");
+        assert_eq!(Civilization::Roman.capital_name(), "Rome");
+        assert_eq!(Civilization::Aztec.capital_name(), "Tenochtitlan");
     }
 
     #[test]
