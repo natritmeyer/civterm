@@ -27,3 +27,7 @@ A Civ game in your terminal
 - **Me**: ...and I could make it run in the terminal!
 - **Son**: What's the terminal?
 - **Me**: I have failed you.
+
+# Screenshots of progress...
+
+![Flashing unit](/docs/flashing_unit.gif)

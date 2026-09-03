@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -5,8 +7,9 @@ use ratatui::widgets::Widget;
 
 use super::theme::{ACCENT, DIM, draw_text};
 use crate::game_engine::GameView;
+use crate::model::civilizations::Civilization;
 use crate::model::geography::Terrain;
-use crate::model::units::UnitClass;
+use crate::model::units::{UnitClass, UnitId, UnitOrder};
 
 /// Fixed width of the left-hand information column.
 pub const LEFT_COLUMN_WIDTH: u16 = 36;
@@ -29,6 +32,28 @@ fn terrain_colors(terrain: Terrain) -> (Color, Color) {
     }
 }
 
+/// The civilization flag colour used to flash a selected unit's tile while it
+/// awaits instruction.
+pub(crate) fn civilization_color(civ: Civilization) -> Color {
+    use Civilization::*;
+    match civ {
+        American => Color::Rgb(220, 130, 40),
+        Aztec => Color::Rgb(180, 120, 80),
+        Babylonian => Color::Rgb(120, 90, 180),
+        Chinese => Color::Rgb(190, 60, 60),
+        Egyptian => Color::Rgb(200, 170, 90),
+        English => Color::Rgb(200, 60, 80),
+        French => Color::Rgb(90, 110, 210),
+        German => Color::Rgb(90, 90, 90),
+        Greek => Color::Rgb(120, 150, 200),
+        Indian => Color::Rgb(170, 120, 60),
+        Mongol => Color::Rgb(130, 90, 40),
+        Roman => Color::Rgb(160, 50, 50),
+        Russian => Color::Rgb(120, 40, 140),
+        Zulu => Color::Rgb(90, 60, 50),
+    }
+}
+
 fn tile_style(explored: bool, terrain: Terrain) -> Style {
     if !explored {
         return Style::default()
@@ -43,20 +68,36 @@ pub struct GameScreen<'a> {
     view: &'a dyn GameView,
     focus: Option<(usize, usize)>,
     camera: (usize, usize),
+    selected_unit: Option<UnitId>,
+    /// An instant pushed forward every frame; drives the idle-unit flash.
+    now: Duration,
 }
 
 impl<'a> GameScreen<'a> {
     /// `camera` is the world-tile coordinate at the top-left of the map pane.
+    /// `selected_unit` (if any) is the unit whose tile flashes while it awaits
+    /// instruction; `now` is a monotonic clock used to time that flash.
     pub fn new(
         view: &'a dyn GameView,
         focus: Option<(usize, usize)>,
         camera: (usize, usize),
+        selected_unit: Option<UnitId>,
+        now: Duration,
     ) -> Self {
         GameScreen {
             view,
             focus,
             camera,
+            selected_unit,
+            now,
         }
+    }
+
+    /// Whether the selected idle unit's tile is currently showing the
+    /// civilization flash colour: on for half a second, off for half a second,
+    /// repeating once per second.
+    fn flash_phase(&self) -> bool {
+        self.now.as_millis() % 1000 < 500
     }
 
     fn draw_main_map(&self, area: Rect, buf: &mut Buffer) {
@@ -68,6 +109,7 @@ impl<'a> GameScreen<'a> {
             return;
         }
 
+        let flashing = self.flash_phase();
         // Tiles are shown at 1:1; `camera` is the top-left world tile. World
         // tiles outside the map (when scrolled up against an edge) render as
         // void.
@@ -105,6 +147,20 @@ impl<'a> GameScreen<'a> {
                             .add_modifier(Modifier::BOLD)
                             .add_modifier(Modifier::UNDERLINED);
                     }
+
+                    // The selected unit awaiting instruction flashes: once per
+                    // second its tile turns the civilization flag colour for
+                    // half a second, then dims back to the terrain. It stops
+                    // once the unit has acted (non-idle) or spent its moves.
+                    if flashing
+                        && let Some(id) = self.selected_unit
+                        && unit.iter().any(|u| {
+                            u.id() == id && u.order() == UnitOrder::Idle && u.moves_remaining() > 0
+                        })
+                    {
+                        style = style.bg(civilization_color(self.view.current_player()));
+                    }
+
                     (symbol, style)
                 };
 
@@ -397,6 +453,7 @@ impl<'a> Widget for GameScreen<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::cartography::Direction;
     use crate::model::civilizations::Civilization;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -467,7 +524,12 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         let view = fake_view();
         terminal
-            .draw(|frame| frame.render_widget(GameScreen::new(&view, None, (0, 0)), frame.area()))
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO),
+                    frame.area(),
+                )
+            })
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -529,7 +591,10 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal
             .draw(|frame| {
-                frame.render_widget(GameScreen::new(&engine, focus, (0, 0)), frame.area())
+                frame.render_widget(
+                    GameScreen::new(&engine, focus, (0, 0), None, Duration::ZERO),
+                    frame.area(),
+                )
             })
             .unwrap();
     }
@@ -558,7 +623,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&engine, Some((fx, fy)), camera),
+                    GameScreen::new(&engine, Some((fx, fy)), camera, None, Duration::ZERO),
                     frame.area(),
                 )
             })
@@ -586,7 +651,12 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         let view = fake_view();
         terminal
-            .draw(|frame| frame.render_widget(GameScreen::new(&view, None, (0, 0)), frame.area()))
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO),
+                    frame.area(),
+                )
+            })
             .unwrap();
         // A tile with no unit/city on it is bare terrain and must not be bold.
         let buffer = terminal.backend().buffer();
@@ -596,6 +666,171 @@ mod tests {
         assert!(
             !cell.style().add_modifier.contains(Modifier::BOLD),
             "bare terrain tiles should not be bold"
+        );
+    }
+
+    fn settler_engine() -> (
+        crate::game_engine::Engine,
+        usize,
+        usize,
+        UnitId,
+        (usize, usize),
+    ) {
+        let mut engine = crate::game_engine::Engine::new(
+            crate::game_engine::DEFAULT_MAP_WIDTH,
+            crate::game_engine::DEFAULT_MAP_HEIGHT,
+            crate::game_engine::Player::new(Civilization::English),
+            vec![],
+        );
+        engine.populate_starting_world();
+        let unit = engine
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.unit_class == crate::model::units::UnitClass::Settler)
+            .unwrap();
+        let id = unit.id();
+        let (fx, fy) = (unit.location.x as usize, unit.location.y as usize);
+        let pane_cols = (120 - LEFT_COLUMN_WIDTH as usize) / 2;
+        let camera = camera_center((fx, fy), (engine.width(), engine.height()), (pane_cols, 40));
+        (engine, fx, fy, id, camera)
+    }
+
+    fn render_settler(now: Duration) -> (ratatui::buffer::Cell, crate::game_engine::Engine) {
+        let (engine, fx, fy, id, camera) = settler_engine();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(&engine, Some((fx, fy)), camera, Some(id), now),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let px = LEFT_COLUMN_WIDTH as usize + (fx - camera.0) * 2;
+        let py = fy - camera.1;
+        let cell = terminal
+            .backend()
+            .buffer()
+            .cell((px as u16, py as u16))
+            .unwrap();
+        (cell.clone(), engine)
+    }
+
+    #[test]
+    fn a_selected_idle_unit_flashes_its_civilizations_colour() {
+        let (cell, _engine) = render_settler(Duration::from_millis(200));
+        assert_eq!(
+            cell.style().bg,
+            Some(civilization_color(Civilization::English)),
+            "an idle selected unit tile should flash the civ colour during the on phase"
+        );
+    }
+
+    #[test]
+    fn a_selected_idle_unit_is_dim_during_the_off_half_second() {
+        let (cell, _engine) = render_settler(Duration::from_millis(700));
+        assert_ne!(
+            cell.style().bg,
+            Some(civilization_color(Civilization::English)),
+            "an idle selected unit tile should not flash the civ colour off-phase"
+        );
+    }
+
+    #[test]
+    fn a_working_unit_does_not_flash() {
+        let (mut engine, fx, fy, id, camera) = settler_engine();
+        // Busy the settler so it is no longer awaiting instruction.
+        engine.submit(crate::game_engine::Command::Work {
+            unit: id,
+            improvement: crate::model::geography::TerrainImprovement::Road,
+        });
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(
+                        &engine,
+                        Some((fx, fy)),
+                        camera,
+                        Some(id),
+                        Duration::from_millis(200),
+                    ),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let px = LEFT_COLUMN_WIDTH as usize + (fx - camera.0) * 2;
+        let py = fy - camera.1;
+        let cell = terminal
+            .backend()
+            .buffer()
+            .cell((px as u16, py as u16))
+            .unwrap();
+        assert_ne!(
+            cell.style().bg,
+            Some(civilization_color(Civilization::English)),
+            "a working unit should not flash even on-phase"
+        );
+    }
+
+    #[test]
+    fn an_idle_unit_with_no_moves_left_does_not_flash() {
+        let (mut engine, _fx, _fy, id, _camera) = settler_engine();
+        let unit = engine
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == id)
+            .unwrap();
+        let before = unit.location;
+
+        // Spend the settler's only move on the first affordable step so it is
+        // still idle but has no movement budget left.
+        let mut moved = None;
+        for direction in [Direction::E, Direction::W, Direction::N, Direction::S] {
+            let (dx, dy) = direction.delta();
+            let nx = (before.x as isize + dx).clamp(0, engine.width() as isize - 1) as usize;
+            let ny = (before.y as isize + dy).clamp(0, engine.height() as isize - 1) as usize;
+            let terrain = engine.tile(nx, ny).terrain;
+            if terrain.is_land() && terrain.movement_cost() <= 1 {
+                moved = Some((nx, ny, direction));
+                break;
+            }
+        }
+        let Some((nx, ny, direction)) = moved else {
+            return; // no affordable step; nothing legal to assert
+        };
+        engine.submit(crate::game_engine::Command::Move {
+            unit: id,
+            direction,
+        });
+
+        let camera = camera_center((nx, ny), (engine.width(), engine.height()), (42, 40));
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(
+                        &engine,
+                        Some((nx, ny)),
+                        camera,
+                        Some(id),
+                        Duration::from_millis(200),
+                    ),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let px = LEFT_COLUMN_WIDTH as usize + (nx - camera.0) * 2;
+        let py = ny - camera.1;
+        let cell = terminal
+            .backend()
+            .buffer()
+            .cell((px as u16, py as u16))
+            .unwrap();
+        assert_ne!(
+            cell.style().bg,
+            Some(civilization_color(Civilization::English)),
+            "an idle unit with zero moves left should not flash even on-phase"
         );
     }
 

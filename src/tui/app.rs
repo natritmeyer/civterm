@@ -162,7 +162,16 @@ impl App {
                         (engine.width(), engine.height()),
                         (pane_cols, area.height as usize),
                     );
-                    frame.render_widget(GameScreen::new(engine, focus, camera), area);
+                    frame.render_widget(
+                        GameScreen::new(
+                            engine,
+                            focus,
+                            camera,
+                            app.selected_unit,
+                            app.started_at.elapsed(),
+                        ),
+                        area,
+                    );
                     if app.show_help {
                         let bar = Rect {
                             x: area.x,
