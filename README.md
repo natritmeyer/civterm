@@ -10,7 +10,24 @@ A Civ game in your terminal
 - [![Language](https://img.shields.io/github/languages/top/natritmeyer/civterm)](<>) [![Repo size](https://img.shields.io/github/repo-size/natritmeyer/civterm)](<>)
 - [![Last commit](https://img.shields.io/github/last-commit/natritmeyer/civterm)](<>) [![Build status](https://img.shields.io/github/actions/workflow/status/natritmeyer/civterm/ci.yml?label=build)](https://github.com/natritmeyer/civterm/actions) [![Tests](https://img.shields.io/badge/tests-230%20passing-brightgreen)](<>)
 
-### A few evenings ago...
+## What this is about
+
+- A bit of fun, recreating what I remember from my early teen years in the mid 90s of the MacOS version of Civilization
+- I don't touch the code - I summon it from OpenCode's Big Pickle LLM within the Zed text editor
+- Coded in rust (I don't know rust)
+- Written as a TUI (I've never written a TUI and I've never used Ratatui)
+
+# Screenshots of progress...
+
+## We have units!
+
+![Flashing unit](/docs/flashing_unit.gif)
+
+## We can found new cities!
+
+![City](/docs/city.png)
+
+## Inspiration
 
 > /me On a nostalgia binge, running an emulator...
 
@@ -27,7 +44,3 @@ A Civ game in your terminal
 - **Me**: ...and I could make it run in the terminal!
 - **Son**: What's the terminal?
 - **Me**: I have failed you.
-
-# Screenshots of progress...
-
-![Flashing unit](/docs/flashing_unit.gif)
