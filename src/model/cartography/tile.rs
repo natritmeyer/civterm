@@ -1,8 +1,8 @@
-use crate::model::geography::{Geography, GeographyImprovement, SpecialResource};
+use crate::model::geography::{SpecialResource, Terrain, TerrainImprovement};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
-    pub geography: Geography,
+    pub terrain: Terrain,
     irrigated: bool,
     mined: bool,
     has_road: bool,
@@ -10,9 +10,9 @@ pub struct Tile {
 }
 
 impl Tile {
-    pub fn new(geography: Geography) -> Self {
+    pub fn new(terrain: Terrain) -> Self {
         Tile {
-            geography,
+            terrain,
             irrigated: false,
             mined: false,
             has_road: false,
@@ -21,7 +21,7 @@ impl Tile {
     }
 
     pub fn place_resource(&mut self, resource: SpecialResource) -> Result<(), SpecialResource> {
-        if self.geography.supports_resource(resource) {
+        if self.terrain.supports_resource(resource) {
             self.resource = Some(resource);
             Ok(())
         } else {
@@ -29,29 +29,29 @@ impl Tile {
         }
     }
 
-    pub fn irrigate(&mut self) -> Result<(), GeographyImprovement> {
-        self.apply_improvement(GeographyImprovement::Irrigation)
+    pub fn irrigate(&mut self) -> Result<(), TerrainImprovement> {
+        self.apply_improvement(TerrainImprovement::Irrigation)
     }
 
-    pub fn mine(&mut self) -> Result<(), GeographyImprovement> {
-        self.apply_improvement(GeographyImprovement::Mine)
+    pub fn mine(&mut self) -> Result<(), TerrainImprovement> {
+        self.apply_improvement(TerrainImprovement::Mine)
     }
 
-    pub fn build_road(&mut self) -> Result<(), GeographyImprovement> {
-        self.apply_improvement(GeographyImprovement::Road)
+    pub fn build_road(&mut self) -> Result<(), TerrainImprovement> {
+        self.apply_improvement(TerrainImprovement::Road)
     }
 
     pub fn apply_improvement(
         &mut self,
-        improvement: GeographyImprovement,
-    ) -> Result<(), GeographyImprovement> {
-        if !self.geography.supports(improvement) {
+        improvement: TerrainImprovement,
+    ) -> Result<(), TerrainImprovement> {
+        if !self.terrain.supports(improvement) {
             return Err(improvement);
         }
         match improvement {
-            GeographyImprovement::Irrigation => self.irrigated = true,
-            GeographyImprovement::Mine => self.mined = true,
-            GeographyImprovement::Road => self.has_road = true,
+            TerrainImprovement::Irrigation => self.irrigated = true,
+            TerrainImprovement::Mine => self.mined = true,
+            TerrainImprovement::Road => self.has_road = true,
         }
         Ok(())
     }
@@ -69,7 +69,7 @@ impl Tile {
     }
 
     pub fn yields_food(&self) -> u8 {
-        let mut food = self.geography.yields_food();
+        let mut food = self.terrain.yields_food();
         if self.irrigated {
             food += 1;
         }
@@ -80,7 +80,7 @@ impl Tile {
     }
 
     pub fn yields_resources(&self) -> u8 {
-        let mut resources = self.geography.yields_resources();
+        let mut resources = self.terrain.yields_resources();
         if self.mined {
             resources += 1;
         }
@@ -91,7 +91,7 @@ impl Tile {
     }
 
     pub fn yields_trade(&self) -> u8 {
-        let mut trade = self.geography.yields_trade();
+        let mut trade = self.terrain.yields_trade();
         if self.has_road {
             trade += 1;
         }
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn tile_starts_without_improvements() {
-        let tile = Tile::new(Geography::Grassland);
+        let tile = Tile::new(Terrain::Grassland);
         assert!(!tile.irrigated);
         assert!(!tile.mined);
         assert!(!tile.has_road);
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn default_yields_match_geography() {
-        let ocean = Tile::new(Geography::Ocean);
+        let ocean = Tile::new(Terrain::Ocean);
         assert_eq!(ocean.yields_food(), 2);
         assert_eq!(ocean.yields_resources(), 0);
         assert_eq!(ocean.yields_trade(), 2);
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn irrigation_adds_food_on_supporting_geography() {
-        let mut tile = Tile::new(Geography::Plains);
+        let mut tile = Tile::new(Terrain::Plains);
         tile.irrigate().unwrap();
         assert_eq!(tile.yields_food(), 3);
         assert_eq!(tile.yields_resources(), 1);
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn mine_adds_resources_on_supporting_geography() {
-        let mut tile = Tile::new(Geography::Mountain);
+        let mut tile = Tile::new(Terrain::Mountain);
         tile.mine().unwrap();
         assert_eq!(tile.yields_food(), 0);
         assert_eq!(tile.yields_resources(), 2);
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn road_adds_trade_on_land() {
-        let mut tile = Tile::new(Geography::Grassland);
+        let mut tile = Tile::new(Terrain::Grassland);
         tile.build_road().unwrap();
         assert_eq!(tile.yields_food(), 2);
         assert_eq!(tile.yields_resources(), 0);
@@ -155,13 +155,13 @@ mod tests {
 
     #[test]
     fn unsupported_improvements_are_rejected() {
-        let mut forest = Tile::new(Geography::Forest);
-        assert_eq!(forest.irrigate(), Err(GeographyImprovement::Irrigation));
+        let mut forest = Tile::new(Terrain::Forest);
+        assert_eq!(forest.irrigate(), Err(TerrainImprovement::Irrigation));
         assert_eq!(forest.yields_food(), 1);
 
-        let mut ocean = Tile::new(Geography::Ocean);
-        assert_eq!(ocean.mine(), Err(GeographyImprovement::Mine));
-        assert_eq!(ocean.build_road(), Err(GeographyImprovement::Road));
+        let mut ocean = Tile::new(Terrain::Ocean);
+        assert_eq!(ocean.mine(), Err(TerrainImprovement::Mine));
+        assert_eq!(ocean.build_road(), Err(TerrainImprovement::Road));
         assert_eq!(ocean.yields_food(), 2);
         assert_eq!(ocean.yields_resources(), 0);
         assert_eq!(ocean.yields_trade(), 2);
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn combined_improvements() {
-        let mut tile = Tile::new(Geography::Desert);
+        let mut tile = Tile::new(Terrain::Desert);
         tile.irrigate().unwrap();
         tile.mine().unwrap();
         tile.build_road().unwrap();
@@ -180,19 +180,19 @@ mod tests {
 
     #[test]
     fn resource_placement_is_gated_by_geography() {
-        let mut ocean = Tile::new(Geography::Ocean);
+        let mut ocean = Tile::new(Terrain::Ocean);
         ocean.place_resource(SpecialResource::Fish).unwrap();
         assert_eq!(ocean.yields_food(), 3);
         assert_eq!(ocean.yields_resources(), 0);
         assert_eq!(ocean.yields_trade(), 2);
 
-        let mut hills = Tile::new(Geography::Hills);
+        let mut hills = Tile::new(Terrain::Hills);
         hills.place_resource(SpecialResource::Coal).unwrap();
         assert_eq!(hills.yields_food(), 1);
         assert_eq!(hills.yields_resources(), 2);
         assert_eq!(hills.yields_trade(), 0);
 
-        let mut jungle = Tile::new(Geography::Jungle);
+        let mut jungle = Tile::new(Terrain::Jungle);
         jungle.place_resource(SpecialResource::Gems).unwrap();
         assert_eq!(jungle.yields_food(), 1);
         assert_eq!(jungle.yields_resources(), 1);
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn resource_rejected_on_unsupporting_geography() {
-        let mut ocean = Tile::new(Geography::Ocean);
+        let mut ocean = Tile::new(Terrain::Ocean);
         assert_eq!(
             ocean.place_resource(SpecialResource::Coal),
             Err(SpecialResource::Coal)
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn resource_combines_with_improvements() {
-        let mut tile = Tile::new(Geography::Desert);
+        let mut tile = Tile::new(Terrain::Desert);
         tile.place_resource(SpecialResource::Oasis).unwrap();
         tile.irrigate().unwrap();
         tile.mine().unwrap();
@@ -228,16 +228,12 @@ mod tests {
 
     #[test]
     fn apply_improvement_sets_the_gettable_state() {
-        let mut desert = Tile::new(Geography::Desert);
+        let mut desert = Tile::new(Terrain::Desert);
         desert
-            .apply_improvement(GeographyImprovement::Irrigation)
+            .apply_improvement(TerrainImprovement::Irrigation)
             .unwrap();
-        desert
-            .apply_improvement(GeographyImprovement::Mine)
-            .unwrap();
-        desert
-            .apply_improvement(GeographyImprovement::Road)
-            .unwrap();
+        desert.apply_improvement(TerrainImprovement::Mine).unwrap();
+        desert.apply_improvement(TerrainImprovement::Road).unwrap();
         assert!(desert.is_irrigated());
         assert!(desert.is_mined());
         assert!(desert.has_road());
@@ -245,9 +241,9 @@ mod tests {
         assert_eq!(desert.yields_resources(), 2);
         assert_eq!(desert.yields_trade(), 2);
 
-        let mut grassland = Tile::new(Geography::Grassland);
+        let mut grassland = Tile::new(Terrain::Grassland);
         grassland
-            .apply_improvement(GeographyImprovement::Road)
+            .apply_improvement(TerrainImprovement::Road)
             .unwrap();
         assert!(grassland.has_road());
         assert!(!grassland.is_irrigated());
@@ -257,7 +253,7 @@ mod tests {
 
     #[test]
     fn improvements_are_idempotent() {
-        let mut desert = Tile::new(Geography::Desert);
+        let mut desert = Tile::new(Terrain::Desert);
         desert.irrigate().unwrap();
         desert.irrigate().unwrap();
         assert_eq!(desert.yields_food(), 1);
@@ -275,14 +271,14 @@ mod tests {
 
     #[test]
     fn rejected_improvement_leaves_state_unchanged() {
-        let mut forest = Tile::new(Geography::Forest);
-        assert_eq!(forest.mine(), Err(GeographyImprovement::Mine));
-        assert_eq!(forest.irrigate(), Err(GeographyImprovement::Irrigation));
+        let mut forest = Tile::new(Terrain::Forest);
+        assert_eq!(forest.mine(), Err(TerrainImprovement::Mine));
+        assert_eq!(forest.irrigate(), Err(TerrainImprovement::Irrigation));
         assert!(!forest.is_mined());
         assert!(!forest.is_irrigated());
 
-        let mut ocean = Tile::new(Geography::Ocean);
-        assert_eq!(ocean.build_road(), Err(GeographyImprovement::Road));
+        let mut ocean = Tile::new(Terrain::Ocean);
+        assert_eq!(ocean.build_road(), Err(TerrainImprovement::Road));
         assert!(!ocean.has_road());
         assert_eq!(ocean.yields_food(), 2);
         assert_eq!(ocean.yields_resources(), 0);
@@ -291,37 +287,37 @@ mod tests {
 
     #[test]
     fn each_special_resource_adds_its_yields_on_supporting_geography() {
-        let mut forest = Tile::new(Geography::Forest);
+        let mut forest = Tile::new(Terrain::Forest);
         forest.place_resource(SpecialResource::Game).unwrap();
         assert_eq!(forest.yields_food(), 2);
         assert_eq!(forest.yields_resources(), 2);
         assert_eq!(forest.yields_trade(), 0);
 
-        let mut tundra = Tile::new(Geography::Tundra);
+        let mut tundra = Tile::new(Terrain::Tundra);
         tundra.place_resource(SpecialResource::Game).unwrap();
         assert_eq!(tundra.yields_food(), 2);
         assert_eq!(tundra.yields_resources(), 0);
         assert_eq!(tundra.yields_trade(), 1);
 
-        let mut plains = Tile::new(Geography::Plains);
+        let mut plains = Tile::new(Terrain::Plains);
         plains.place_resource(SpecialResource::Horses).unwrap();
         assert_eq!(plains.yields_food(), 2);
         assert_eq!(plains.yields_resources(), 2);
         assert_eq!(plains.yields_trade(), 0);
 
-        let mut mountain = Tile::new(Geography::Mountain);
+        let mut mountain = Tile::new(Terrain::Mountain);
         mountain.place_resource(SpecialResource::Gold).unwrap();
         assert_eq!(mountain.yields_food(), 0);
         assert_eq!(mountain.yields_resources(), 1);
         assert_eq!(mountain.yields_trade(), 3);
 
-        let mut desert = Tile::new(Geography::Desert);
+        let mut desert = Tile::new(Terrain::Desert);
         desert.place_resource(SpecialResource::Oasis).unwrap();
         assert_eq!(desert.yields_food(), 3);
         assert_eq!(desert.yields_resources(), 1);
         assert_eq!(desert.yields_trade(), 1);
 
-        let mut swamp = Tile::new(Geography::Swamp);
+        let mut swamp = Tile::new(Terrain::Swamp);
         swamp.place_resource(SpecialResource::Oil).unwrap();
         assert_eq!(swamp.yields_food(), 1);
         assert_eq!(swamp.yields_resources(), 2);
@@ -330,7 +326,7 @@ mod tests {
 
     #[test]
     fn a_resource_can_be_placed_over_an_existing_one() {
-        let mut tundra = Tile::new(Geography::Tundra);
+        let mut tundra = Tile::new(Terrain::Tundra);
         tundra.place_resource(SpecialResource::Game).unwrap();
         assert_eq!(tundra.yields_food(), 2);
         tundra.place_resource(SpecialResource::Game).unwrap();
@@ -339,23 +335,23 @@ mod tests {
 
     #[test]
     fn road_widens_trade_on_every_land_terrain() {
-        for geography in [
-            Geography::Grassland,
-            Geography::Plains,
-            Geography::Forest,
-            Geography::Hills,
-            Geography::Mountain,
-            Geography::Desert,
-            Geography::Tundra,
-            Geography::Swamp,
-            Geography::Jungle,
+        for terrain in [
+            Terrain::Grassland,
+            Terrain::Plains,
+            Terrain::Forest,
+            Terrain::Hills,
+            Terrain::Mountain,
+            Terrain::Desert,
+            Terrain::Tundra,
+            Terrain::Swamp,
+            Terrain::Jungle,
         ] {
-            let mut tile = Tile::new(geography);
+            let mut tile = Tile::new(terrain);
             tile.build_road().unwrap();
             assert_eq!(
                 tile.yields_trade(),
-                geography.yields_trade() + 1,
-                "road should add trade on {geography:?}"
+                terrain.yields_trade() + 1,
+                "road should add trade on {terrain:?}"
             );
         }
     }

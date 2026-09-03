@@ -1,9 +1,9 @@
-use crate::model::geography::GeographyImprovement;
+use crate::model::geography::TerrainImprovement;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnitOrder {
     Idle,
     Fortified,
     Sentried,
-    Improving(GeographyImprovement),
+    Improving(TerrainImprovement),
 }

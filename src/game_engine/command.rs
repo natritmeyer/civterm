@@ -2,7 +2,7 @@ use crate::model::advancements::Advancement;
 use crate::model::cartography::Direction;
 use crate::model::cities::{CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
-use crate::model::geography::GeographyImprovement;
+use crate::model::geography::TerrainImprovement;
 use crate::model::units::UnitId;
 
 #[derive(Debug)]
@@ -19,7 +19,7 @@ pub enum Command {
     },
     Work {
         unit: UnitId,
-        improvement: GeographyImprovement,
+        improvement: TerrainImprovement,
     },
     CancelOrder {
         unit: UnitId,

@@ -1,7 +1,7 @@
 use crate::model::cartography::Location;
 use crate::model::cities::CityId;
 use crate::model::civilizations::PlayerId;
-use crate::model::geography::GeographyImprovement;
+use crate::model::geography::TerrainImprovement;
 use crate::model::units::{UnitClass, UnitId, UnitOrder};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -76,7 +76,7 @@ impl Unit {
         self.order = UnitOrder::Sentried;
     }
 
-    pub fn work(&mut self, improvement: GeographyImprovement) {
+    pub fn work(&mut self, improvement: TerrainImprovement) {
         self.order = UnitOrder::Improving(improvement);
     }
 
@@ -163,15 +163,12 @@ mod tests {
             CityId::new(0),
             UnitId::new(0),
         );
-        unit.work(GeographyImprovement::Road);
+        unit.work(TerrainImprovement::Road);
+        assert_eq!(unit.order(), UnitOrder::Improving(TerrainImprovement::Road));
+        unit.work(TerrainImprovement::Irrigation);
         assert_eq!(
             unit.order(),
-            UnitOrder::Improving(GeographyImprovement::Road)
-        );
-        unit.work(GeographyImprovement::Irrigation);
-        assert_eq!(
-            unit.order(),
-            UnitOrder::Improving(GeographyImprovement::Irrigation)
+            UnitOrder::Improving(TerrainImprovement::Irrigation)
         );
     }
 
@@ -185,11 +182,8 @@ mod tests {
             UnitId::new(0),
         );
         unit.fortify();
-        unit.work(GeographyImprovement::Mine);
-        assert_eq!(
-            unit.order(),
-            UnitOrder::Improving(GeographyImprovement::Mine)
-        );
+        unit.work(TerrainImprovement::Mine);
+        assert_eq!(unit.order(), UnitOrder::Improving(TerrainImprovement::Mine));
     }
 
     #[test]

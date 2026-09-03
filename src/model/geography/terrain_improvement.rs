@@ -1,5 +1,5 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GeographyImprovement {
+pub enum TerrainImprovement {
     Irrigation,
     Mine,
     Road,

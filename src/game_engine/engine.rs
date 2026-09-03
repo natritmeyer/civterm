@@ -4,7 +4,7 @@ use crate::model::cartography::generation::MapGenerator;
 use crate::model::cartography::{Direction, Location, Tile};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
-use crate::model::geography::{Geography, GeographyImprovement};
+use crate::model::geography::{Terrain, TerrainImprovement};
 use crate::model::units::{Unit, UnitClass, UnitId};
 
 use super::game::Game;
@@ -85,8 +85,8 @@ impl Engine {
         let mut land: Vec<Location> = (0..height)
             .flat_map(|y| (0..width).map(move |x| Location::new(x as u16, y as u16)))
             .filter(|location| {
-                let geography = self.game.map.tile_at(*location).geography;
-                geography.is_land() && geography != Geography::Tundra
+                let terrain = self.game.map.tile_at(*location).terrain;
+                terrain.is_land() && terrain != Terrain::Tundra
             })
             .collect();
 
@@ -268,7 +268,7 @@ impl Engine {
     }
 
     fn ensure_medium_access(&self, unit: &Unit, destination: Location) -> Result<(), MoveError> {
-        let tile_is_water = self.game.map.tile_at(destination).geography.is_water();
+        let tile_is_water = self.game.map.tile_at(destination).terrain.is_water();
         if unit.unit_class.can_travel_water() != tile_is_water {
             Err(MoveError::CannotCrossLandSeaBorder(unit.id()))
         } else {
@@ -290,7 +290,7 @@ impl Engine {
         // budget, so a unit only needs *some* movement left, not a full
         // tile's worth. A slow unit enters dense/mountain terrain but is
         // exhausted by it; a fast unit is slowed to one tile per move.
-        let cost = self.game.map.tile_at(destination).geography.movement_cost();
+        let cost = self.game.map.tile_at(destination).terrain.movement_cost();
         Ok((destination, cost))
     }
 
@@ -376,7 +376,7 @@ impl Engine {
         }
     }
 
-    fn work(&mut self, unit: UnitId, improvement: GeographyImprovement) {
+    fn work(&mut self, unit: UnitId, improvement: TerrainImprovement) {
         let location = match self.owned_unit(unit) {
             Some(u) => u.location,
             None => {
@@ -681,7 +681,7 @@ impl Engine {
             return Err(SettleError::NotASettler(unit.id()));
         }
         let location = unit.location;
-        if self.game.map.tile_at(location).geography.is_water() {
+        if self.game.map.tile_at(location).terrain.is_water() {
             return Err(SettleError::LandRequired(unit.id()));
         }
         if self
@@ -726,7 +726,7 @@ impl Engine {
     fn defender_power(&self, unit: &Unit) -> u32 {
         let base = unit.unit_class.defence() as u32 * 10;
         let mut power = base;
-        if self.game.map.tile_at(unit.location).geography == Geography::Mountain {
+        if self.game.map.tile_at(unit.location).terrain == Terrain::Mountain {
             power *= 2;
         }
         let is_in_home_city = self
@@ -876,7 +876,7 @@ impl GameView for Engine {
 mod tests {
     use super::*;
     use crate::model::cities::{CityId, ProductionTarget};
-    use crate::model::geography::Geography;
+    use crate::model::geography::Terrain;
     use crate::model::units::{UnitClass, UnitId, UnitOrder};
 
     fn english_player() -> Player {
@@ -923,7 +923,7 @@ mod tests {
                 .expect("every player starts with a settler");
             let location = settler.location;
             assert!(
-                engine.game.map.tile_at(location).geography.is_land(),
+                engine.game.map.tile_at(location).terrain.is_land(),
                 "settler must sit on land at {location:?}"
             );
             assert!(
@@ -982,8 +982,8 @@ mod tests {
         for unit in engine.game.units.iter() {
             if unit.unit_class == UnitClass::Settler {
                 assert_ne!(
-                    engine.game.map.tile_at(unit.location).geography,
-                    Geography::Tundra,
+                    engine.game.map.tile_at(unit.location).terrain,
+                    Terrain::Tundra,
                     "a settler was placed on tundra at {:?}",
                     unit.location
                 );
@@ -1000,7 +1000,7 @@ mod tests {
             let mut terrain = Vec::new();
             for y in 0..engine.height() {
                 for x in 0..engine.width() {
-                    terrain.push(engine.tile(x, y).geography.as_char());
+                    terrain.push(engine.tile(x, y).terrain.as_char());
                 }
             }
             terrain
@@ -1057,7 +1057,7 @@ mod tests {
     #[test]
     fn view_reports_tiles_and_units_by_location() {
         let engine = test_engine();
-        assert_eq!(engine.tile(0, 0).geography, Geography::Ocean);
+        assert_eq!(engine.tile(0, 0).terrain, Terrain::Ocean);
         assert_eq!(engine.units_at(1, 1).len(), 1);
         assert!(engine.units_at(0, 0).is_empty());
     }
@@ -1065,7 +1065,7 @@ mod tests {
     #[test]
     fn move_command_moves_the_unit_within_the_map() {
         let mut engine = test_engine();
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
         let events = engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -1088,8 +1088,8 @@ mod tests {
     #[test]
     fn moving_east_off_the_map_wraps_around_to_the_west() {
         let mut engine = test_engine();
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(0, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(0, 1)).terrain = Terrain::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -1105,8 +1105,8 @@ mod tests {
     #[test]
     fn moving_west_off_the_map_wraps_around_to_the_east() {
         let mut engine = test_engine();
-        engine.game.map.tile_at_mut(Location::new(0, 1)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(0, 1)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::W,
@@ -1175,16 +1175,16 @@ mod tests {
     #[test]
     fn work_command_improves_the_tile_and_orders_the_unit() {
         let mut engine = test_engine();
-        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
         assert!(!engine.game.map.tile_at(Location::new(1, 1)).has_road());
         let events = engine.submit(Command::Work {
             unit: UnitId::new(0),
-            improvement: GeographyImprovement::Road,
+            improvement: TerrainImprovement::Road,
         });
         assert!(engine.game.map.tile_at(Location::new(1, 1)).has_road());
         assert_eq!(
             engine.game.units[0].order(),
-            UnitOrder::Improving(GeographyImprovement::Road)
+            UnitOrder::Improving(TerrainImprovement::Road)
         );
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].message(), "Unit 0 builds Road");
@@ -1193,10 +1193,10 @@ mod tests {
     #[test]
     fn work_command_rejects_unsupported_improvement() {
         let mut engine = test_engine();
-        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
         let events = engine.submit(Command::Work {
             unit: UnitId::new(0),
-            improvement: GeographyImprovement::Mine,
+            improvement: TerrainImprovement::Mine,
         });
         assert!(!engine.game.map.tile_at(Location::new(1, 1)).is_mined());
         assert_eq!(events.len(), 1);
@@ -1263,7 +1263,7 @@ mod tests {
         );
         assert!(engine.explored(1, 1));
         assert!(!engine.explored(4, 4));
-        engine.game.map.tile_at_mut(Location::new(1, 0)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 0)).terrain = Terrain::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -1281,7 +1281,7 @@ mod tests {
             PlayerId::new(0),
             CityId::new(0),
         );
-        engine.game.map.tile_at_mut(Location::new(2, 0)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 0)).terrain = Terrain::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(1),
             direction: Direction::E,
@@ -1310,7 +1310,7 @@ mod tests {
     #[test]
     fn a_unit_can_move_only_once_per_turn() {
         let mut engine = test_engine();
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -1332,9 +1332,9 @@ mod tests {
             PlayerId::new(0),
             CityId::new(0),
         );
-        engine.game.map.tile_at_mut(Location::new(0, 0)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(1, 0)).geography = Geography::Forest;
-        engine.game.map.tile_at_mut(Location::new(2, 0)).geography = Geography::Forest;
+        engine.game.map.tile_at_mut(Location::new(0, 0)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 0)).terrain = Terrain::Forest;
+        engine.game.map.tile_at_mut(Location::new(2, 0)).terrain = Terrain::Forest;
         // Grassland the unit stands on does not cost movement; entering the
         // second forest has an empty budget by then, so it stays put.
         engine.submit(Command::Move {
@@ -1370,7 +1370,7 @@ mod tests {
             PlayerId::new(0),
             CityId::new(0),
         );
-        engine.game.map.tile_at_mut(Location::new(1, 0)).geography = Geography::Forest;
+        engine.game.map.tile_at_mut(Location::new(1, 0)).terrain = Terrain::Forest;
         // A settler has 1 move; entering the forest still happens because the
         // move is made first, then the 2-cost forest drains the budget.
         engine.submit(Command::Move {
@@ -1384,7 +1384,7 @@ mod tests {
     #[test]
     fn moves_are_restored_at_the_beginning_of_the_owners_turn() {
         let mut engine = test_engine();
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -1403,7 +1403,7 @@ mod tests {
             PlayerId::new(1),
             CityId::new(0),
         );
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
         engine.submit(Command::Move {
             unit: UnitId::new(0),
             direction: Direction::E,
@@ -1462,7 +1462,7 @@ mod tests {
             PlayerId::new(0),
             CityId::new(0),
         );
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
         let events = engine.submit(Command::Move {
             unit: UnitId::new(1),
             direction: Direction::S,
@@ -1523,7 +1523,7 @@ mod tests {
     #[test]
     fn a_settler_founds_a_city() {
         let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
         let settler = engine.game.spawn_unit(
             UnitClass::Settler,
             Location::new(2, 2),
@@ -1553,7 +1553,7 @@ mod tests {
     #[test]
     fn founding_a_city_reveals_tiles_around_it_for_its_owner() {
         let mut engine = two_player_engine();
-        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
         let settler = engine.game.spawn_unit(
             UnitClass::Settler,
             Location::new(1, 1),
@@ -1572,7 +1572,7 @@ mod tests {
     #[test]
     fn founding_a_city_reveals_its_footprint_but_not_the_corners() {
         let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
         let settler = engine.game.spawn_unit(
             UnitClass::Settler,
             Location::new(2, 2),
@@ -1625,7 +1625,7 @@ mod tests {
     #[test]
     fn a_city_cannot_be_founded_where_a_city_already_exists() {
         let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
         engine
             .game
             .add_city(PlayerId::new(0), "London", Location::new(2, 2));
@@ -1669,8 +1669,8 @@ mod tests {
     #[test]
     fn attacker_defeats_the_target_and_takes_its_tile() {
         let mut engine = blank_war_map();
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(2, 2),
@@ -1710,8 +1710,8 @@ mod tests {
     #[test]
     fn an_at_war_unit_moving_onto_an_undefended_enemy_city_captures_it() {
         let mut engine = blank_war_map();
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         engine
             .game
             .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
@@ -1745,8 +1745,8 @@ mod tests {
     #[test]
     fn capturing_a_city_disbands_units_homed_to_it() {
         let mut engine = blank_war_map();
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         engine
             .game
             .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
@@ -1786,8 +1786,8 @@ mod tests {
     #[test]
     fn a_city_tile_with_a_defending_unit_is_not_captured() {
         let mut engine = blank_war_map();
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         engine
             .game
             .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
@@ -1827,8 +1827,8 @@ mod tests {
     fn a_unit_at_peace_with_the_city_owner_cannot_move_into_the_city() {
         // two_player_engine is not at war: the two civilizations are unmet/peaceful.
         let mut engine = two_player_engine();
-        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
         engine
             .game
             .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(2, 1));
@@ -1869,8 +1869,8 @@ mod tests {
             1,
         );
         engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(2, 2),
@@ -1916,8 +1916,8 @@ mod tests {
     #[test]
     fn equal_defence_is_broken_in_favour_of_the_higher_unit_id() {
         let mut engine = blank_war_map();
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(2, 2),
@@ -1953,8 +1953,8 @@ mod tests {
     #[test]
     fn a_repelled_attacker_is_removed_but_the_target_survives() {
         let mut engine = blank_war_map();
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(2, 3)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 3)).terrain = Terrain::Grassland;
         let militia = engine.game.spawn_unit(
             UnitClass::Militia,
             Location::new(2, 2),
@@ -1993,8 +1993,8 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(2, 2),
@@ -2065,8 +2065,8 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(2, 3)).geography = Geography::Mountain;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 3)).terrain = Terrain::Mountain;
         engine.game.spawn_unit(
             UnitClass::Militia,
             Location::new(2, 2),
@@ -2097,8 +2097,8 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(2, 2),
@@ -2139,8 +2139,8 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(2, 2),
@@ -2216,8 +2216,8 @@ mod tests {
         );
         engine.game.declare_war(PlayerId::new(0), PlayerId::new(2));
         engine.game.make_peace(PlayerId::new(0), PlayerId::new(1));
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(2, 2),
@@ -2267,8 +2267,8 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(2, 2),
@@ -2334,9 +2334,9 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(3, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 1)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(1, 1),
@@ -2382,8 +2382,8 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(1, 1),
@@ -2412,8 +2412,8 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(1, 1),
@@ -2451,8 +2451,8 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(2, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(1, 1),
@@ -2474,7 +2474,7 @@ mod tests {
     #[test]
     fn a_city_grows_and_reports_it() {
         let mut engine = test_engine();
-        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
         engine
             .game
             .add_city(PlayerId::new(0), "London", Location::new(1, 1));
@@ -2493,11 +2493,11 @@ mod tests {
     fn a_city_produces_units() {
         let mut engine = Engine::new(7, 7, Player::new(Civilization::English), Vec::new());
         // Grassland centre plus forest ring tiles that yield resources.
-        engine.game.map.tile_at_mut(Location::new(3, 3)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(2, 3)).geography = Geography::Forest;
-        engine.game.map.tile_at_mut(Location::new(3, 2)).geography = Geography::Forest;
-        engine.game.map.tile_at_mut(Location::new(4, 3)).geography = Geography::Forest;
-        engine.game.map.tile_at_mut(Location::new(3, 4)).geography = Geography::Forest;
+        engine.game.map.tile_at_mut(Location::new(3, 3)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 3)).terrain = Terrain::Forest;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Forest;
+        engine.game.map.tile_at_mut(Location::new(4, 3)).terrain = Terrain::Forest;
+        engine.game.map.tile_at_mut(Location::new(3, 4)).terrain = Terrain::Forest;
         engine.game.spawn_unit(
             UnitClass::Settler,
             Location::new(3, 3),
@@ -2536,7 +2536,7 @@ mod tests {
 
     fn research_engine() -> Engine {
         let mut engine = Engine::new(3, 2, Player::new(Civilization::English), Vec::new());
-        engine.game.map.tile_at_mut(Location::new(1, 1)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
         engine.game.spawn_unit(
             UnitClass::Settler,
             Location::new(1, 1),
@@ -2641,7 +2641,7 @@ mod tests {
     #[test]
     fn a_city_starves_without_food() {
         let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
-        engine.game.map.tile_at_mut(Location::new(2, 2)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
         engine.game.spawn_unit(
             UnitClass::Settler,
             Location::new(2, 2),
@@ -2749,9 +2749,9 @@ mod tests {
     #[test]
     fn a_city_automatically_works_its_highest_yield_tile() {
         let mut engine = Engine::new(7, 7, Player::new(Civilization::English), Vec::new());
-        engine.game.map.tile_at_mut(Location::new(3, 3)).geography = Geography::Grassland;
-        engine.game.map.tile_at_mut(Location::new(4, 3)).geography = Geography::Forest;
-        engine.game.map.tile_at_mut(Location::new(2, 3)).geography = Geography::Hills;
+        engine.game.map.tile_at_mut(Location::new(3, 3)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(4, 3)).terrain = Terrain::Forest;
+        engine.game.map.tile_at_mut(Location::new(2, 3)).terrain = Terrain::Hills;
         engine.game.spawn_unit(
             UnitClass::Settler,
             Location::new(3, 3),
@@ -2773,7 +2773,7 @@ mod tests {
     #[test]
     fn capturing_a_city_harvests_more_tiles_as_it_grows() {
         let mut engine = Engine::new(7, 7, Player::new(Civilization::English), Vec::new());
-        engine.game.map.tile_at_mut(Location::new(3, 3)).geography = Geography::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 3)).terrain = Terrain::Grassland;
         engine.game.spawn_unit(
             UnitClass::Settler,
             Location::new(3, 3),

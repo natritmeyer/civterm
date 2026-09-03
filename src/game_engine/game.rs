@@ -284,7 +284,7 @@ mod tests {
     use crate::model::cartography::Tile;
     use crate::model::cities::CityImprovement;
     use crate::model::civilizations::Civilization;
-    use crate::model::geography::Geography;
+    use crate::model::geography::Terrain;
 
     fn player() -> PlayerId {
         PlayerId::new(0)
@@ -580,8 +580,8 @@ mod tests {
         let mut game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
         let london = game.add_city(player(), "London", Location::new(2, 2));
         let grassland = Location::new(1, 2);
-        *game.map.tile_at_mut(grassland) = Tile::new(Geography::Grassland);
-        let mut plains = Tile::new(Geography::Plains);
+        *game.map.tile_at_mut(grassland) = Tile::new(Terrain::Grassland);
+        let mut plains = Tile::new(Terrain::Plains);
         plains.irrigate().unwrap();
         *game.map.tile_at_mut(Location::new(3, 2)) = plains;
         game.cities[0].add_worked_tile(grassland);
@@ -708,8 +708,8 @@ mod tests {
         let mut game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
         let london = game.add_city(player(), "London", Location::new(2, 2));
         game.cities[0].grow();
-        *game.map.tile_at_mut(Location::new(3, 2)) = Tile::new(Geography::Desert);
-        *game.map.tile_at_mut(Location::new(1, 2)) = Tile::new(Geography::Desert);
+        *game.map.tile_at_mut(Location::new(3, 2)) = Tile::new(Terrain::Desert);
+        *game.map.tile_at_mut(Location::new(1, 2)) = Tile::new(Terrain::Desert);
         game.auto_assign_work(london);
         let worked = game.cities[0].worked_tiles().to_vec();
         assert_eq!(worked.len(), 2);
@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn processing_a_city_grows_it_and_reports_the_outcome() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        let mut centre = Tile::new(Geography::Grassland);
+        let mut centre = Tile::new(Terrain::Grassland);
         centre.irrigate().unwrap();
         *game.map.tile_at_mut(Location::new(1, 0)) = centre;
         let london = game.add_city(player(), "London", Location::new(1, 0));
@@ -744,7 +744,7 @@ mod tests {
     #[test]
     fn processing_a_starving_city_reports_starvation() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        *game.map.tile_at_mut(Location::new(1, 0)) = Tile::new(Geography::Mountain);
+        *game.map.tile_at_mut(Location::new(1, 0)) = Tile::new(Terrain::Mountain);
         let london = game.add_city(player(), "London", Location::new(1, 0));
         let outcome = game.process_city(london);
         assert!(outcome.starving);
@@ -756,7 +756,7 @@ mod tests {
     #[test]
     fn processing_a_city_completes_production_when_resources_suffice() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        let mut centre = Tile::new(Geography::Mountain);
+        let mut centre = Tile::new(Terrain::Mountain);
         centre.mine().unwrap();
         *game.map.tile_at_mut(Location::new(1, 0)) = centre;
         let london = game.add_city(player(), "London", Location::new(1, 0));

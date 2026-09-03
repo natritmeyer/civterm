@@ -1,9 +1,9 @@
-use super::geography_improvement::GeographyImprovement;
 use super::movement_category::MovementCategory;
 use super::special_resource::SpecialResource;
+use super::terrain_improvement::TerrainImprovement;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Geography {
+pub enum Terrain {
     Ocean,
     Grassland,
     Plains,
@@ -16,18 +16,18 @@ pub enum Geography {
     Jungle,
 }
 
-impl Geography {
+impl Terrain {
     pub fn movement_class(&self) -> MovementCategory {
         match self {
-            Geography::Ocean
-            | Geography::Grassland
-            | Geography::Plains
-            | Geography::Desert
-            | Geography::Tundra => MovementCategory::Open,
-            Geography::Forest | Geography::Hills | Geography::Swamp | Geography::Jungle => {
+            Terrain::Ocean
+            | Terrain::Grassland
+            | Terrain::Plains
+            | Terrain::Desert
+            | Terrain::Tundra => MovementCategory::Open,
+            Terrain::Forest | Terrain::Hills | Terrain::Swamp | Terrain::Jungle => {
                 MovementCategory::Dense
             }
-            Geography::Mountain => MovementCategory::Mountain,
+            Terrain::Mountain => MovementCategory::Mountain,
         }
     }
 
@@ -36,92 +36,91 @@ impl Geography {
     }
 
     pub fn is_water(&self) -> bool {
-        matches!(self, Geography::Ocean)
+        matches!(self, Terrain::Ocean)
     }
 
     pub fn is_land(&self) -> bool {
         !self.is_water()
     }
 
-    pub fn supports(&self, improvement: GeographyImprovement) -> bool {
+    pub fn supports(&self, improvement: TerrainImprovement) -> bool {
         match improvement {
-            GeographyImprovement::Irrigation => matches!(
+            TerrainImprovement::Irrigation => matches!(
                 self,
-                Geography::Grassland
-                    | Geography::Plains
-                    | Geography::Desert
-                    | Geography::Swamp
-                    | Geography::Jungle
+                Terrain::Grassland
+                    | Terrain::Plains
+                    | Terrain::Desert
+                    | Terrain::Swamp
+                    | Terrain::Jungle
             ),
-            GeographyImprovement::Mine => matches!(
-                self,
-                Geography::Hills | Geography::Mountain | Geography::Desert
-            ),
-            GeographyImprovement::Road => self.is_land(),
+            TerrainImprovement::Mine => {
+                matches!(self, Terrain::Hills | Terrain::Mountain | Terrain::Desert)
+            }
+            TerrainImprovement::Road => self.is_land(),
         }
     }
 
     pub fn supports_resource(&self, resource: SpecialResource) -> bool {
         match resource {
-            SpecialResource::Coal => matches!(self, Geography::Hills),
-            SpecialResource::Fish => matches!(self, Geography::Ocean),
-            SpecialResource::Game => matches!(self, Geography::Forest | Geography::Tundra),
-            SpecialResource::Gems => matches!(self, Geography::Jungle),
-            SpecialResource::Gold => matches!(self, Geography::Mountain),
-            SpecialResource::Horses => matches!(self, Geography::Plains),
-            SpecialResource::Oasis => matches!(self, Geography::Desert),
-            SpecialResource::Oil => matches!(self, Geography::Swamp),
+            SpecialResource::Coal => matches!(self, Terrain::Hills),
+            SpecialResource::Fish => matches!(self, Terrain::Ocean),
+            SpecialResource::Game => matches!(self, Terrain::Forest | Terrain::Tundra),
+            SpecialResource::Gems => matches!(self, Terrain::Jungle),
+            SpecialResource::Gold => matches!(self, Terrain::Mountain),
+            SpecialResource::Horses => matches!(self, Terrain::Plains),
+            SpecialResource::Oasis => matches!(self, Terrain::Desert),
+            SpecialResource::Oil => matches!(self, Terrain::Swamp),
         }
     }
 
     pub fn yields_food(&self) -> u8 {
         match self {
-            Geography::Ocean | Geography::Grassland | Geography::Plains => 2,
-            Geography::Forest
-            | Geography::Hills
-            | Geography::Tundra
-            | Geography::Swamp
-            | Geography::Jungle => 1,
-            Geography::Mountain | Geography::Desert => 0,
+            Terrain::Ocean | Terrain::Grassland | Terrain::Plains => 2,
+            Terrain::Forest
+            | Terrain::Hills
+            | Terrain::Tundra
+            | Terrain::Swamp
+            | Terrain::Jungle => 1,
+            Terrain::Mountain | Terrain::Desert => 0,
         }
     }
 
     pub fn yields_resources(&self) -> u8 {
         match self {
-            Geography::Forest => 2,
-            Geography::Plains
-            | Geography::Hills
-            | Geography::Mountain
-            | Geography::Desert
-            | Geography::Jungle => 1,
-            Geography::Ocean | Geography::Grassland | Geography::Tundra | Geography::Swamp => 0,
+            Terrain::Forest => 2,
+            Terrain::Plains
+            | Terrain::Hills
+            | Terrain::Mountain
+            | Terrain::Desert
+            | Terrain::Jungle => 1,
+            Terrain::Ocean | Terrain::Grassland | Terrain::Tundra | Terrain::Swamp => 0,
         }
     }
 
     pub fn yields_trade(&self) -> u8 {
         match self {
-            Geography::Ocean => 2,
-            Geography::Grassland
-            | Geography::Mountain
-            | Geography::Desert
-            | Geography::Tundra
-            | Geography::Swamp => 1,
-            Geography::Plains | Geography::Forest | Geography::Hills | Geography::Jungle => 0,
+            Terrain::Ocean => 2,
+            Terrain::Grassland
+            | Terrain::Mountain
+            | Terrain::Desert
+            | Terrain::Tundra
+            | Terrain::Swamp => 1,
+            Terrain::Plains | Terrain::Forest | Terrain::Hills | Terrain::Jungle => 0,
         }
     }
 
     pub fn as_char(&self) -> char {
         match self {
-            Geography::Ocean => '~',
-            Geography::Grassland => 'v',
-            Geography::Plains => '.',
-            Geography::Forest => '#',
-            Geography::Hills => '^',
-            Geography::Mountain => 'M',
-            Geography::Desert => 'd',
-            Geography::Tundra => 't',
-            Geography::Swamp => 's',
-            Geography::Jungle => 'T',
+            Terrain::Ocean => '~',
+            Terrain::Grassland => 'v',
+            Terrain::Plains => '.',
+            Terrain::Forest => '#',
+            Terrain::Hills => '^',
+            Terrain::Mountain => 'M',
+            Terrain::Desert => 'd',
+            Terrain::Tundra => 't',
+            Terrain::Swamp => 's',
+            Terrain::Jungle => 'T',
         }
     }
 }
@@ -130,20 +129,20 @@ impl Geography {
 mod tests {
     use super::*;
 
-    const WATER: [Geography; 1] = [Geography::Ocean];
+    const WATER: [Terrain; 1] = [Terrain::Ocean];
 
-    const OPEN: [Geography; 4] = [
-        Geography::Grassland,
-        Geography::Plains,
-        Geography::Desert,
-        Geography::Tundra,
+    const OPEN: [Terrain; 4] = [
+        Terrain::Grassland,
+        Terrain::Plains,
+        Terrain::Desert,
+        Terrain::Tundra,
     ];
 
-    const DENSE: [Geography; 4] = [
-        Geography::Forest,
-        Geography::Hills,
-        Geography::Swamp,
-        Geography::Jungle,
+    const DENSE: [Terrain; 4] = [
+        Terrain::Forest,
+        Terrain::Hills,
+        Terrain::Swamp,
+        Terrain::Jungle,
     ];
 
     #[test]
@@ -163,7 +162,7 @@ mod tests {
     #[test]
     fn mountain_is_mountain_class() {
         assert_eq!(
-            Geography::Mountain.movement_class(),
+            Terrain::Mountain.movement_class(),
             MovementCategory::Mountain
         );
     }
@@ -191,7 +190,7 @@ mod tests {
 
     #[test]
     fn mountains_cost_three() {
-        assert_eq!(Geography::Mountain.movement_cost(), 3);
+        assert_eq!(Terrain::Mountain.movement_cost(), 3);
     }
 
     #[test]
@@ -200,11 +199,7 @@ mod tests {
             assert!(g.is_water());
             assert!(!g.is_land());
         }
-        for g in OPEN
-            .iter()
-            .chain(DENSE.iter())
-            .chain([&Geography::Mountain])
-        {
+        for g in OPEN.iter().chain(DENSE.iter()).chain([&Terrain::Mountain]) {
             assert!(!g.is_water());
             assert!(g.is_land());
         }
@@ -213,153 +208,145 @@ mod tests {
     #[test]
     fn irrigation_supported_terrains() {
         for g in [
-            Geography::Grassland,
-            Geography::Plains,
-            Geography::Desert,
-            Geography::Swamp,
-            Geography::Jungle,
+            Terrain::Grassland,
+            Terrain::Plains,
+            Terrain::Desert,
+            Terrain::Swamp,
+            Terrain::Jungle,
         ] {
-            assert!(g.supports(GeographyImprovement::Irrigation));
+            assert!(g.supports(TerrainImprovement::Irrigation));
         }
         for g in [
-            Geography::Ocean,
-            Geography::Forest,
-            Geography::Hills,
-            Geography::Mountain,
-            Geography::Tundra,
+            Terrain::Ocean,
+            Terrain::Forest,
+            Terrain::Hills,
+            Terrain::Mountain,
+            Terrain::Tundra,
         ] {
-            assert!(!g.supports(GeographyImprovement::Irrigation));
+            assert!(!g.supports(TerrainImprovement::Irrigation));
         }
     }
 
     #[test]
     fn mine_supported_terrains() {
-        for g in [Geography::Hills, Geography::Mountain, Geography::Desert] {
-            assert!(g.supports(GeographyImprovement::Mine));
+        for g in [Terrain::Hills, Terrain::Mountain, Terrain::Desert] {
+            assert!(g.supports(TerrainImprovement::Mine));
         }
         for g in [
-            Geography::Ocean,
-            Geography::Grassland,
-            Geography::Plains,
-            Geography::Forest,
-            Geography::Tundra,
+            Terrain::Ocean,
+            Terrain::Grassland,
+            Terrain::Plains,
+            Terrain::Forest,
+            Terrain::Tundra,
         ] {
-            assert!(!g.supports(GeographyImprovement::Mine));
+            assert!(!g.supports(TerrainImprovement::Mine));
         }
     }
 
     #[test]
     fn road_supported_terrains() {
-        assert!(!Geography::Ocean.supports(GeographyImprovement::Road));
-        for g in OPEN
-            .iter()
-            .chain(DENSE.iter())
-            .chain([&Geography::Mountain])
-        {
-            assert!(g.supports(GeographyImprovement::Road));
+        assert!(!Terrain::Ocean.supports(TerrainImprovement::Road));
+        for g in OPEN.iter().chain(DENSE.iter()).chain([&Terrain::Mountain]) {
+            assert!(g.supports(TerrainImprovement::Road));
         }
     }
 
     #[test]
     fn special_resource_support_by_geography() {
-        assert!(Geography::Hills.supports_resource(SpecialResource::Coal));
-        assert!(Geography::Ocean.supports_resource(SpecialResource::Fish));
-        assert!(Geography::Forest.supports_resource(SpecialResource::Game));
-        assert!(Geography::Tundra.supports_resource(SpecialResource::Game));
-        assert!(Geography::Jungle.supports_resource(SpecialResource::Gems));
-        assert!(Geography::Mountain.supports_resource(SpecialResource::Gold));
-        assert!(Geography::Plains.supports_resource(SpecialResource::Horses));
-        assert!(Geography::Desert.supports_resource(SpecialResource::Oasis));
-        assert!(Geography::Swamp.supports_resource(SpecialResource::Oil));
+        assert!(Terrain::Hills.supports_resource(SpecialResource::Coal));
+        assert!(Terrain::Ocean.supports_resource(SpecialResource::Fish));
+        assert!(Terrain::Forest.supports_resource(SpecialResource::Game));
+        assert!(Terrain::Tundra.supports_resource(SpecialResource::Game));
+        assert!(Terrain::Jungle.supports_resource(SpecialResource::Gems));
+        assert!(Terrain::Mountain.supports_resource(SpecialResource::Gold));
+        assert!(Terrain::Plains.supports_resource(SpecialResource::Horses));
+        assert!(Terrain::Desert.supports_resource(SpecialResource::Oasis));
+        assert!(Terrain::Swamp.supports_resource(SpecialResource::Oil));
     }
 
     #[test]
     fn special_resources_rejected_on_other_geography() {
         for g in [
-            Geography::Ocean,
-            Geography::Grassland,
-            Geography::Plains,
-            Geography::Forest,
-            Geography::Hills,
-            Geography::Mountain,
-            Geography::Desert,
-            Geography::Tundra,
-            Geography::Swamp,
-            Geography::Jungle,
+            Terrain::Ocean,
+            Terrain::Grassland,
+            Terrain::Plains,
+            Terrain::Forest,
+            Terrain::Hills,
+            Terrain::Mountain,
+            Terrain::Desert,
+            Terrain::Tundra,
+            Terrain::Swamp,
+            Terrain::Jungle,
         ] {
-            assert!(!g.supports_resource(SpecialResource::Coal) || matches!(g, Geography::Hills));
-            assert!(!g.supports_resource(SpecialResource::Fish) || matches!(g, Geography::Ocean));
+            assert!(!g.supports_resource(SpecialResource::Coal) || matches!(g, Terrain::Hills));
+            assert!(!g.supports_resource(SpecialResource::Fish) || matches!(g, Terrain::Ocean));
             assert!(
                 !g.supports_resource(SpecialResource::Game)
-                    || matches!(g, Geography::Forest | Geography::Tundra)
+                    || matches!(g, Terrain::Forest | Terrain::Tundra)
             );
-            assert!(!g.supports_resource(SpecialResource::Gems) || matches!(g, Geography::Jungle));
-            assert!(
-                !g.supports_resource(SpecialResource::Gold) || matches!(g, Geography::Mountain)
-            );
-            assert!(
-                !g.supports_resource(SpecialResource::Horses) || matches!(g, Geography::Plains)
-            );
-            assert!(!g.supports_resource(SpecialResource::Oasis) || matches!(g, Geography::Desert));
-            assert!(!g.supports_resource(SpecialResource::Oil) || matches!(g, Geography::Swamp));
+            assert!(!g.supports_resource(SpecialResource::Gems) || matches!(g, Terrain::Jungle));
+            assert!(!g.supports_resource(SpecialResource::Gold) || matches!(g, Terrain::Mountain));
+            assert!(!g.supports_resource(SpecialResource::Horses) || matches!(g, Terrain::Plains));
+            assert!(!g.supports_resource(SpecialResource::Oasis) || matches!(g, Terrain::Desert));
+            assert!(!g.supports_resource(SpecialResource::Oil) || matches!(g, Terrain::Swamp));
         }
     }
 
     #[test]
     fn food_yields_per_geography() {
-        assert_eq!(Geography::Ocean.yields_food(), 2);
-        assert_eq!(Geography::Grassland.yields_food(), 2);
-        assert_eq!(Geography::Plains.yields_food(), 2);
-        assert_eq!(Geography::Forest.yields_food(), 1);
-        assert_eq!(Geography::Hills.yields_food(), 1);
-        assert_eq!(Geography::Mountain.yields_food(), 0);
-        assert_eq!(Geography::Desert.yields_food(), 0);
-        assert_eq!(Geography::Tundra.yields_food(), 1);
-        assert_eq!(Geography::Swamp.yields_food(), 1);
-        assert_eq!(Geography::Jungle.yields_food(), 1);
+        assert_eq!(Terrain::Ocean.yields_food(), 2);
+        assert_eq!(Terrain::Grassland.yields_food(), 2);
+        assert_eq!(Terrain::Plains.yields_food(), 2);
+        assert_eq!(Terrain::Forest.yields_food(), 1);
+        assert_eq!(Terrain::Hills.yields_food(), 1);
+        assert_eq!(Terrain::Mountain.yields_food(), 0);
+        assert_eq!(Terrain::Desert.yields_food(), 0);
+        assert_eq!(Terrain::Tundra.yields_food(), 1);
+        assert_eq!(Terrain::Swamp.yields_food(), 1);
+        assert_eq!(Terrain::Jungle.yields_food(), 1);
     }
 
     #[test]
     fn resources_yields_per_geography() {
-        assert_eq!(Geography::Ocean.yields_resources(), 0);
-        assert_eq!(Geography::Grassland.yields_resources(), 0);
-        assert_eq!(Geography::Plains.yields_resources(), 1);
-        assert_eq!(Geography::Forest.yields_resources(), 2);
-        assert_eq!(Geography::Hills.yields_resources(), 1);
-        assert_eq!(Geography::Mountain.yields_resources(), 1);
-        assert_eq!(Geography::Desert.yields_resources(), 1);
-        assert_eq!(Geography::Tundra.yields_resources(), 0);
-        assert_eq!(Geography::Swamp.yields_resources(), 0);
-        assert_eq!(Geography::Jungle.yields_resources(), 1);
+        assert_eq!(Terrain::Ocean.yields_resources(), 0);
+        assert_eq!(Terrain::Grassland.yields_resources(), 0);
+        assert_eq!(Terrain::Plains.yields_resources(), 1);
+        assert_eq!(Terrain::Forest.yields_resources(), 2);
+        assert_eq!(Terrain::Hills.yields_resources(), 1);
+        assert_eq!(Terrain::Mountain.yields_resources(), 1);
+        assert_eq!(Terrain::Desert.yields_resources(), 1);
+        assert_eq!(Terrain::Tundra.yields_resources(), 0);
+        assert_eq!(Terrain::Swamp.yields_resources(), 0);
+        assert_eq!(Terrain::Jungle.yields_resources(), 1);
     }
 
     #[test]
     fn trade_yields_per_geography() {
-        assert_eq!(Geography::Ocean.yields_trade(), 2);
-        assert_eq!(Geography::Grassland.yields_trade(), 1);
-        assert_eq!(Geography::Plains.yields_trade(), 0);
-        assert_eq!(Geography::Forest.yields_trade(), 0);
-        assert_eq!(Geography::Hills.yields_trade(), 0);
-        assert_eq!(Geography::Mountain.yields_trade(), 1);
-        assert_eq!(Geography::Desert.yields_trade(), 1);
-        assert_eq!(Geography::Tundra.yields_trade(), 1);
-        assert_eq!(Geography::Swamp.yields_trade(), 1);
-        assert_eq!(Geography::Jungle.yields_trade(), 0);
+        assert_eq!(Terrain::Ocean.yields_trade(), 2);
+        assert_eq!(Terrain::Grassland.yields_trade(), 1);
+        assert_eq!(Terrain::Plains.yields_trade(), 0);
+        assert_eq!(Terrain::Forest.yields_trade(), 0);
+        assert_eq!(Terrain::Hills.yields_trade(), 0);
+        assert_eq!(Terrain::Mountain.yields_trade(), 1);
+        assert_eq!(Terrain::Desert.yields_trade(), 1);
+        assert_eq!(Terrain::Tundra.yields_trade(), 1);
+        assert_eq!(Terrain::Swamp.yields_trade(), 1);
+        assert_eq!(Terrain::Jungle.yields_trade(), 0);
     }
 
     #[test]
     fn each_geography_renders_as_a_distinct_character() {
         let chars: Vec<char> = [
-            Geography::Ocean,
-            Geography::Grassland,
-            Geography::Plains,
-            Geography::Forest,
-            Geography::Hills,
-            Geography::Mountain,
-            Geography::Desert,
-            Geography::Tundra,
-            Geography::Swamp,
-            Geography::Jungle,
+            Terrain::Ocean,
+            Terrain::Grassland,
+            Terrain::Plains,
+            Terrain::Forest,
+            Terrain::Hills,
+            Terrain::Mountain,
+            Terrain::Desert,
+            Terrain::Tundra,
+            Terrain::Swamp,
+            Terrain::Jungle,
         ]
         .iter()
         .map(|geography| geography.as_char())

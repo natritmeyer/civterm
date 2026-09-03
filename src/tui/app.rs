@@ -961,7 +961,7 @@ mod tests {
         ] {
             let nx = (before.x as isize + dx).clamp(0, engine.width() as isize - 1) as usize;
             let ny = (before.y as isize + dy).clamp(0, engine.height() as isize - 1) as usize;
-            let terrain = engine.tile(nx, ny).geography;
+            let terrain = engine.tile(nx, ny).terrain;
             if terrain.is_land() && terrain.movement_cost() <= 1 {
                 pressed = Some(code);
                 break;
@@ -1010,7 +1010,7 @@ mod tests {
 
             let nx = (before.x as isize + tile_dx).clamp(0, engine.width() as isize - 1);
             let ny = (before.y as isize + tile_dy).clamp(0, engine.height() as isize - 1);
-            let terrain = engine.tile(nx as usize, ny as usize).geography;
+            let terrain = engine.tile(nx as usize, ny as usize).terrain;
             if nx == before.x as isize + tile_dx
                 && ny == before.y as isize + tile_dy
                 && terrain.is_land()

@@ -1,6 +1,6 @@
 use crate::model::cartography::Tile;
 use crate::model::cartography::{Direction, Location};
-use crate::model::geography::Geography;
+use crate::model::geography::Terrain;
 
 pub struct Map {
     pub width: usize,
@@ -13,7 +13,7 @@ impl Map {
         Map {
             width,
             height,
-            tiles: vec![vec![Tile::new(Geography::Ocean); width]; height],
+            tiles: vec![vec![Tile::new(Terrain::Ocean); width]; height],
         }
     }
 
@@ -42,7 +42,7 @@ impl Map {
         let mut out = String::with_capacity((self.width + 1) * self.height);
         for row in &self.tiles {
             for tile in row {
-                out.push(tile.geography.as_char());
+                out.push(tile.terrain.as_char());
             }
             out.push('\n');
         }
@@ -60,7 +60,7 @@ mod tests {
         let map = Map::new(4, 3);
         for y in 0..3 {
             for x in 0..4 {
-                assert_eq!(map.tile_at(Location::new(x, y)).geography, Geography::Ocean);
+                assert_eq!(map.tile_at(Location::new(x, y)).terrain, Terrain::Ocean);
             }
         }
     }
@@ -68,11 +68,11 @@ mod tests {
     #[test]
     fn tile_at_returns_the_tile_at_that_location() {
         let mut map = Map::new(3, 2);
-        let mut mountain = Tile::new(Geography::Mountain);
+        let mut mountain = Tile::new(Terrain::Mountain);
         mountain.place_resource(SpecialResource::Gold).unwrap();
         *map.tile_at_mut(Location::new(2, 1)) = mountain.clone();
 
-        assert_eq!(map.tile_at(Location::new(0, 0)).geography, Geography::Ocean);
+        assert_eq!(map.tile_at(Location::new(0, 0)).terrain, Terrain::Ocean);
         assert_eq!(map.tile_at(Location::new(2, 1)), &mountain);
     }
 
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn render_ascii_prints_one_line_per_row() {
         let mut map = Map::new(3, 2);
-        map.tile_at_mut(Location::new(1, 0)).geography = Geography::Grassland;
+        map.tile_at_mut(Location::new(1, 0)).terrain = Terrain::Grassland;
         let rendered = map.render_ascii();
         assert_eq!(rendered, "~v~\n~~~\n");
     }

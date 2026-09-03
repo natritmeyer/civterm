@@ -5,7 +5,7 @@ use ratatui::widgets::Widget;
 
 use super::theme::{ACCENT, DIM, draw_text};
 use crate::game_engine::GameView;
-use crate::model::geography::Geography;
+use crate::model::geography::Terrain;
 use crate::model::units::UnitClass;
 
 /// Fixed width of the left-hand information column.
@@ -13,8 +13,8 @@ pub const LEFT_COLUMN_WIDTH: u16 = 36;
 
 const TILE_WIDTH: usize = 2;
 
-fn terrain_colors(terrain: Geography) -> (Color, Color) {
-    use Geography::*;
+fn terrain_colors(terrain: Terrain) -> (Color, Color) {
+    use Terrain::*;
     match terrain {
         Ocean => (Color::Rgb(40, 90, 160), Color::Rgb(20, 40, 80)),
         Plains => (Color::Rgb(185, 205, 110), Color::Rgb(80, 95, 45)),
@@ -29,7 +29,7 @@ fn terrain_colors(terrain: Geography) -> (Color, Color) {
     }
 }
 
-fn tile_style(explored: bool, terrain: Geography) -> Style {
+fn tile_style(explored: bool, terrain: Terrain) -> Style {
     if !explored {
         return Style::default()
             .fg(Color::Rgb(20, 20, 20))
@@ -83,7 +83,7 @@ impl<'a> GameScreen<'a> {
                 } else {
                     let tile = self.view.tile(src_x, src_y);
                     let explored = self.view.explored(src_x, src_y);
-                    let terrain = tile.geography;
+                    let terrain = tile.terrain;
                     let mut style = tile_style(explored, terrain);
 
                     let unit = self.view.units_at(src_x, src_y);
@@ -140,7 +140,7 @@ impl<'a> GameScreen<'a> {
                 if !self.view.explored(src_x, src_y) {
                     continue;
                 }
-                let terrain = self.view.tile(src_x, src_y).geography.as_char();
+                let terrain = self.view.tile(src_x, src_y).terrain.as_char();
                 let color = if terrain == '~' {
                     Color::Rgb(40, 90, 150)
                 } else {
@@ -272,7 +272,7 @@ impl<'a> GameScreen<'a> {
                     area.right(),
                     x,
                     row,
-                    &format!("Terrain: {:?}", tile.geography),
+                    &format!("Terrain: {:?}", tile.terrain),
                     Style::default().fg(DIM),
                 );
                 row += 1;
@@ -459,7 +459,7 @@ mod tests {
         FakeView {
             w: 80,
             h: 50,
-            tile: crate::model::cartography::Tile::new(crate::model::geography::Geography::Ocean),
+            tile: crate::model::cartography::Tile::new(crate::model::geography::Terrain::Ocean),
         }
     }
 
