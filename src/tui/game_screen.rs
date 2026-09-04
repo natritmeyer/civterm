@@ -6,13 +6,16 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
 use super::theme::{ACCENT, DIM, draw_text};
-use crate::game_engine::GameView;
+use crate::game_engine::{Event, GameView};
 use crate::model::civilizations::Civilization;
 use crate::model::geography::Terrain;
 use crate::model::units::{UnitClass, UnitId, UnitOrder};
 
 /// Fixed width of the left-hand information column.
 pub const LEFT_COLUMN_WIDTH: u16 = 36;
+
+/// Width of the event-log overlay when visible.
+const EVENT_LOG_WIDTH: u16 = 44;
 
 const TILE_WIDTH: usize = 2;
 
@@ -71,18 +74,26 @@ pub struct GameScreen<'a> {
     selected_unit: Option<UnitId>,
     /// An instant pushed forward every frame; drives the idle-unit flash.
     now: Duration,
+    /// Whether the event log overlays the map pane's top-right corner.
+    show_events: bool,
+    /// The most recent event messages, oldest first.
+    events: &'a [Event],
 }
 
 impl<'a> GameScreen<'a> {
     /// `camera` is the world-tile coordinate at the top-left of the map pane.
     /// `selected_unit` (if any) is the unit whose tile flashes while it awaits
     /// instruction; `now` is a monotonic clock used to time that flash.
+    /// `show_events` toggles the event log overlay, which shows `events`
+    /// (most recent messages, oldest first) in the top-right of the map pane.
     pub fn new(
         view: &'a dyn GameView,
         focus: Option<(usize, usize)>,
         camera: (usize, usize),
         selected_unit: Option<UnitId>,
         now: Duration,
+        show_events: bool,
+        events: &'a [Event],
     ) -> Self {
         GameScreen {
             view,
@@ -90,6 +101,8 @@ impl<'a> GameScreen<'a> {
             camera,
             selected_unit,
             now,
+            show_events,
+            events,
         }
     }
 
@@ -198,6 +211,77 @@ impl<'a> GameScreen<'a> {
         for (tile_cx, row_y, name) in city_labels {
             draw_city_label(buf, tile_cx, row_y, &name);
         }
+    }
+
+    /// Overlays the event log on the top-right corner of the map pane. The box
+    /// shows up to five most-recent messages, newest at the bottom, or a
+    /// placeholder when none have been recorded yet.
+    fn draw_event_log(&self, area: Rect, buf: &mut Buffer) {
+        if !self.show_events {
+            return;
+        }
+        let rows = self.events.len().clamp(1, 5) as u16 + 2;
+        let width = area.width.min(EVENT_LOG_WIDTH);
+        if width < 4 || rows > area.height {
+            return;
+        }
+        let left = area.right() - width;
+        let top = area.y;
+        let right = area.right() - 1;
+        let bottom = top + rows - 1;
+
+        let bg = Color::Rgb(12, 12, 40);
+        let border = Style::default().fg(DIM).bg(bg);
+        let message_style = Style::default().fg(Color::Rgb(220, 220, 235)).bg(bg);
+        let title_style = Style::default()
+            .fg(ACCENT)
+            .add_modifier(Modifier::BOLD)
+            .bg(bg);
+        let inner_width = (width - 2) as usize;
+
+        // Fill the box so the map underneath does not show through.
+        for y in top..=bottom {
+            for x in left..=right {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.reset();
+                    cell.set_symbol(" ");
+                    cell.set_bg(bg);
+                }
+            }
+        }
+
+        // Top border with the title centred.
+        fill_row(buf, left, right, top, "─", border);
+        set_cell(buf, left, top, "┌", border);
+        set_cell(buf, right, top, "┐", border);
+        let title = " EVENTS ";
+        let title_x = left + (width - title.chars().count() as u16) / 2;
+        draw_text(buf, right, title_x, top, title, title_style);
+
+        // Message rows, newest at the bottom. `events` holds at most five in
+        // oldest-first order, so the last one lands on the final message row.
+        // With no events yet, show a placeholder so the box is still visible.
+        let start = self.events.len().saturating_sub(5);
+        for offset in 0..rows.saturating_sub(2) as usize {
+            let y = top + 1 + offset as u16;
+            let visible = match self.events.get(start + offset) {
+                Some(event) => event
+                    .message()
+                    .chars()
+                    .take(inner_width)
+                    .collect::<String>(),
+                None => "(no events yet)"
+                    .chars()
+                    .take(inner_width)
+                    .collect::<String>(),
+            };
+            draw_text(buf, right, left + 1, y, &visible, message_style);
+        }
+
+        // Bottom border.
+        fill_row(buf, left, right, bottom, "─", border);
+        set_cell(buf, left, bottom, "└", border);
+        set_cell(buf, right, bottom, "┘", border);
     }
 
     fn draw_minimap(&self, area: Rect, buf: &mut Buffer) {
@@ -419,6 +503,21 @@ fn population_digit(population: u32) -> char {
 /// The yellow used for city labels.
 const CITY_LABEL_FG: Color = Color::Rgb(255, 215, 0);
 
+/// Set a single cell's symbol and style.
+fn set_cell(buf: &mut Buffer, x: u16, y: u16, symbol: &str, style: Style) {
+    if let Some(cell) = buf.cell_mut((x, y)) {
+        cell.set_symbol(symbol);
+        cell.set_style(style);
+    }
+}
+
+/// Fill a horizontal run of cells between `x0` and `x1` (inclusive) on row `y`.
+fn fill_row(buf: &mut Buffer, x0: u16, x1: u16, y: u16, symbol: &str, style: Style) {
+    for x in x0..=x1 {
+        set_cell(buf, x, y, symbol, style);
+    }
+}
+
 /// Draw `name` centred beneath a city tile spanning the two cells that begin
 /// at `tile_cx`, on the row `row_y`, in yellow.
 fn draw_city_label(buf: &mut Buffer, tile_cx: u16, row_y: u16, name: &str) {
@@ -501,6 +600,7 @@ impl<'a> Widget for GameScreen<'a> {
         self.draw_player_stats(stats_area, buf);
         self.draw_focus(focus_area, buf);
         self.draw_main_map(right, buf);
+        self.draw_event_log(right, buf);
     }
 }
 
@@ -587,7 +687,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO),
+                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, false, &[]),
                     frame.area(),
                 )
             })
@@ -653,11 +753,108 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&engine, focus, (0, 0), None, Duration::ZERO),
+                    GameScreen::new(&engine, focus, (0, 0), None, Duration::ZERO, false, &[]),
                     frame.area(),
                 )
             })
             .unwrap();
+    }
+
+    fn events_log(events: &[&str]) -> Vec<Event> {
+        events.iter().map(|m| Event::new(*m)).collect()
+    }
+
+    fn row_text(buf: &Buffer, x0: u16, x1: u16, y: u16) -> String {
+        (x0..=x1)
+            .map(|x| buf.cell((x, y)).unwrap().symbol().chars().next().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn event_log_renders_a_box_in_the_top_right_when_enabled() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let view = fake_view();
+        let events = events_log(&["Unit 0 moves E", "London grows"]);
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, true, &events),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        // The overlay sits in the map pane's top-right corner: x 76..120, and
+        // 4 rows tall (top border, 2 messages, bottom border).
+        assert_eq!(buffer.cell((76, 0)).unwrap().symbol(), "┌");
+        assert_eq!(buffer.cell((119, 0)).unwrap().symbol(), "┐");
+        assert_eq!(buffer.cell((76, 3)).unwrap().symbol(), "└");
+        assert_eq!(buffer.cell((119, 3)).unwrap().symbol(), "┘");
+        let top_row = row_text(buffer, 76, 119, 0);
+        assert!(
+            top_row.contains("EVENTS"),
+            "title should be on the top border"
+        );
+        assert!(row_text(buffer, 77, 118, 1).contains("Unit 0 moves E"));
+        assert!(row_text(buffer, 77, 118, 2).contains("London grows"));
+    }
+
+    #[test]
+    fn event_log_newest_message_sits_at_the_bottom() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let view = fake_view();
+        let events = events_log(&["first", "second"]);
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, true, &events),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!(row_text(buffer, 77, 118, 1).contains("first"));
+        assert!(row_text(buffer, 77, 118, 2).contains("second"));
+    }
+
+    #[test]
+    fn event_log_with_no_events_still_renders_the_box() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let view = fake_view();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, true, &[]),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer.cell((76, 0)).unwrap().symbol(), "┌");
+        assert!(row_text(buffer, 77, 118, 1).contains("no events yet"));
+    }
+
+    #[test]
+    fn event_log_hides_completely_when_disabled() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let view = fake_view();
+        let events = events_log(&["Unit 0 moves E"]);
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, false, &events),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_ne!(buffer.cell((76, 0)).unwrap().symbol(), "┌");
+        let top_row = row_text(buffer, 76, 119, 0);
+        assert!(
+            !top_row.contains("EVENTS"),
+            "no event log when disabled (got {top_row:?})"
+        );
     }
 
     #[test]
@@ -684,7 +881,15 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&engine, Some((fx, fy)), camera, None, Duration::ZERO),
+                    GameScreen::new(
+                        &engine,
+                        Some((fx, fy)),
+                        camera,
+                        None,
+                        Duration::ZERO,
+                        false,
+                        &[],
+                    ),
                     frame.area(),
                 )
             })
@@ -715,7 +920,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO),
+                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, false, &[]),
                     frame.area(),
                 )
             })
@@ -763,7 +968,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&engine, Some((fx, fy)), camera, Some(id), now),
+                    GameScreen::new(&engine, Some((fx, fy)), camera, Some(id), now, false, &[]),
                     frame.area(),
                 )
             })
@@ -817,6 +1022,8 @@ mod tests {
                         camera,
                         Some(id),
                         Duration::from_millis(200),
+                        false,
+                        &[],
                     ),
                     frame.area(),
                 )
@@ -879,6 +1086,8 @@ mod tests {
                         camera,
                         Some(id),
                         Duration::from_millis(200),
+                        false,
+                        &[],
                     ),
                     frame.area(),
                 )
@@ -917,6 +1126,8 @@ mod tests {
                         camera,
                         None,
                         Duration::from_millis(200),
+                        false,
+                        &[],
                     ),
                     frame.area(),
                 )
@@ -984,7 +1195,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO),
+                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, false, &[]),
                     frame.area(),
                 )
             })

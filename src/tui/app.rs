@@ -14,6 +14,7 @@ use super::playing_help::PlayingHelp;
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
 use super::status_bar::{ITEMS, StatusBar};
+use crate::game_engine::event::Event as GameEvent;
 use crate::game_engine::{Command, Engine, GameView, Player};
 use crate::model::cartography::Direction;
 use crate::model::civilizations::Civilization;
@@ -25,6 +26,8 @@ use strum::IntoEnumIterator;
 pub const STATUS_DELAY: Duration = Duration::from_secs(2);
 pub const STATUS_FADE: Duration = Duration::from_secs(1);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// The number of most-recent event messages the log keeps in view.
+pub const EVENT_LOG_SIZE: usize = 5;
 
 #[derive(PartialEq)]
 enum Phase {
@@ -73,6 +76,8 @@ pub struct App {
     selected_unit: Option<UnitId>,
     camera: Cell<(usize, usize)>,
     show_help: bool,
+    show_events: bool,
+    event_log: Vec<GameEvent>,
 }
 
 impl Default for App {
@@ -98,6 +103,8 @@ impl App {
             selected_unit: None,
             camera: Cell::new((0, 0)),
             show_help: false,
+            show_events: false,
+            event_log: Vec::new(),
         }
     }
 
@@ -175,6 +182,8 @@ impl App {
                             camera,
                             app.selected_unit,
                             app.started_at.elapsed(),
+                            app.show_events,
+                            &app.event_log[app.event_log.len().saturating_sub(EVENT_LOG_SIZE)..],
                         ),
                         area,
                     );
@@ -398,6 +407,7 @@ impl App {
         self.select_first_unit();
         self.phase = Phase::Playing;
         self.reset_setup();
+        self.event_log.clear();
     }
 
     fn start_new_game(&mut self) {
@@ -467,6 +477,10 @@ impl App {
                 self.found_selected_city();
                 false
             }
+            KeyCode::Char('e') => {
+                self.show_events = !self.show_events;
+                false
+            }
             _ => false,
         }
     }
@@ -506,7 +520,8 @@ impl App {
             return;
         };
         if let Some(engine) = &mut self.engine {
-            engine.submit(Command::Move { unit, direction });
+            let events = engine.submit(Command::Move { unit, direction });
+            self.record_events(events);
         }
     }
 
@@ -516,15 +531,29 @@ impl App {
         };
         if let Some(engine) = &mut self.engine {
             let name = city_name_for(engine, unit);
-            engine.submit(Command::FoundCity { unit, name });
+            let events = engine.submit(Command::FoundCity { unit, name });
+            self.record_events(events);
         }
     }
 
     fn end_turn(&mut self) {
         if let Some(engine) = &mut self.engine {
-            engine.submit(Command::EndTurn);
+            let events = engine.submit(Command::EndTurn);
+            self.record_events(events);
         }
         self.select_first_unit();
+    }
+
+    fn record_events(&mut self, events: Vec<GameEvent>) {
+        if events.is_empty() {
+            return;
+        }
+        // Keep only the most recent few messages so the log view stays small.
+        self.event_log.extend(events);
+        let overflow = self.event_log.len().saturating_sub(EVENT_LOG_SIZE);
+        if overflow > 0 {
+            self.event_log.drain(..overflow);
+        }
     }
 
     fn reset_setup(&mut self) {
@@ -575,6 +604,7 @@ fn playing_commands(selected: bool, can_found: bool) -> Vec<(&'static str, &'sta
     }
     commands.push(("tab", "next unit"));
     commands.push(("space", "end turn"));
+    commands.push(("e", "events"));
     commands.push(("?", "help"));
     commands.push(("q", "quit"));
     commands
@@ -959,6 +989,47 @@ mod tests {
         assert!(app.show_help);
         app.handle_key(key(KeyCode::Char('?')));
         assert!(!app.show_help);
+    }
+
+    #[test]
+    fn e_toggles_the_event_log_overlay() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        assert!(!app.show_events);
+        app.handle_key(key(KeyCode::Char('e')));
+        assert!(app.show_events);
+        app.handle_key(key(KeyCode::Char('e')));
+        assert!(!app.show_events);
+    }
+
+    #[test]
+    fn ending_turns_records_events_up_to_the_log_size() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        assert!(app.event_log.is_empty());
+
+        // End the turn past all rivals until the log has overflowed several
+        // times; it must stay bounded at EVENT_LOG_SIZE messages.
+        for _ in 0..8 {
+            app.handle_key(key(KeyCode::Char(' ')));
+        }
+        assert_eq!(app.event_log.len(), EVENT_LOG_SIZE);
+        assert!(
+            app.event_log
+                .iter()
+                .all(|event| !event.message().is_empty()),
+            "every recorded event should have a message"
+        );
+    }
+
+    #[test]
+    fn a_brand_new_game_starts_with_an_empty_event_log() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        assert!(app.event_log.is_empty());
     }
 
     #[test]
