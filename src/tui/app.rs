@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,7 @@ pub const STATUS_DELAY: Duration = Duration::from_secs(2);
 pub const STATUS_FADE: Duration = Duration::from_secs(1);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+#[derive(PartialEq)]
 enum Phase {
     Menu,
     ChoosingCiv,
@@ -69,6 +71,7 @@ pub struct App {
     start_choice: StartChoice,
     engine: Option<Engine>,
     selected_unit: Option<UnitId>,
+    camera: Cell<(usize, usize)>,
     show_help: bool,
 }
 
@@ -93,6 +96,7 @@ impl App {
             start_choice: StartChoice::Start,
             engine: None,
             selected_unit: None,
+            camera: Cell::new((0, 0)),
             show_help: false,
         }
     }
@@ -161,7 +165,9 @@ impl App {
                         focus,
                         (engine.width(), engine.height()),
                         (pane_cols, area.height as usize),
+                        app.camera.get(),
                     );
+                    app.camera.set(camera);
                     frame.render_widget(
                         GameScreen::new(
                             engine,
@@ -601,23 +607,48 @@ fn focus_coordinate(engine: &Engine, selected: Option<UnitId>) -> Option<(usize,
 /// The world-tile coordinate for the top-left of the map pane. Centres on
 /// `focus` when there is one, clamped so the camera never shows tiles beyond a
 /// map edge. `pane` is the pane size measured in world tiles (cols, rows).
+///
+/// The map wraps horizontally (east/west) but not vertically. Camera
+/// positioning uses the shortest wrap-around path when deciding whether the
+/// focus is within the middle 70 % of the view.
 fn camera_for(
     focus: Option<(usize, usize)>,
     map: (usize, usize),
     pane: (usize, usize),
+    camera: (usize, usize),
 ) -> (usize, usize) {
     let (map_w, map_h) = map;
     let (pane_cols, pane_rows) = pane;
     let (cx, cy) = match focus {
         Some((x, y)) if pane_cols > 0 && pane_rows > 0 => {
-            let left = (x as isize - (pane_cols / 2) as isize).max(0);
-            let top = (y as isize - (pane_rows / 2) as isize).max(0);
-            // Keep the camera from revealing tiles off the far edge.
-            let left = map_w.saturating_sub(pane_cols).min(left as usize);
-            let top = map_h.saturating_sub(pane_rows).min(top as usize);
-            (left, top)
+            let margin_x = pane_cols * 15 / 100;
+            let margin_y = pane_rows * 15 / 100;
+
+            // Compute the viewport column of the focus tile using wrap-around
+            // so a unit just east/west of the camera edge is treated as close.
+            let view_col = (x + map_w - camera.0) % map_w;
+            let view_row = y as isize - camera.1 as isize;
+
+            let in_x = view_col < pane_cols
+                && view_col >= margin_x
+                && view_col < pane_cols.saturating_sub(margin_x);
+            let in_y = view_row >= margin_y as isize
+                && view_row < (pane_rows as isize - margin_y as isize);
+
+            if in_x && in_y {
+                return camera;
+            }
+
+            // Re-centre on the focus. The x coordinate wraps around using
+            // Euclidean modulo so the camera can be positioned for the
+            // shortest path.
+            let new_cx =
+                (x as isize - (pane_cols / 2) as isize).rem_euclid(map_w as isize) as usize;
+            let new_cy = (y as isize - (pane_rows / 2) as isize).max(0);
+            let new_cy = map_h.saturating_sub(pane_rows).min(new_cy as usize);
+            (new_cx, new_cy)
         }
-        _ => (0, 0),
+        _ => camera,
     };
     (cx, cy)
 }
@@ -974,20 +1005,69 @@ mod tests {
     #[test]
     fn camera_centres_on_the_focused_tile() {
         // A 10x10 pane centred on (7, 9) half-width 5, half-height 5.
-        let camera = camera_for(Some((7, 9)), (20, 20), (10, 10));
+        // Camera is far away so the focus is outside the middle 75%.
+        let camera = camera_for(Some((7, 9)), (20, 20), (10, 10), (0, 0));
         assert_eq!(camera, (2, 4));
     }
 
     #[test]
-    fn camera_is_clamped_to_the_map_edges() {
-        // Near the origin: cannot go negative.
-        assert_eq!(camera_for(Some((0, 0)), (20, 20), (10, 10)), (0, 0));
-        // A pane larger than the map clamps to the origin.
-        assert_eq!(camera_for(Some((5, 5)), (10, 10), (40, 30)), (0, 0));
-        // Far edge: keep the rightmost column fully on the map.
-        assert_eq!(camera_for(Some((19, 0)), (20, 20), (10, 5)), (10, 0));
-        // No focus keeps the origin.
-        assert_eq!(camera_for(None, (80, 50), (40, 40)), (0, 0));
+    fn camera_stays_put_when_focus_is_in_the_middle_70_percent() {
+        // A 10x10 pane centred on (7, 7) so camera is (2, 2).
+        // Focus at (7, 7) is dead centre — well within the middle 75%.
+        let camera = camera_for(Some((7, 7)), (20, 20), (10, 10), (2, 2));
+        assert_eq!(camera, (2, 2));
+    }
+
+    #[test]
+    fn camera_recentres_when_focus_leaves_the_middle_70_percent() {
+        // 10x10 pane, camera at (2, 2), visible x: 2..=11, visible y: 2..=11.
+        // Middle 75% margin = 10/8 = 1, so safe x: 3..=10, safe y: 3..=10.
+        // Focus at (2, 2) is outside the safe range → camera re-centres.
+        // Horizontal wrapping: centre at (2 - 5).rem_euclid(20) = 17.
+        let camera = camera_for(Some((2, 2)), (20, 20), (10, 10), (2, 2));
+        assert_eq!(camera, (17, 0));
+    }
+
+    #[test]
+    fn camera_is_clamped_to_the_map_edges_vertically() {
+        // Near the origin: y cannot go negative.
+        assert_eq!(
+            camera_for(Some((0, 0)), (20, 20), (10, 10), (5, 5)),
+            (15, 0)
+        );
+        // A pane larger than the map: with the wider 70 % margin the focus
+        // at x=5 falls outside the safe zone and re-centres horizontally.
+        assert_eq!(camera_for(Some((5, 5)), (10, 10), (40, 30), (0, 0)), (5, 0));
+        // Far y edge: keep the bottommost row on the map.
+        // Horizontally the camera wraps: centre on x=0 gives (0-5).rem_euclid(20)=15.
+        assert_eq!(
+            camera_for(Some((0, 19)), (20, 20), (10, 10), (0, 0)),
+            (15, 10)
+        );
+        // No focus keeps the current camera.
+        assert_eq!(camera_for(None, (80, 50), (40, 40), (10, 10)), (10, 10));
+    }
+
+    #[test]
+    fn camera_wraps_around_the_horizontal_edges() {
+        // Focus at the far east (x=19) on an 80-wide map, pane 40 wide.
+        // Centre at (19 - 20).rem_euclid(80) = 79.
+        let camera = camera_for(Some((19, 0)), (80, 50), (40, 40), (0, 0));
+        assert_eq!(camera.0, 79);
+        // Focus at x=0 on an 80-wide map, pane 40 wide.
+        // Centre at (0 - 20).rem_euclid(80) = 60.
+        let camera = camera_for(Some((0, 10)), (80, 50), (40, 40), (0, 0));
+        assert_eq!(camera.0, 60);
+    }
+
+    #[test]
+    fn camera_stays_put_when_focus_wraps_into_the_middle_70_percent() {
+        // Map 80 wide, pane 40 wide, camera at (79, 25).
+        // Viewport x: 79, 0, 1, ..., 38. Focus at x=5 is at view_col (5+80-79)%80 = 6.
+        // margin_x = 40*15/100 = 6. 6 >= 6 && 6 < 34 → inside.
+        // Viewport y: 25..64. Focus at y=31, view_row = 6. margin_y = 6. 6 >= 6 → inside.
+        let camera = camera_for(Some((5, 31)), (80, 50), (40, 40), (79, 25));
+        assert_eq!(camera, (79, 25));
     }
 
     #[test]
@@ -1006,6 +1086,9 @@ mod tests {
 
         // Find a neighbouring tile the settler can afford to step onto (open
         // land costs 1 move; a settler has 1 move), regardless of the world.
+        // Use rem_euclid for the horizontal axis to match the engine's
+        // east/west wrapping.
+        let map_w = engine.width() as isize;
         let mut pressed = None;
         for (code, dx, dy) in [
             (KeyCode::Right, 1, 0),
@@ -1013,7 +1096,7 @@ mod tests {
             (KeyCode::Up, 0, -1),
             (KeyCode::Down, 0, 1),
         ] {
-            let nx = (before.x as isize + dx).clamp(0, engine.width() as isize - 1) as usize;
+            let nx = (before.x as isize + dx).rem_euclid(map_w) as usize;
             let ny = (before.y as isize + dy).clamp(0, engine.height() as isize - 1) as usize;
             let terrain = engine.tile(nx, ny).terrain;
             if terrain.is_land() && terrain.movement_cost() <= 1 {
@@ -1033,10 +1116,16 @@ mod tests {
             .find(|unit| unit.id() == app.selected_unit.unwrap())
             .unwrap()
             .location;
-        let dx = after.x as isize - before.x as isize;
+        // Account for horizontal wrapping when checking adjacency.
+        let dx_raw = after.x as isize - before.x as isize;
+        let wrapped_dx = if dx_raw.abs() > 1 {
+            dx_raw.signum() * (map_w - dx_raw.abs())
+        } else {
+            dx_raw
+        };
         let dy = after.y as isize - before.y as isize;
         assert!(
-            dx.abs() + dy.abs() == 1,
+            wrapped_dx.abs() + dy.abs() == 1,
             "unit did not move by exactly one tile: {before:?} -> {after:?}"
         );
     }
@@ -1098,12 +1187,12 @@ mod tests {
                 .find(|u| u.id() == app.selected_unit.unwrap())
                 .unwrap();
             let before = unit.location;
+            let w = engine.width() as isize;
 
-            let nx = (before.x as isize + tile_dx).clamp(0, engine.width() as isize - 1);
+            let nx = (before.x as isize + tile_dx).rem_euclid(w);
             let ny = (before.y as isize + tile_dy).clamp(0, engine.height() as isize - 1);
             let terrain = engine.tile(nx as usize, ny as usize).terrain;
-            if nx == before.x as isize + tile_dx
-                && ny == before.y as isize + tile_dy
+            if ny == before.y as isize + tile_dy
                 && terrain.is_land()
                 && terrain.movement_cost() <= 1
             {
@@ -1115,7 +1204,8 @@ mod tests {
                     .find(|u| u.id() == app.selected_unit.unwrap())
                     .unwrap()
                     .location;
-                let dx = after.x as isize - before.x as isize;
+                let dx = (after.x as isize - before.x as isize + w) % w;
+                let dx = if dx > w / 2 { dx - w } else { dx };
                 let dy = after.y as isize - before.y as isize;
                 assert_eq!(
                     (dx, dy),

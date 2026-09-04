@@ -115,26 +115,27 @@ impl<'a> GameScreen<'a> {
         // map row below it.
         let mut city_labels: Vec<(u16, u16, String)> = Vec::new();
 
-        // Tiles are shown at 1:1; `camera` is the top-left world tile. World
-        // tiles outside the map (when scrolled up against an edge) render as
-        // void.
+        // Tiles are shown at 1:1; `camera` is the top-left world tile. The map
+        // wraps horizontally (east/west) but not vertically — tiles beyond the
+        // north/south edge render as void.
         for row in 0..cell_rows {
             for col in 0..cell_cols {
                 let src_x = self.camera.0 + col;
                 let src_y = self.camera.1 + row;
+                let map_x = src_x % map_w;
                 let cx = area.x + (col * TILE_WIDTH) as u16;
                 let cy = area.y + row as u16;
 
-                let (symbol, style, city_name) = if src_x >= map_w || src_y >= map_h {
+                let (symbol, style, city_name) = if src_y >= map_h {
                     (' ', Style::default().bg(Color::Rgb(6, 6, 22)), None)
                 } else {
-                    let tile = self.view.tile(src_x, src_y);
-                    let explored = self.view.explored(src_x, src_y);
+                    let tile = self.view.tile(map_x, src_y);
+                    let explored = self.view.explored(map_x, src_y);
                     let terrain = tile.terrain;
                     let mut style = tile_style(explored, terrain);
 
-                    let unit = self.view.units_at(src_x, src_y);
-                    let city = self.view.city_at(src_x, src_y);
+                    let unit = self.view.units_at(map_x, src_y);
+                    let city = self.view.city_at(map_x, src_y);
 
                     let (symbol, city_name) = if explored && let Some(city) = city {
                         // A city occupies the whole tile: show its population
@@ -691,7 +692,8 @@ mod tests {
 
         // The settler is drawn with its class letter at the 1:1 tile position,
         // in bold to distinguish it from terrain.
-        let px = LEFT_COLUMN_WIDTH as usize + (fx - camera.0) * 2;
+        let map_w = engine.width();
+        let px = LEFT_COLUMN_WIDTH as usize + wrapped_col(fx, camera.0, map_w) * 2;
         let py = fy - camera.1;
         let buffer = terminal.backend().buffer();
         let cell = buffer.cell((px as u16, py as u16)).unwrap();
@@ -766,7 +768,8 @@ mod tests {
                 )
             })
             .unwrap();
-        let px = LEFT_COLUMN_WIDTH as usize + (fx - camera.0) * 2;
+        let map_w = engine.width();
+        let px = LEFT_COLUMN_WIDTH as usize + wrapped_col(fx, camera.0, map_w) * 2;
         let py = fy - camera.1;
         let cell = terminal
             .backend()
@@ -819,7 +822,8 @@ mod tests {
                 )
             })
             .unwrap();
-        let px = LEFT_COLUMN_WIDTH as usize + (fx - camera.0) * 2;
+        let map_w = engine.width();
+        let px = LEFT_COLUMN_WIDTH as usize + wrapped_col(fx, camera.0, map_w) * 2;
         let py = fy - camera.1;
         let cell = terminal
             .backend()
@@ -880,7 +884,8 @@ mod tests {
                 )
             })
             .unwrap();
-        let px = LEFT_COLUMN_WIDTH as usize + (nx - camera.0) * 2;
+        let map_w = engine.width();
+        let px = LEFT_COLUMN_WIDTH as usize + wrapped_col(nx, camera.0, map_w) * 2;
         let py = ny - camera.1;
         let cell = terminal
             .backend()
@@ -917,7 +922,8 @@ mod tests {
                 )
             })
             .unwrap();
-        let px = LEFT_COLUMN_WIDTH as usize + (fx - camera.0) * 2;
+        let map_w = engine.width();
+        let px = LEFT_COLUMN_WIDTH as usize + wrapped_col(fx, camera.0, map_w) * 2;
         let py = fy - camera.1;
         let cell = terminal
             .backend()
@@ -1038,11 +1044,14 @@ mod tests {
         map: (usize, usize),
         pane: (usize, usize),
     ) -> (usize, usize) {
-        let left = (focus.0 as isize - (pane.0 / 2) as isize).max(0) as usize;
+        let left = (focus.0 as isize - (pane.0 / 2) as isize).rem_euclid(map.0 as isize) as usize;
         let top = (focus.1 as isize - (pane.1 / 2) as isize).max(0) as usize;
-        (
-            map.0.saturating_sub(pane.0).min(left),
-            map.1.saturating_sub(pane.1).min(top),
-        )
+        let top = map.1.saturating_sub(pane.1).min(top);
+        (left, top)
+    }
+
+    /// Viewport column of a tile, accounting for horizontal map wrapping.
+    fn wrapped_col(fx: usize, camera_x: usize, map_w: usize) -> usize {
+        (fx + map_w - camera_x) % map_w
     }
 }
