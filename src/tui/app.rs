@@ -2,14 +2,17 @@ use std::cell::Cell;
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
+use super::city_window::{self, CityWindow};
 use super::civ_selector::CivSelector;
 use super::competition_selector::CompetitionSelector;
 use super::difficulty_selector::DifficultySelector;
-use super::game_screen::GameScreen;
+use super::game_screen::{GameScreen, LEFT_COLUMN_WIDTH, TILE_WIDTH};
 use super::playing_help::PlayingHelp;
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
@@ -17,6 +20,7 @@ use super::status_bar::{ITEMS, StatusBar};
 use crate::game_engine::event::Event as GameEvent;
 use crate::game_engine::{Command, Engine, GameView, Player};
 use crate::model::cartography::Direction;
+use crate::model::cities::CityId;
 use crate::model::civilizations::Civilization;
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
@@ -74,6 +78,12 @@ pub struct App {
     start_choice: StartChoice,
     engine: Option<Engine>,
     selected_unit: Option<UnitId>,
+    selected_city: Option<CityId>,
+    /// Scroll offset of the open city window's improvement list.
+    city_window_scroll: usize,
+    /// The last-drawn city-window rectangle and its close button, for mouse
+    /// hit-testing while the window is open.
+    moused_window: Cell<Option<(Rect, Rect)>>,
     camera: Cell<(usize, usize)>,
     show_help: bool,
     show_events: bool,
@@ -101,6 +111,9 @@ impl App {
             start_choice: StartChoice::Start,
             engine: None,
             selected_unit: None,
+            selected_city: None,
+            city_window_scroll: 0,
+            moused_window: Cell::new(None),
             camera: Cell::new((0, 0)),
             show_help: false,
             show_events: false,
@@ -114,12 +127,15 @@ impl App {
     ) -> io::Result<()> {
         loop {
             terminal.draw(|frame| Self::draw(frame, self))?;
-            if event::poll(POLL_INTERVAL)?
-                && let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press
-                && self.handle_key(key)
-            {
-                return Ok(());
+            if !event::poll(POLL_INTERVAL)? {
+                continue;
+            }
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press && self.handle_key(key) => {
+                    return Ok(());
+                }
+                Event::Mouse(mouse) => self.handle_mouse(mouse),
+                _ => {}
             }
         }
     }
@@ -164,9 +180,7 @@ impl App {
                 if let Some(engine) = &app.engine {
                     let area = frame.area();
                     let focus = focus_coordinate(engine, app.selected_unit);
-                    let map_pane_width = area
-                        .width
-                        .saturating_sub(super::game_screen::LEFT_COLUMN_WIDTH);
+                    let map_pane_width = area.width.saturating_sub(LEFT_COLUMN_WIDTH);
                     let pane_cols = (map_pane_width as usize) / 2;
                     let camera = camera_for(
                         focus,
@@ -181,6 +195,7 @@ impl App {
                             focus,
                             camera,
                             app.selected_unit,
+                            app.selected_city,
                             app.started_at.elapsed(),
                             app.show_events,
                             &app.event_log[app.event_log.len().saturating_sub(EVENT_LOG_SIZE)..],
@@ -201,6 +216,23 @@ impl App {
                             )),
                             bar,
                         );
+                    }
+                    // The city window floats above the whole screen, centred.
+                    match app.selected_city {
+                        Some(city_id)
+                            if engine
+                                .city(city_id)
+                                .is_some_and(|city| city.owner() == engine.current_player_id()) =>
+                        {
+                            let window = city_window::window_rect(area);
+                            frame.render_widget(
+                                CityWindow::new(engine, city_id, app.city_window_scroll),
+                                window,
+                            );
+                            app.moused_window
+                                .set(Some((window, city_window::close_button_rect(window))));
+                        }
+                        _ => app.moused_window.set(None),
                     }
                 }
             }
@@ -408,6 +440,9 @@ impl App {
         self.phase = Phase::Playing;
         self.reset_setup();
         self.event_log.clear();
+        self.selected_city = None;
+        self.city_window_scroll = 0;
+        self.moused_window = Cell::new(None);
     }
 
     fn start_new_game(&mut self) {
@@ -426,7 +461,10 @@ impl App {
                 false
             }
             KeyCode::Esc => {
-                if self.show_help {
+                if self.selected_city.is_some() {
+                    self.selected_city = None;
+                    self.city_window_scroll = 0;
+                } else if self.show_help {
                     self.show_help = false;
                 } else {
                     self.phase = Phase::Menu;
@@ -513,6 +551,73 @@ impl App {
             None => 0,
         };
         self.selected_unit = Some(units[next].id());
+    }
+
+    /// Selects the city whose map tile was clicked, matching the pane geometry
+    /// the game screen renders with: the map pane starts just right of the left
+    /// column and lays world tiles out one row per screen row, two columns per
+    /// tile. Clicks on empty tiles or the left column clear the selection.
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.phase != Phase::Playing {
+            return;
+        }
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        // Wheel events scroll the open city window's improvement list.
+        if self.moused_window.get().is_some() {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    self.city_window_scroll = self.city_window_scroll.saturating_sub(1);
+                    return;
+                }
+                MouseEventKind::ScrollDown => {
+                    self.city_window_scroll = self.city_window_scroll.saturating_add(1);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        let column = mouse.column;
+        let row = mouse.row;
+        // Something clicked without a real position.
+        if column == u16::MAX || row == u16::MAX {
+            return;
+        }
+        // While the window is open, its close button dismisses it and clicks
+        // anywhere else inside it are consumed rather than reaching the map.
+        if let Some((window, close)) = self.moused_window.get() {
+            if close.contains((column, row).into()) {
+                self.selected_city = None;
+                self.city_window_scroll = 0;
+                return;
+            }
+            if window.contains((column, row).into()) {
+                return;
+            }
+        }
+        if column < LEFT_COLUMN_WIDTH {
+            self.selected_city = None;
+            return;
+        }
+        let tile_col = (column - LEFT_COLUMN_WIDTH) as usize / TILE_WIDTH;
+        let (camera_x, camera_y) = self.camera.get();
+        let map_w = engine.width();
+        let map_h = engine.height();
+        let world_x = (camera_x + tile_col) % map_w;
+        let world_y = camera_y + row as usize;
+        let clicked = if world_y < map_h {
+            engine
+                .city_at(world_x, world_y)
+                .filter(|city| city.owner() == engine.current_player_id())
+                .map(|city| city.id())
+        } else {
+            None
+        };
+        self.selected_city = clicked;
     }
 
     fn move_selected_unit(&mut self, direction: Direction) {
@@ -1042,6 +1147,183 @@ mod tests {
             app.selected_unit,
             engine.player_units().first().map(|unit| unit.id())
         );
+    }
+
+    fn left_click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    fn playing_app() -> (App, usize, usize) {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        app.handle_key(key(KeyCode::Char('v'))); // found the starting city
+        let (cx, cy) = {
+            let engine = app.engine.as_ref().unwrap();
+            let cities = engine.player_cities();
+            let city = cities.first().expect("player has a city");
+            (city.location.x as usize, city.location.y as usize)
+        };
+        (app, cx, cy)
+    }
+
+    #[test]
+    fn left_clicking_a_player_city_selects_it() {
+        let (mut app, cx, cy) = playing_app();
+        app.handle_mouse(left_click(
+            (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16,
+            cy as u16,
+        ));
+        let city = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .player_cities()
+            .into_iter()
+            .find(|c| c.location.x as usize == cx && c.location.y as usize == cy)
+            .unwrap();
+        assert_eq!(app.selected_city, Some(city.id()));
+    }
+
+    #[test]
+    fn clicking_an_empty_tile_clears_the_selection() {
+        let (mut app, cx, cy) = playing_app();
+        app.handle_mouse(left_click(
+            (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16,
+            cy as u16,
+        ));
+        assert!(app.selected_city.is_some());
+
+        let (ex, ey) = {
+            let engine = app.engine.as_ref().unwrap();
+            (0..engine.height())
+                .flat_map(|y| (0..engine.width()).map(move |x| (x, y)))
+                .find(|(x, y)| engine.city_at(*x, *y).is_none())
+                .unwrap()
+        };
+        app.handle_mouse(left_click(
+            (LEFT_COLUMN_WIDTH as usize + ex * 2) as u16,
+            ey as u16,
+        ));
+        assert_eq!(app.selected_city, None);
+    }
+
+    #[test]
+    fn clicking_the_left_column_clears_the_selection() {
+        let (mut app, cx, cy) = playing_app();
+        app.handle_mouse(left_click(
+            (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16,
+            cy as u16,
+        ));
+        assert!(app.selected_city.is_some());
+        app.handle_mouse(left_click(4, cy as u16));
+        assert_eq!(app.selected_city, None);
+    }
+
+    #[test]
+    fn non_left_clicks_leave_the_selection_alone() {
+        let (mut app, cx, cy) = playing_app();
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16,
+            row: cy as u16,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        assert_eq!(app.selected_city, None);
+    }
+
+    #[test]
+    fn a_new_game_starts_with_no_city_selected() {
+        let (app, _, _) = playing_app();
+        assert_eq!(app.selected_city, None);
+    }
+
+    /// Selects the player's city and pretends the city window was drawn, so
+    /// its mouse hit-testing is live.
+    fn with_city_window_open() -> (App, usize, usize, Rect) {
+        let (mut app, cx, cy) = playing_app();
+        app.handle_mouse(left_click(
+            (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16,
+            cy as u16,
+        ));
+        assert!(app.selected_city.is_some());
+        let win = Rect {
+            x: 20,
+            y: 5,
+            width: 60,
+            height: 30,
+        };
+        app.moused_window
+            .set(Some((win, crate::tui::city_window::close_button_rect(win))));
+        (app, cx, cy, win)
+    }
+
+    #[test]
+    fn clicking_the_close_button_closes_the_window() {
+        let (mut app, _, _, win) = with_city_window_open();
+        let close = crate::tui::city_window::close_button_rect(win);
+        app.handle_mouse(left_click(close.x + 1, close.y));
+        assert_eq!(app.selected_city, None);
+    }
+
+    #[test]
+    fn clicks_inside_the_window_are_consumed() {
+        let (mut app, _, _, win) = with_city_window_open();
+        let city = app.selected_city;
+        app.handle_mouse(left_click(win.x + 2, win.y + 2));
+        assert_eq!(
+            app.selected_city, city,
+            "in-window click must not reach the map"
+        );
+    }
+
+    #[test]
+    fn clicks_outside_the_window_reach_the_map() {
+        let (mut app, cx, cy, win) = with_city_window_open();
+        // The map's left column is outside the window; clicking it still
+        // clears the selection rather than being consumed.
+        assert!(!win.contains((4, cy as u16).into()));
+        app.handle_mouse(left_click(4, cy as u16));
+        assert_eq!(app.selected_city, None);
+        let _ = cx;
+    }
+
+    #[test]
+    fn wheel_events_scroll_the_open_window() {
+        let (mut app, _, _, _) = with_city_window_open();
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        assert_eq!(app.city_window_scroll, 1);
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        assert_eq!(app.city_window_scroll, 0);
+    }
+
+    #[test]
+    fn esc_closes_the_window_before_anything_else() {
+        let (mut app, _, _, _) = with_city_window_open();
+        app.show_help = true;
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.selected_city, None);
+        assert!(matches!(app.phase, Phase::Playing));
+        // With the window gone, Esc falls through to help then the menu.
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.show_help);
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.phase, Phase::Menu));
     }
 
     #[test]

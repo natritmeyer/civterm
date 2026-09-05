@@ -32,7 +32,8 @@ impl City {
             improvements: Vec::new(),
             production: None,
             resource_stored: 0,
-            worked: Vec::new(),
+            // The city centre is always worked from the moment it is founded.
+            worked: vec![location],
         }
     }
 
@@ -97,6 +98,11 @@ impl City {
 
     /// Food consumed each turn: each citizen eats 2.
     pub fn food_consumption(&self) -> u32 {
+        2 * self.population
+    }
+
+    /// The food surplus the city stores before its population grows.
+    pub fn growth_target(&self) -> u32 {
         2 * self.population
     }
 
@@ -347,11 +353,11 @@ mod tests {
             PlayerId::new(0),
             CityId::new(0),
         );
-        assert!(city.worked_tiles().is_empty());
+        assert_eq!(city.worked_tiles(), &[Location::new(0, 0)]);
         city.add_worked_tile(Location::new(1, 1));
         city.add_worked_tile(Location::new(1, 1));
         city.add_worked_tile(Location::new(0, 1));
-        assert_eq!(city.worked_tiles().len(), 2);
+        assert_eq!(city.worked_tiles().len(), 3);
     }
 
     #[test]

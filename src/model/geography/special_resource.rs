@@ -46,4 +46,19 @@ impl SpecialResource {
             | SpecialResource::Oil => 0,
         }
     }
+
+    /// Gold minted each turn by mining the resource. Only the Gold resource on
+    /// a mountain yields any; plain mountains strike no coin.
+    pub fn yields_gold(&self) -> u8 {
+        match self {
+            SpecialResource::Gold => 2,
+            SpecialResource::Coal
+            | SpecialResource::Fish
+            | SpecialResource::Game
+            | SpecialResource::Gems
+            | SpecialResource::Horses
+            | SpecialResource::Oasis
+            | SpecialResource::Oil => 0,
+        }
+    }
 }

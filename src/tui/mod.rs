@@ -1,4 +1,5 @@
 pub mod app;
+pub mod city_window;
 pub mod civ_selector;
 pub mod competition_selector;
 pub mod difficulty_selector;

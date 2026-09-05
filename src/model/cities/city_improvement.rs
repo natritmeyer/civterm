@@ -19,6 +19,25 @@ pub enum CityImprovement {
 }
 
 impl CityImprovement {
+    /// The improvement's name as it should appear to players.
+    pub fn name(&self) -> &'static str {
+        match self {
+            CityImprovement::Aqueduct => "Aqueduct",
+            CityImprovement::Bank => "Bank",
+            CityImprovement::Barracks => "Barracks",
+            CityImprovement::Cathedral => "Cathedral",
+            CityImprovement::CityWalls => "City Walls",
+            CityImprovement::Colosseum => "Colosseum",
+            CityImprovement::Courthouse => "Courthouse",
+            CityImprovement::Granary => "Granary",
+            CityImprovement::Library => "Library",
+            CityImprovement::Marketplace => "Marketplace",
+            CityImprovement::Palace => "Palace",
+            CityImprovement::Temple => "Temple",
+            CityImprovement::University => "University",
+        }
+    }
+
     pub fn required_advancement(&self) -> Option<Advancement> {
         match self {
             CityImprovement::Aqueduct => Some(Advancement::Construction),

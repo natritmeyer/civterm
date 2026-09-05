@@ -7,6 +7,7 @@ use ratatui::widgets::Widget;
 
 use super::theme::{ACCENT, DIM, draw_text};
 use crate::game_engine::{Event, GameView};
+use crate::model::cities::CityId;
 use crate::model::civilizations::Civilization;
 use crate::model::geography::Terrain;
 use crate::model::units::{UnitClass, UnitId, UnitOrder};
@@ -17,7 +18,7 @@ pub const LEFT_COLUMN_WIDTH: u16 = 36;
 /// Width of the event-log overlay when visible.
 const EVENT_LOG_WIDTH: u16 = 44;
 
-const TILE_WIDTH: usize = 2;
+pub const TILE_WIDTH: usize = 2;
 
 fn terrain_colors(terrain: Terrain) -> (Color, Color) {
     use Terrain::*;
@@ -57,7 +58,7 @@ pub(crate) fn civilization_color(civ: Civilization) -> Color {
     }
 }
 
-fn tile_style(explored: bool, terrain: Terrain) -> Style {
+pub(crate) fn tile_style(explored: bool, terrain: Terrain) -> Style {
     if !explored {
         return Style::default()
             .fg(Color::Rgb(20, 20, 20))
@@ -67,11 +68,98 @@ fn tile_style(explored: bool, terrain: Terrain) -> Style {
     Style::default().fg(fg).bg(bg)
 }
 
+/// Paint one world tile at `(x, y)` spanning `TILE_WIDTH` columns, exactly as
+/// the main map does: the terrain/unit/city symbol in the first cell and a
+/// blank style-carrying cell to its right. World columns wrap horizontally.
+/// Returns the city's name when the tile holds an explored city so callers can
+/// draw the label beneath it.
+///
+/// `selected_city` outlines the matching city tile; `flashing` gates the
+/// selected-unit flash, which itself must be the selected unit with moves left.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_tile(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    view: &dyn GameView,
+    world_x: usize,
+    world_y: usize,
+    map_w: usize,
+    map_h: usize,
+    selected_city: Option<CityId>,
+    selected_unit: Option<UnitId>,
+    flashing: bool,
+) -> Option<String> {
+    let map_x = world_x % map_w;
+    let (symbol, style, city_name) = if world_y >= map_h {
+        (' ', Style::default().bg(Color::Rgb(6, 6, 22)), None)
+    } else {
+        let tile = view.tile(map_x, world_y);
+        let explored = view.explored(map_x, world_y);
+        let terrain = tile.terrain;
+        let mut style = tile_style(explored, terrain);
+
+        let unit = view.units_at(map_x, world_y);
+        let city = view.city_at(map_x, world_y);
+
+        let (symbol, city_name) = if explored && let Some(city) = city {
+            // A city occupies the whole tile: show its population on a
+            // background of the owning civilization's colour.
+            (population_digit(city.population()), Some(city.name.clone()))
+        } else if let Some(u) = unit.first() {
+            (first_letter(u.unit_class), None)
+        } else {
+            (terrain.as_char(), None)
+        };
+
+        if city_name.is_some()
+            && let Some(city) = city
+        {
+            style = style.bg(civilization_color(view.civilization_of(city.owner())));
+            // The selected city's tile is outlined so it stands out.
+            if selected_city == Some(city.id()) {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+        }
+        if city_name.is_none() && !unit.is_empty() {
+            style = style
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::UNDERLINED);
+        }
+
+        // The selected unit awaiting instruction flashes once per second: its
+        // tile turns the civilization flag colour then dims back to terrain.
+        if flashing
+            && let Some(id) = selected_unit
+            && unit
+                .iter()
+                .any(|u| u.id() == id && u.order() == UnitOrder::Idle && u.moves_remaining() > 0)
+        {
+            style = style.bg(civilization_color(view.current_player()));
+        }
+
+        (symbol, style, city_name)
+    };
+
+    if let Some(cell) = buf.cell_mut((x, y)) {
+        cell.set_symbol(&symbol.to_string());
+        cell.set_style(style);
+    }
+    if TILE_WIDTH > 1
+        && let Some(cell) = buf.cell_mut((x + 1, y))
+    {
+        cell.set_symbol(" ");
+        cell.set_style(style);
+    }
+    city_name
+}
+
 pub struct GameScreen<'a> {
     view: &'a dyn GameView,
     focus: Option<(usize, usize)>,
     camera: (usize, usize),
     selected_unit: Option<UnitId>,
+    selected_city: Option<CityId>,
     /// An instant pushed forward every frame; drives the idle-unit flash.
     now: Duration,
     /// Whether the event log overlays the map pane's top-right corner.
@@ -86,11 +174,13 @@ impl<'a> GameScreen<'a> {
     /// instruction; `now` is a monotonic clock used to time that flash.
     /// `show_events` toggles the event log overlay, which shows `events`
     /// (most recent messages, oldest first) in the top-right of the map pane.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         view: &'a dyn GameView,
         focus: Option<(usize, usize)>,
         camera: (usize, usize),
         selected_unit: Option<UnitId>,
+        selected_city: Option<CityId>,
         now: Duration,
         show_events: bool,
         events: &'a [Event],
@@ -100,6 +190,7 @@ impl<'a> GameScreen<'a> {
             focus,
             camera,
             selected_unit,
+            selected_city,
             now,
             show_events,
             events,
@@ -135,73 +226,22 @@ impl<'a> GameScreen<'a> {
             for col in 0..cell_cols {
                 let src_x = self.camera.0 + col;
                 let src_y = self.camera.1 + row;
-                let map_x = src_x % map_w;
                 let cx = area.x + (col * TILE_WIDTH) as u16;
                 let cy = area.y + row as u16;
 
-                let (symbol, style, city_name) = if src_y >= map_h {
-                    (' ', Style::default().bg(Color::Rgb(6, 6, 22)), None)
-                } else {
-                    let tile = self.view.tile(map_x, src_y);
-                    let explored = self.view.explored(map_x, src_y);
-                    let terrain = tile.terrain;
-                    let mut style = tile_style(explored, terrain);
-
-                    let unit = self.view.units_at(map_x, src_y);
-                    let city = self.view.city_at(map_x, src_y);
-
-                    let (symbol, city_name) = if explored && let Some(city) = city {
-                        // A city occupies the whole tile: show its population
-                        // on a background of the owning civilization's colour.
-                        (population_digit(city.population()), Some(city.name.clone()))
-                    } else if let Some(u) = unit.first() {
-                        (first_letter(u.unit_class), None)
-                    } else {
-                        (terrain.as_char(), None)
-                    };
-
-                    if city_name.is_some()
-                        && let Some(city) = city
-                    {
-                        style =
-                            style.bg(civilization_color(self.view.civilization_of(city.owner())));
-                    }
-                    if city_name.is_none() && !unit.is_empty() {
-                        style = style
-                            .add_modifier(Modifier::BOLD)
-                            .add_modifier(Modifier::UNDERLINED);
-                    }
-
-                    // The selected unit awaiting instruction flashes: once per
-                    // second its tile turns the civilization flag colour for
-                    // half a second, then dims back to the terrain. It stops
-                    // once the unit has acted (non-idle) or spent its moves.
-                    if flashing
-                        && let Some(id) = self.selected_unit
-                        && unit.iter().any(|u| {
-                            u.id() == id && u.order() == UnitOrder::Idle && u.moves_remaining() > 0
-                        })
-                    {
-                        style = style.bg(civilization_color(self.view.current_player()));
-                    }
-
-                    (symbol, style, city_name)
-                };
-
-                if let Some(cell) = buf.cell_mut((cx, cy)) {
-                    cell.set_symbol(&symbol.to_string());
-                    cell.set_style(style);
-                }
-                if TILE_WIDTH > 1
-                    && let Some(cell) = buf.cell_mut((cx + 1, cy))
-                {
-                    cell.set_symbol(" ");
-                    cell.set_style(style);
-                }
-
-                // A discovered city will show its name centred on the row below the
-                // tile; defer drawing until every tile row has been painted.
-                if let Some(name) = city_name {
+                if let Some(name) = paint_tile(
+                    buf,
+                    cx,
+                    cy,
+                    self.view,
+                    src_x,
+                    src_y,
+                    map_w,
+                    map_h,
+                    self.selected_city,
+                    self.selected_unit,
+                    flashing,
+                ) {
                     city_labels.push((cx, cy + 1, name));
                 }
             }
@@ -492,7 +532,7 @@ fn first_letter(unit_class: UnitClass) -> char {
 }
 
 /// The digit shown on a city tile: its population, clipped to a single char.
-fn population_digit(population: u32) -> char {
+pub(crate) fn population_digit(population: u32) -> char {
     if population >= 10 {
         '9'
     } else {
@@ -639,6 +679,37 @@ mod tests {
         fn player_units(&self) -> Vec<&crate::model::units::Unit> {
             Vec::new()
         }
+        fn player_cities(&self) -> Vec<&crate::model::cities::City> {
+            self.city
+                .as_ref()
+                .map(|city| vec![city])
+                .unwrap_or_default()
+        }
+        fn city(&self, id: crate::model::cities::CityId) -> Option<&crate::model::cities::City> {
+            self.city.as_ref().filter(|city| city.id() == id)
+        }
+        fn current_player_id(&self) -> crate::model::civilizations::PlayerId {
+            crate::model::civilizations::PlayerId::new(0)
+        }
+        fn city_income(
+            &self,
+            _id: crate::model::cities::CityId,
+        ) -> crate::game_engine::game_view::CityIncome {
+            crate::game_engine::game_view::CityIncome {
+                food: 2,
+                resources: 0,
+                trade: 1,
+                gold: 0,
+                research: 0,
+                special_resources: Vec::new(),
+            }
+        }
+        fn home_units(
+            &self,
+            _city: crate::model::cities::CityId,
+        ) -> Vec<&crate::model::units::Unit> {
+            Vec::new()
+        }
         fn explored(&self, _x: usize, _y: usize) -> bool {
             self.explored
         }
@@ -687,7 +758,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, false, &[]),
+                    GameScreen::new(&view, None, (0, 0), None, None, Duration::ZERO, false, &[]),
                     frame.area(),
                 )
             })
@@ -753,7 +824,16 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&engine, focus, (0, 0), None, Duration::ZERO, false, &[]),
+                    GameScreen::new(
+                        &engine,
+                        focus,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::ZERO,
+                        false,
+                        &[],
+                    ),
                     frame.area(),
                 )
             })
@@ -778,7 +858,16 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, true, &events),
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::ZERO,
+                        true,
+                        &events,
+                    ),
                     frame.area(),
                 )
             })
@@ -808,7 +897,16 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, true, &events),
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::ZERO,
+                        true,
+                        &events,
+                    ),
                     frame.area(),
                 )
             })
@@ -825,7 +923,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, true, &[]),
+                    GameScreen::new(&view, None, (0, 0), None, None, Duration::ZERO, true, &[]),
                     frame.area(),
                 )
             })
@@ -843,7 +941,16 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, false, &events),
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::ZERO,
+                        false,
+                        &events,
+                    ),
                     frame.area(),
                 )
             })
@@ -886,6 +993,7 @@ mod tests {
                         Some((fx, fy)),
                         camera,
                         None,
+                        None,
                         Duration::ZERO,
                         false,
                         &[],
@@ -920,7 +1028,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, false, &[]),
+                    GameScreen::new(&view, None, (0, 0), None, None, Duration::ZERO, false, &[]),
                     frame.area(),
                 )
             })
@@ -968,7 +1076,16 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&engine, Some((fx, fy)), camera, Some(id), now, false, &[]),
+                    GameScreen::new(
+                        &engine,
+                        Some((fx, fy)),
+                        camera,
+                        Some(id),
+                        None,
+                        now,
+                        false,
+                        &[],
+                    ),
                     frame.area(),
                 )
             })
@@ -1021,6 +1138,7 @@ mod tests {
                         Some((fx, fy)),
                         camera,
                         Some(id),
+                        None,
                         Duration::from_millis(200),
                         false,
                         &[],
@@ -1085,6 +1203,7 @@ mod tests {
                         Some((nx, ny)),
                         camera,
                         Some(id),
+                        None,
                         Duration::from_millis(200),
                         false,
                         &[],
@@ -1124,6 +1243,7 @@ mod tests {
                         &engine,
                         Some((fx, fy)),
                         camera,
+                        None,
                         None,
                         Duration::from_millis(200),
                         false,
@@ -1177,6 +1297,47 @@ mod tests {
     }
 
     #[test]
+    fn the_selected_city_tile_is_outlined() {
+        let (mut engine, fx, fy, id, camera) = settler_engine();
+        engine.submit(crate::game_engine::Command::FoundCity {
+            unit: id,
+            name: "London".to_string(),
+        });
+        let city_id = engine.player_cities().first().unwrap().id();
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(
+                        &engine,
+                        Some((fx, fy)),
+                        camera,
+                        None,
+                        Some(city_id),
+                        Duration::from_millis(200),
+                        false,
+                        &[],
+                    ),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let map_w = engine.width();
+        let px = LEFT_COLUMN_WIDTH as usize + wrapped_col(fx, camera.0, map_w) * 2;
+        let py = fy - camera.1;
+        let cell = terminal
+            .backend()
+            .buffer()
+            .cell((px as u16, py as u16))
+            .unwrap();
+        assert!(
+            cell.style().add_modifier.contains(Modifier::UNDERLINED),
+            "the selected city's tile should be underlined"
+        );
+    }
+
+    #[test]
     fn a_city_on_an_unexplored_tile_stays_hidden() {
         let city = crate::model::cities::City::new(
             "Hidden",
@@ -1195,7 +1356,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, Duration::ZERO, false, &[]),
+                    GameScreen::new(&view, None, (0, 0), None, None, Duration::ZERO, false, &[]),
                     frame.area(),
                 )
             })

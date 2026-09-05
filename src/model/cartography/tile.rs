@@ -100,6 +100,11 @@ impl Tile {
         }
         trade
     }
+
+    /// The special resource on this tile, if any.
+    pub fn resource(&self) -> Option<SpecialResource> {
+        self.resource
+    }
 }
 
 #[cfg(test)]

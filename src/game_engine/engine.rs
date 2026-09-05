@@ -1,3 +1,4 @@
+use crate::game_engine::game_view::CityIncome;
 use crate::game_engine::{Command, Event, GameView, Player};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::generation::MapGenerator;
@@ -822,6 +823,45 @@ impl GameView for Engine {
             .cities
             .iter()
             .find(|city| city.location.x == x as u16 && city.location.y == y as u16)
+    }
+
+    fn player_cities(&self) -> Vec<&City> {
+        self.game
+            .cities
+            .iter()
+            .filter(|city| city.owner() == self.current_player_index)
+            .collect()
+    }
+
+    fn city(&self, id: CityId) -> Option<&City> {
+        self.game.cities.iter().find(|city| city.id() == id)
+    }
+
+    fn current_player_id(&self) -> PlayerId {
+        self.current_player_index
+    }
+
+    fn city_income(&self, id: CityId) -> CityIncome {
+        if self.game.cities.iter().any(|city| city.id() == id) {
+            self.game.city_breakdown(id)
+        } else {
+            CityIncome {
+                food: 0,
+                resources: 0,
+                trade: 0,
+                gold: 0,
+                research: 0,
+                special_resources: Vec::new(),
+            }
+        }
+    }
+
+    fn home_units(&self, city: CityId) -> Vec<&Unit> {
+        self.game
+            .units
+            .iter()
+            .filter(|unit| unit.home_city() == city)
+            .collect()
     }
 
     fn player_units(&self) -> Vec<&Unit> {
@@ -2767,8 +2807,12 @@ mod tests {
             name: "London".to_string(),
         });
         let city = &engine.game.cities[0];
-        // Size 1 works one ring tile; forest (2 resources) beats hills (1).
-        assert_eq!(city.worked_tiles(), &[Location::new(4, 3)]);
+        // Size 1 works the city centre plus one ring tile; forest (2
+        // resources) beats hills (1).
+        assert_eq!(
+            city.worked_tiles(),
+            &[Location::new(3, 3), Location::new(4, 3)]
+        );
         let (food, resources) = engine.game.city_income(CityId::new(0));
         assert_eq!(resources, 2);
         assert_eq!(food, 3);
@@ -2788,12 +2832,12 @@ mod tests {
             unit: UnitId::new(0),
             name: "London".to_string(),
         });
-        assert_eq!(engine.game.cities[0].worked_tiles().len(), 1);
+        assert_eq!(engine.game.cities[0].worked_tiles().len(), 2);
         // Grow to size 4 (engine-driven growth auto-assigns more ring tiles).
         for _ in 0..6 {
             engine.submit(Command::EndTurn);
         }
         assert_eq!(engine.game.cities[0].population(), 4);
-        assert_eq!(engine.game.cities[0].worked_tiles().len(), 4);
+        assert_eq!(engine.game.cities[0].worked_tiles().len(), 5);
     }
 }

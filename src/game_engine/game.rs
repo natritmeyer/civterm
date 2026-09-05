@@ -1,8 +1,10 @@
+use crate::game_engine::game_view::CityIncome;
 use crate::game_engine::player::Player;
 use crate::model::advancements::Advancement;
 use crate::model::cartography::{Location, Map};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
+use crate::model::geography::SpecialResource;
 use crate::model::units::{Unit, UnitClass, UnitId};
 
 pub struct Game {
@@ -128,23 +130,63 @@ impl Game {
             .collect()
     }
 
-    /// Sum food and resource income a city harvests from its worked tiles
-    /// (the city centre is always worked, plus each chosen ring tile).
+    /// Sum food and resource income a city harvests from its worked tiles.
+    /// The city centre is itself a worked tile and is counted first.
     pub fn city_income(&self, city_id: CityId) -> (u32, u32) {
         let city = self
             .cities
             .iter()
             .find(|city| city.id() == city_id)
             .expect("city to read income from exists");
-        let centre = self.map.tile_at(city.location);
-        let mut food = centre.yields_food() as u32;
-        let mut resources = centre.yields_resources() as u32;
+        let mut food = 0u32;
+        let mut resources = 0u32;
         for location in city.worked_tiles() {
             let tile = self.map.tile_at(*location);
             food += tile.yields_food() as u32;
             resources += tile.yields_resources() as u32;
         }
         (food, resources)
+    }
+
+    /// The full per-turn harvest of a city for display: food, resources and
+    /// trade from its worked tiles (the city centre is always the first of
+    /// them), gold from the Gold resource, beakers from research, and the
+    /// distinct special resources being worked.
+    pub fn city_breakdown(&self, city_id: CityId) -> CityIncome {
+        let city = self
+            .cities
+            .iter()
+            .find(|city| city.id() == city_id)
+            .expect("city to read income from exists");
+        let mut food = 0u32;
+        let mut resources = 0u32;
+        let mut trade = 0u32;
+        let mut gold = 0u32;
+        let mut special_resources: Vec<SpecialResource> = Vec::new();
+        let mut consider = |location: Location| {
+            let tile = self.map.tile_at(location);
+            food += tile.yields_food() as u32;
+            resources += tile.yields_resources() as u32;
+            trade += tile.yields_trade() as u32;
+            if let Some(resource) = tile.resource() {
+                gold += resource.yields_gold() as u32;
+                if !special_resources.contains(&resource) {
+                    special_resources.push(resource);
+                }
+            }
+        };
+        for location in city.worked_tiles() {
+            consider(*location);
+        }
+        special_resources.sort_by_key(|resource| format!("{resource:?}"));
+        CityIncome {
+            food,
+            resources,
+            trade,
+            gold,
+            research: city.research(),
+            special_resources,
+        }
     }
 
     /// Total beakers produced by all of a player's cities this turn.
@@ -211,8 +253,8 @@ impl Game {
         result
     }
 
-    /// Assign worked tiles so each citizen harvests a ring tile within the
-    /// footprint (the city centre is additionally always worked), preferring
+    /// Assign worked tiles so the city harvests the city centre (which is
+    /// always worked) plus one footprint ring tile per citizen, preferring
     /// the most resource-productive available tiles.
     pub fn auto_assign_work(&mut self, city_id: CityId) {
         let city = self
@@ -223,8 +265,9 @@ impl Game {
         let city_location = city.location;
         let city_population = city.population() as usize;
         let currently_worked_tiles_locations: Vec<Location> = city.worked_tiles().to_vec();
+        let target_worked = city_population + 1;
 
-        if currently_worked_tiles_locations.len() >= city_population {
+        if currently_worked_tiles_locations.len() >= target_worked {
             return;
         }
 
@@ -240,7 +283,7 @@ impl Game {
             std::cmp::Reverse((tile.yields_resources(), tile.yields_food()))
         });
 
-        let to_add = city_population - currently_worked_tiles_locations.len();
+        let to_add = target_worked - currently_worked_tiles_locations.len();
         for candidate in candidates.into_iter().take(to_add) {
             let city = self
                 .cities
@@ -712,7 +755,8 @@ mod tests {
         *game.map.tile_at_mut(Location::new(1, 2)) = Tile::new(Terrain::Desert);
         game.auto_assign_work(london);
         let worked = game.cities[0].worked_tiles().to_vec();
-        assert_eq!(worked.len(), 2);
+        // Centre plus two ring tiles: one for each citizen of the size-2 city.
+        assert_eq!(worked.len(), 3);
         assert!(worked.contains(&Location::new(3, 2)));
         assert!(worked.contains(&Location::new(1, 2)));
     }
@@ -723,7 +767,8 @@ mod tests {
         let london = game.add_city(player(), "London", Location::new(2, 2));
         game.cities[0].add_worked_tile(Location::new(3, 2));
         game.auto_assign_work(london);
-        assert_eq!(game.cities[0].worked_tiles().len(), 1);
+        // Centre plus the one ring tile already covers the size-1 city.
+        assert_eq!(game.cities[0].worked_tiles().len(), 2);
     }
 
     #[test]
