@@ -27,6 +27,10 @@ A Civ game in your terminal
 
 ![City](/docs/city.png)
 
+## We can see what's happening in cities!
+
+![City view](/docs/initial_city_view.png)
+
 ## Inspiration
 
 > /me On a nostalgia binge, running an emulator...
