@@ -900,16 +900,23 @@ fn retreat(selected: usize, total: usize) -> usize {
 }
 
 /// The name for the next city founded by the given settler's civilization:
-/// the civilization's display name.
+/// the next unused name in the civilization's list of city names.
 fn city_name_for(engine: &Engine, unit: UnitId) -> String {
     let unit = engine.player_units().into_iter().find(|u| u.id() == unit);
     let Some(unit) = unit else {
         return "City".to_string();
     };
-    engine
-        .civilization_of(unit.owner())
-        .capital_name()
-        .to_string()
+    let civ = engine.civilization_of(unit.owner());
+    next_city_name(civ, engine.player_cities().len())
+}
+
+/// The name for a civilization's next city, given how many cities it already
+/// has. Cities are named in order of founding.
+fn next_city_name(civ: Civilization, existing_cities: usize) -> String {
+    match civ.city_names().get(existing_cities) {
+        Some(name) => (*name).to_string(),
+        None => format!("City {}", existing_cities + 1),
+    }
 }
 
 /// The command keystrokes available in the current playing context.
@@ -1912,6 +1919,21 @@ mod tests {
         let settler = engine.player_units()[0];
         let name = city_name_for(engine, settler.id());
         assert_eq!(name, "Washington");
+    }
+
+    #[test]
+    fn city_names_are_allocated_in_order_of_founding() {
+        assert_eq!(next_city_name(Civilization::English, 0), "London");
+        assert_eq!(next_city_name(Civilization::English, 1), "York");
+        assert_eq!(next_city_name(Civilization::English, 2), "Manchester");
+        assert_eq!(next_city_name(Civilization::American, 1), "Boston");
+        assert_eq!(next_city_name(Civilization::Zulu, 3), "Isandhlwana");
+    }
+
+    #[test]
+    fn names_fall_back_to_a_number_once_the_city_list_runs_out() {
+        assert_eq!(next_city_name(Civilization::English, 20), "City 21");
+        assert_eq!(next_city_name(Civilization::English, 42), "City 43");
     }
 
     #[test]
