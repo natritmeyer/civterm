@@ -14,13 +14,14 @@ use super::competition_selector::CompetitionSelector;
 use super::difficulty_selector::DifficultySelector;
 use super::game_screen::{GameScreen, LEFT_COLUMN_WIDTH, TILE_WIDTH};
 use super::playing_help::PlayingHelp;
+use super::production_picker::{self, PickRow, ProductionPicker};
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
 use super::status_bar::{ITEMS, StatusBar};
 use crate::game_engine::event::Event as GameEvent;
 use crate::game_engine::{Command, Engine, GameView, Player};
 use crate::model::cartography::Direction;
-use crate::model::cities::CityId;
+use crate::model::cities::{CityId, ProductionTarget};
 use crate::model::civilizations::Civilization;
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
@@ -84,6 +85,16 @@ pub struct App {
     /// The last-drawn city-window rectangle and its close button, for mouse
     /// hit-testing while the window is open.
     moused_window: Cell<Option<(Rect, Rect)>>,
+    /// Whether the production picker floats over the city window.
+    production_picker_open: bool,
+    /// The picker cursor: which list (0 units, 1 improvements) and which row
+    /// of that list is currently selected.
+    picker_cursor_col: usize,
+    picker_cursor_row: usize,
+    /// Shared vertical scroll offset of the picker's two lists.
+    picker_scroll: usize,
+    /// The last-drawn picker panel rectangle, for mouse hit-testing.
+    picker_rect: Cell<Option<Rect>>,
     camera: Cell<(usize, usize)>,
     show_help: bool,
     show_events: bool,
@@ -114,6 +125,11 @@ impl App {
             selected_city: None,
             city_window_scroll: 0,
             moused_window: Cell::new(None),
+            production_picker_open: false,
+            picker_cursor_col: 0,
+            picker_cursor_row: 0,
+            picker_scroll: 0,
+            picker_rect: Cell::new(None),
             camera: Cell::new((0, 0)),
             show_help: false,
             show_events: false,
@@ -231,8 +247,28 @@ impl App {
                             );
                             app.moused_window
                                 .set(Some((window, city_window::close_button_rect(window))));
+                            // The production picker floats over the window.
+                            if app.production_picker_open {
+                                let panel = production_picker::picker_rect(window);
+                                frame.render_widget(
+                                    ProductionPicker::new(
+                                        engine,
+                                        city_id,
+                                        app.picker_cursor_col,
+                                        app.picker_cursor_row,
+                                        app.picker_scroll,
+                                    ),
+                                    panel,
+                                );
+                                app.picker_rect.set(Some(panel));
+                            } else {
+                                app.picker_rect.set(None);
+                            }
                         }
-                        _ => app.moused_window.set(None),
+                        _ => {
+                            app.moused_window.set(None);
+                            app.picker_rect.set(None);
+                        }
                     }
                 }
             }
@@ -443,6 +479,11 @@ impl App {
         self.selected_city = None;
         self.city_window_scroll = 0;
         self.moused_window = Cell::new(None);
+        self.production_picker_open = false;
+        self.picker_cursor_col = 0;
+        self.picker_cursor_row = 0;
+        self.picker_scroll = 0;
+        self.picker_rect = Cell::new(None);
     }
 
     fn start_new_game(&mut self) {
@@ -451,6 +492,19 @@ impl App {
     }
 
     fn handle_playing_key(&mut self, key: KeyEvent) -> bool {
+        // While the production picker is open it captures the keyboard.
+        if self.production_picker_open {
+            match key.code {
+                KeyCode::Esc => self.close_production_picker(),
+                KeyCode::Enter => self.save_production(),
+                KeyCode::Down | KeyCode::Char('j') => self.move_picker_cursor(0, 1),
+                KeyCode::Up | KeyCode::Char('k') => self.move_picker_cursor(0, -1),
+                KeyCode::Right | KeyCode::Char('l') => self.move_picker_cursor(1, 0),
+                KeyCode::Left | KeyCode::Char('h') => self.move_picker_cursor(-1, 0),
+                _ => {}
+            }
+            return false;
+        }
         match key.code {
             KeyCode::Char(c) if c.eq_ignore_ascii_case(&'q') => {
                 self.phase = Phase::Menu;
@@ -561,9 +615,15 @@ impl App {
         if self.phase != Phase::Playing {
             return;
         }
-        let Some(engine) = &self.engine else {
+        if self.engine.is_none() {
             return;
-        };
+        }
+        // The production picker floats above the city window and captures all
+        // mouse input while it is open.
+        if let Some(panel) = self.picker_rect.get() {
+            self.handle_picker_mouse(panel, mouse);
+            return;
+        }
         // Wheel events scroll the open city window's improvement list.
         if self.moused_window.get().is_some() {
             match mouse.kind {
@@ -587,9 +647,16 @@ impl App {
         if column == u16::MAX || row == u16::MAX {
             return;
         }
-        // While the window is open, its close button dismisses it and clicks
-        // anywhere else inside it are consumed rather than reaching the map.
+        // While the window is open, the "Change" button opens the production
+        // picker, the close button dismisses the window, and clicks anywhere
+        // else inside it are consumed rather than reaching the map.
         if let Some((window, close)) = self.moused_window.get() {
+            let change =
+                city_window::change_button_rect(city_window::production_panel_rect(window));
+            if change.contains((column, row).into()) {
+                self.open_production_picker();
+                return;
+            }
             if close.contains((column, row).into()) {
                 self.selected_city = None;
                 self.city_window_scroll = 0;
@@ -603,6 +670,9 @@ impl App {
             self.selected_city = None;
             return;
         }
+        let Some(engine) = &self.engine else {
+            return;
+        };
         let tile_col = (column - LEFT_COLUMN_WIDTH) as usize / TILE_WIDTH;
         let (camera_x, camera_y) = self.camera.get();
         let map_w = engine.width();
@@ -659,6 +729,155 @@ impl App {
         if overflow > 0 {
             self.event_log.drain(..overflow);
         }
+    }
+
+    /// The buildable targets the current player can pick, split into units
+    /// and improvements (sorted for display by the picker module).
+    fn picker_rows(&self) -> (Vec<PickRow>, Vec<PickRow>) {
+        let engine = self
+            .engine
+            .as_ref()
+            .expect("engine exists in the playing phase");
+        let city = self
+            .selected_city
+            .expect("the picker only opens over a selected city");
+        production_picker::pick_rows(engine, city)
+    }
+
+    /// The number of picker rows visible on screen right now.
+    fn picker_visible_rows(&self) -> usize {
+        self.picker_rect
+            .get()
+            .map(|panel| production_picker::rows_rect(panel).height as usize)
+            .unwrap_or(production_picker::MAX_VISIBLE_ROWS as usize)
+    }
+
+    fn open_production_picker(&mut self) {
+        self.production_picker_open = true;
+        self.picker_cursor_col = 0;
+        self.picker_cursor_row = 0;
+        self.picker_scroll = 0;
+    }
+
+    fn close_production_picker(&mut self) {
+        self.production_picker_open = false;
+        self.picker_scroll = 0;
+        self.picker_rect.set(None);
+    }
+
+    fn save_production(&mut self) {
+        let target = self.current_picker_target();
+        let city = self.selected_city;
+        self.close_production_picker();
+        let Some(city) = city else {
+            return;
+        };
+        let Some(target) = target else {
+            return;
+        };
+        if let Some(engine) = &mut self.engine {
+            let events = engine.submit(Command::SetProductionTarget { city, target });
+            self.record_events(events);
+        }
+    }
+
+    /// The item the picker cursor currently points at, if any.
+    fn current_picker_target(&self) -> Option<ProductionTarget> {
+        let rows = self.picker_rows();
+        production_picker::target_at(&rows, self.picker_cursor_col, self.picker_cursor_row)
+    }
+
+    fn handle_picker_mouse(&mut self, panel: Rect, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.picker_scroll = self.picker_scroll.saturating_sub(1);
+                return;
+            }
+            MouseEventKind::ScrollDown => {
+                let rows = self.picker_rows();
+                let max_offset =
+                    production_picker::list_len(&rows).saturating_sub(self.picker_visible_rows());
+                self.picker_scroll = (self.picker_scroll + 1).min(max_offset);
+                return;
+            }
+            MouseEventKind::Down(MouseButton::Left) => {}
+            _ => return,
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        let position = (mouse.column, mouse.row).into();
+        if !panel.contains(position) {
+            // Clicks outside the picker are swallowed while it is open.
+            return;
+        }
+        if production_picker::cancel_button_rect(panel).contains(position) {
+            self.close_production_picker();
+            return;
+        }
+        if production_picker::save_button_rect(panel).contains(position) {
+            self.save_production();
+            return;
+        }
+        let rows = self.picker_rows();
+        let (units_col, improvements_col) = production_picker::column_rects(panel);
+        if units_col.contains(position) || improvements_col.contains(position) {
+            let column = if units_col.contains(position) { 0 } else { 1 };
+            let row_in_view = (mouse.row as usize).saturating_sub(units_col.y as usize);
+            let global_row = row_in_view + self.picker_scroll;
+            if production_picker::target_at(&rows, column, global_row).is_some() {
+                self.picker_cursor_col = column;
+                self.picker_cursor_row = global_row;
+            }
+        }
+    }
+
+    /// Move the picker cursor: `dx` switches between the two lists, `dy`
+    /// walks the focused list. The scroll keeps the cursor visible.
+    fn move_picker_cursor(&mut self, dx: isize, dy: isize) {
+        let (units_len, improvements_len) = {
+            let rows = self.picker_rows();
+            (rows.0.len(), rows.1.len())
+        };
+        if dx != 0 {
+            let column = match (self.picker_cursor_col, dx) {
+                (0, 1) if improvements_len > 0 => 1,
+                (1, -1) if units_len > 0 => 0,
+                _ => self.picker_cursor_col,
+            };
+            if column != self.picker_cursor_col {
+                self.picker_cursor_col = column;
+            }
+        } else {
+            let len = if self.picker_cursor_col == 0 {
+                units_len
+            } else {
+                improvements_len
+            };
+            if len == 0 {
+                return;
+            }
+            self.picker_cursor_row = if dy > 0 {
+                advance(self.picker_cursor_row, len)
+            } else {
+                retreat(self.picker_cursor_row, len)
+            };
+        }
+        let row = self.picker_cursor_row;
+        let len = if self.picker_cursor_col == 0 {
+            units_len
+        } else {
+            improvements_len
+        };
+        self.picker_cursor_row = row.min(len.saturating_sub(1));
+        // Keep the cursor inside the scrolled window.
+        let visible = self.picker_visible_rows();
+        let max_len = units_len.max(improvements_len);
+        let max_offset = max_len.saturating_sub(visible);
+        let row = self.picker_cursor_row;
+        let lo = (row as isize + 1 - visible as isize).max(0) as usize;
+        let hi = row.min(max_offset);
+        self.picker_scroll = self.picker_scroll.clamp(lo, hi);
     }
 
     fn reset_setup(&mut self) {
@@ -1263,6 +1482,20 @@ mod tests {
         (app, cx, cy, win)
     }
 
+    /// Opens the production picker over the open city window and pretends the
+    /// panel was drawn, so its mouse hit-testing is live.
+    fn with_production_picker_open() -> (App, Rect, u16) {
+        let (mut app, _, _, win) = with_city_window_open();
+        let change = crate::tui::city_window::change_button_rect(
+            crate::tui::city_window::production_panel_rect(win),
+        );
+        app.handle_mouse(left_click(change.x + 1, change.y));
+        assert!(app.production_picker_open);
+        let panel = crate::tui::production_picker::picker_rect(win);
+        app.picker_rect.set(Some(panel));
+        (app, panel, change.y)
+    }
+
     #[test]
     fn clicking_the_close_button_closes_the_window() {
         let (mut app, _, _, win) = with_city_window_open();
@@ -1324,6 +1557,167 @@ mod tests {
         assert!(!app.show_help);
         app.handle_key(key(KeyCode::Esc));
         assert!(matches!(app.phase, Phase::Menu));
+    }
+
+    #[test]
+    fn clicking_the_change_button_opens_the_picker() {
+        let (mut app, _, _, win) = with_city_window_open();
+        let change = crate::tui::city_window::change_button_rect(
+            crate::tui::city_window::production_panel_rect(win),
+        );
+        assert!(!app.production_picker_open);
+        app.handle_mouse(left_click(change.x + 1, change.y));
+        assert!(app.production_picker_open);
+        assert_eq!(app.picker_cursor_col, 0);
+        assert_eq!(app.picker_cursor_row, 0);
+        assert_eq!(app.picker_scroll, 0);
+        // The city window stays open beneath the picker.
+        assert!(app.selected_city.is_some());
+    }
+
+    #[test]
+    fn clicking_a_picker_row_moves_the_single_cursor() {
+        let (mut app, panel, _) = with_production_picker_open();
+        let (units_col, improvements_col) = crate::tui::production_picker::column_rects(panel);
+        let rows = crate::tui::production_picker::rows_rect(panel);
+        app.handle_mouse(left_click(units_col.x + 2, rows.y + 1));
+        assert_eq!((app.picker_cursor_col, app.picker_cursor_row), (0, 1));
+        // Clicking an improvement row moves the cursor over to that list.
+        app.handle_mouse(left_click(improvements_col.x + 2, rows.y));
+        assert_eq!((app.picker_cursor_col, app.picker_cursor_row), (1, 0));
+        let target = app.current_picker_target().expect("cursor has a target");
+        assert!(matches!(target, ProductionTarget::Improvement(_)));
+    }
+
+    #[test]
+    fn picker_keyboard_moves_the_cursor_and_wraps() {
+        let (mut app, _, _) = with_production_picker_open();
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!((app.picker_cursor_col, app.picker_cursor_row), (0, 1));
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!((app.picker_cursor_col, app.picker_cursor_row), (0, 0)); // wrapped
+        app.handle_key(key(KeyCode::Char('l')));
+        assert_eq!((app.picker_cursor_col, app.picker_cursor_row), (1, 0));
+        app.handle_key(key(KeyCode::Char('l'))); // only one improvement list
+        assert_eq!(app.picker_cursor_col, 1);
+        app.handle_key(key(KeyCode::Char('h')));
+        assert_eq!((app.picker_cursor_col, app.picker_cursor_row), (0, 0));
+    }
+
+    #[test]
+    fn escaping_closes_the_picker_before_the_window_without_saving() {
+        let (mut app, _, _) = with_production_picker_open();
+        app.handle_key(key(KeyCode::Down));
+        let before = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .city(app.selected_city.unwrap())
+            .unwrap()
+            .production_target();
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.production_picker_open);
+        assert!(app.selected_city.is_some(), "window should stay open");
+        let city = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .city(app.selected_city.unwrap())
+            .unwrap();
+        assert_eq!(city.production_target(), before);
+        // One more Esc now closes the window.
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.selected_city, None);
+    }
+
+    #[test]
+    fn enter_saves_the_selected_target_and_closes_the_picker() {
+        let (mut app, _, _) = with_production_picker_open();
+        app.handle_key(key(KeyCode::Char('j'))); // units: Militia -> Settler
+        let target = app.current_picker_target().expect("cursor has a target");
+        assert_ne!(
+            target,
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia)
+        );
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.production_picker_open);
+        let city = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .city(app.selected_city.unwrap())
+            .unwrap();
+        assert_eq!(city.production_target(), Some(target));
+    }
+
+    #[test]
+    fn clicking_save_applies_the_selection_and_closes() {
+        let (mut app, panel, _) = with_production_picker_open();
+        app.handle_key(key(KeyCode::Char('j')));
+        let target = app.current_picker_target().unwrap();
+        let save = crate::tui::production_picker::save_button_rect(panel);
+        app.handle_mouse(left_click(save.x + 1, save.y));
+        assert!(!app.production_picker_open);
+        let city = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .city(app.selected_city.unwrap())
+            .unwrap();
+        assert_eq!(city.production_target(), Some(target));
+    }
+
+    #[test]
+    fn clicking_cancel_closes_without_changing_production() {
+        let (mut app, panel, _) = with_production_picker_open();
+        app.handle_key(key(KeyCode::Char('j')));
+        let cancel = crate::tui::production_picker::cancel_button_rect(panel);
+        app.handle_mouse(left_click(cancel.x + 1, cancel.y));
+        assert!(!app.production_picker_open);
+        let city = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .city(app.selected_city.unwrap())
+            .unwrap();
+        assert_eq!(city.production_target(), None);
+    }
+
+    #[test]
+    fn clicks_outside_the_picker_are_swallowed_while_it_is_open() {
+        let (mut app, panel, _) = with_production_picker_open();
+        let city = app.selected_city;
+        // Inside the window but outside the panel's rows and buttons.
+        app.handle_mouse(left_click(panel.x + 1, panel.y + 1));
+        assert!(app.production_picker_open);
+        assert_eq!(
+            app.selected_city, city,
+            "outside clicks must not reach the map"
+        );
+    }
+
+    #[test]
+    fn wheel_events_hit_the_picker_not_the_window_while_open() {
+        let (mut app, _, _) = with_production_picker_open();
+        let before = app.city_window_scroll;
+        // A fresh city offers a short list, so the picker's shared scroll
+        // clamps to 0 rather than scrolling beneath the window.
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.picker_scroll, 0);
+        assert_eq!(app.city_window_scroll, before);
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.picker_scroll, 0);
+        assert_eq!(app.city_window_scroll, before);
     }
 
     #[test]

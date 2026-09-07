@@ -5,6 +5,7 @@ pub mod competition_selector;
 pub mod difficulty_selector;
 pub mod game_screen;
 pub mod playing_help;
+pub mod production_picker;
 pub mod splash;
 pub mod start_confirm;
 pub mod status_bar;

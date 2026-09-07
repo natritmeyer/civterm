@@ -1,6 +1,6 @@
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Tile;
-use crate::model::cities::{City, CityId};
+use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::geography::SpecialResource;
 use crate::model::units::Unit;
@@ -52,4 +52,8 @@ pub trait GameView {
     fn research_cost(&self) -> Option<u32>;
     /// Research income per turn for the current player.
     fn research_income(&self) -> u32;
+    /// Every production target the city may build right now: each available
+    /// unit class and improvement based on the current player's discovered
+    /// advancements, excluding improvements the city already has.
+    fn production_choices(&self, city: CityId) -> Vec<ProductionTarget>;
 }

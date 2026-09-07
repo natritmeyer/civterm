@@ -914,12 +914,35 @@ impl GameView for Engine {
     fn research_income(&self) -> u32 {
         self.game.research_income(self.current_player_index)
     }
+
+    fn production_choices(&self, city: CityId) -> Vec<ProductionTarget> {
+        let player = &self.game.players[self.current_player_index.index()];
+        let owned_improvements = self
+            .game
+            .cities
+            .iter()
+            .find(|owned| owned.id() == city && owned.owner() == self.current_player_index)
+            .map(|owned| owned.improvements().to_vec())
+            .unwrap_or_default();
+        player
+            .available_unit_classes()
+            .into_iter()
+            .map(ProductionTarget::Unit)
+            .chain(
+                player
+                    .available_improvements()
+                    .into_iter()
+                    .filter(|improvement| !owned_improvements.contains(improvement))
+                    .map(ProductionTarget::Improvement),
+            )
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::cities::{CityId, ProductionTarget};
+    use crate::model::cities::{CityId, CityImprovement, ProductionTarget};
     use crate::model::geography::Terrain;
     use crate::model::units::{UnitClass, UnitId, UnitOrder};
 
@@ -2576,6 +2599,44 @@ mod tests {
                 .iter()
                 .any(|u| u.unit_class == UnitClass::Militia)
         );
+    }
+
+    #[test]
+    fn production_choices_hide_improvements_the_city_already_owns() {
+        let mut engine = Engine::new(6, 6, Player::new(Civilization::English), Vec::new());
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(4, 4)).terrain = Terrain::Grassland;
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(4, 4),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        engine.submit(Command::FoundCity {
+            unit: UnitId::new(0),
+            name: "London".to_string(),
+        });
+        engine.submit(Command::FoundCity {
+            unit: UnitId::new(1),
+            name: "York".to_string(),
+        });
+        let london = engine.game.cities[0].id();
+        let york = engine.game.cities[1].id();
+        let barracks = ProductionTarget::Improvement(CityImprovement::Barracks);
+        // Both fresh cities may build a Barracks.
+        assert!(engine.production_choices(london).contains(&barracks));
+        assert!(engine.production_choices(york).contains(&barracks));
+        // Once London owns one it leaves its own list...
+        engine.game.cities[0].add_improvement(CityImprovement::Barracks);
+        assert!(!engine.production_choices(london).contains(&barracks));
+        // ...but York may still build one.
+        assert!(engine.production_choices(york).contains(&barracks));
     }
 
     fn research_engine() -> Engine {

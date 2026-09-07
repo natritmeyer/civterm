@@ -102,17 +102,38 @@ pub(crate) fn paint_tile(
         let unit = view.units_at(map_x, world_y);
         let city = view.city_at(map_x, world_y);
 
-        let (symbol, city_name) = if explored && let Some(city) = city {
-            // A city occupies the whole tile: show its population on a
+        let (symbol, city_name) = if explored
+            && unit.is_empty()
+            && let Some(city) = city
+        {
+            // A city with no unit on its tile shows its population on a
             // background of the owning civilization's colour.
             (population_digit(city.population()), Some(city.name.clone()))
         } else if let Some(u) = unit.first() {
-            (first_letter(u.unit_class), None)
+            // A unit always shows its class letter ahead of the terrain, even
+            // when it stands on a city tile; the city keeps its name label
+            // beneath.
+            (
+                first_letter(u.unit_class),
+                if explored {
+                    city.as_ref().map(|c| c.name.clone())
+                } else {
+                    None
+                },
+            )
         } else {
             (terrain.as_char(), None)
         };
 
-        if city_name.is_some()
+        // A unit (whether in a city or not) is painted exactly like any other
+        // unit: its letter on the tile's terrain, bold and underlined, so its
+        // idle flash is visible too. The city colouring and the selected-city
+        // outline only apply when no unit covers the tile.
+        if !unit.is_empty() {
+            style = style
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::UNDERLINED);
+        } else if city_name.is_some()
             && let Some(city) = city
         {
             style = style.bg(civilization_color(view.civilization_of(city.owner())));
@@ -120,11 +141,6 @@ pub(crate) fn paint_tile(
             if selected_city == Some(city.id()) {
                 style = style.add_modifier(Modifier::UNDERLINED);
             }
-        }
-        if city_name.is_none() && !unit.is_empty() {
-            style = style
-                .add_modifier(Modifier::BOLD)
-                .add_modifier(Modifier::UNDERLINED);
         }
 
         // The selected unit awaiting instruction flashes once per second: its
@@ -657,6 +673,7 @@ mod tests {
         h: usize,
         tile: crate::model::cartography::Tile,
         city: Option<crate::model::cities::City>,
+        unit: Option<crate::model::units::Unit>,
         explored: bool,
     }
 
@@ -671,7 +688,7 @@ mod tests {
             &self.tile
         }
         fn units_at(&self, _x: usize, _y: usize) -> Vec<&crate::model::units::Unit> {
-            Vec::new()
+            self.unit.iter().collect()
         }
         fn city_at(&self, _x: usize, _y: usize) -> Option<&crate::model::cities::City> {
             self.city.as_ref()
@@ -740,6 +757,12 @@ mod tests {
         fn research_income(&self) -> u32 {
             0
         }
+        fn production_choices(
+            &self,
+            _city: crate::model::cities::CityId,
+        ) -> Vec<crate::model::cities::ProductionTarget> {
+            Vec::new()
+        }
     }
 
     fn fake_view() -> FakeView {
@@ -748,6 +771,7 @@ mod tests {
             h: 50,
             tile: crate::model::cartography::Tile::new(crate::model::geography::Terrain::Ocean),
             city: None,
+            unit: None,
             explored: true,
         }
     }
@@ -848,6 +872,128 @@ mod tests {
         (x0..=x1)
             .map(|x| buf.cell((x, y)).unwrap().symbol().chars().next().unwrap())
             .collect()
+    }
+
+    /// Paints one world tile into a scratch buffer via `paint_tile` and returns
+    /// the drawn cell (symbol + style) and the city-name label it yielded.
+    fn painted_cell(
+        view: &dyn GameView,
+        selected_unit: Option<crate::model::units::UnitId>,
+        flashing: bool,
+    ) -> (ratatui::buffer::Cell, Option<String>) {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 8));
+        let name = paint_tile(
+            &mut buf,
+            0,
+            0,
+            view,
+            2,
+            2,
+            80,
+            50,
+            None,
+            selected_unit,
+            flashing,
+        );
+        (buf.cell((0, 0)).unwrap().clone(), name)
+    }
+
+    fn city_and_unit_view() -> FakeView {
+        let mut view = fake_view();
+        view.city = Some(crate::model::cities::City::new(
+            "London",
+            crate::model::cartography::Location::new(2, 2),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(0),
+        ));
+        view.unit = Some(crate::model::units::Unit::new(
+            crate::model::units::UnitClass::Militia,
+            crate::model::cartography::Location::new(2, 2),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(0),
+            crate::model::units::UnitId::new(1),
+        ));
+        view
+    }
+
+    #[test]
+    fn a_unit_on_a_city_tile_displays_ahead_of_the_population() {
+        let view = city_and_unit_view();
+        let (cell, name) = painted_cell(&view, None, false);
+        assert_eq!(cell.symbol(), "M");
+        // The city still yields its name label even though a unit is shown.
+        assert_eq!(name.as_deref(), Some("London"));
+    }
+
+    #[test]
+    fn a_unit_in_a_city_is_styled_like_any_other_unit() {
+        // The same militiaman is painted once alone and once standing in the
+        // city; the two tiles must share symbol, colours and emphasis.
+        let mut plain = fake_view();
+        plain.unit = Some(crate::model::units::Unit::new(
+            crate::model::units::UnitClass::Militia,
+            crate::model::cartography::Location::new(2, 2),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(0),
+            crate::model::units::UnitId::new(1),
+        ));
+        let (plain_cell, plain_name) = painted_cell(&plain, None, false);
+
+        let view = city_and_unit_view();
+        let (city_cell, city_name) = painted_cell(&view, None, false);
+
+        assert_eq!(city_cell.symbol(), plain_cell.symbol());
+        assert_eq!(city_cell.style(), plain_cell.style());
+        assert!(city_cell.style().add_modifier.contains(Modifier::BOLD));
+        assert!(
+            city_cell
+                .style()
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
+        // The unit's tile shows the terrain, not the civilization flag colour.
+        assert_eq!(city_cell.style().bg, plain_cell.style().bg);
+        assert_ne!(
+            city_cell.style().bg,
+            Some(civilization_color(Civilization::English))
+        );
+        // The city is still identified below the unit.
+        assert_eq!(plain_name, None);
+        assert_eq!(city_name.as_deref(), Some("London"));
+    }
+
+    #[test]
+    fn a_selected_idle_unit_in_a_city_flashes_like_any_other() {
+        let idle = crate::model::units::UnitId::new(1);
+        let view = city_and_unit_view();
+
+        // Idle with moves left: the tile flashes the civilization colour.
+        let (flashing, _) = painted_cell(&view, Some(idle), true);
+        assert_eq!(
+            flashing.style().bg,
+            Some(civilization_color(Civilization::English))
+        );
+
+        // Turned off, it returns to the terrain colours.
+        let (dimmed, _) = painted_cell(&view, Some(idle), false);
+        assert_ne!(
+            dimmed.style().bg,
+            Some(civilization_color(Civilization::English))
+        );
+    }
+
+    #[test]
+    fn a_city_with_no_unit_shows_its_population() {
+        let mut view = fake_view();
+        view.city = Some(crate::model::cities::City::new(
+            "London",
+            crate::model::cartography::Location::new(2, 2),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(0),
+        ));
+        let (cell, name) = painted_cell(&view, None, false);
+        assert_eq!(cell.symbol(), "1");
+        assert_eq!(name.as_deref(), Some("London"));
     }
 
     #[test]
@@ -1350,6 +1496,7 @@ mod tests {
             h: 50,
             tile: crate::model::cartography::Tile::new(crate::model::geography::Terrain::Grassland),
             city: Some(city),
+            unit: None,
             explored: false,
         };
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();

@@ -152,6 +152,63 @@ pub(crate) fn close_button_rect(window: Rect) -> Rect {
     }
 }
 
+const CHANGE_TEXT: &str = "Change";
+const CHANGE_WIDTH: u16 = 6;
+
+/// The three equal panels of the bottom band (food, units, production).
+pub(crate) fn bottom_panels(window: Rect) -> (Rect, Rect, Rect) {
+    let inner = Rect {
+        x: window.x + 1,
+        y: window.y + 1,
+        width: window.width - 2,
+        height: window.height - 2,
+    };
+    let ih = inner.height;
+    let mid_h = (ih - 2 - 2) / 2;
+    let bottom_top = inner.y + 3 + mid_h + 1;
+    let bottom = Rect {
+        x: inner.x,
+        y: bottom_top,
+        width: inner.width,
+        height: ih - (bottom_top - inner.y),
+    };
+    let panel_w = (inner.width - 2) / 3;
+    let food = Rect {
+        x: bottom.x,
+        y: bottom.y,
+        width: panel_w,
+        height: bottom.height,
+    };
+    let units = Rect {
+        x: food.right() + 1,
+        y: bottom.y,
+        width: panel_w,
+        height: bottom.height,
+    };
+    let production = Rect {
+        x: units.right() + 1,
+        y: bottom.y,
+        width: bottom.right() - (units.right() + 1),
+        height: bottom.height,
+    };
+    (food, units, production)
+}
+
+/// The production panel of the bottom band.
+pub(crate) fn production_panel_rect(window: Rect) -> Rect {
+    bottom_panels(window).2
+}
+
+/// The rectangle of the "Change" button on the production panel's label row.
+pub(crate) fn change_button_rect(production: Rect) -> Rect {
+    Rect {
+        x: production.right().saturating_sub(CHANGE_WIDTH),
+        y: production.y,
+        width: CHANGE_WIDTH,
+        height: 1,
+    }
+}
+
 /// Thousands-separated number, e.g. `30000` -> `"30,000"`.
 fn with_commas(n: u32) -> String {
     let s = n.to_string();
@@ -353,6 +410,13 @@ impl<'a> CityWindow<'a> {
             None => "Idle".to_string(),
         };
         draw_text(buf, rect.x, rect.y, &label, BOLD);
+        draw_text(
+            buf,
+            rect.right() - CHANGE_WIDTH,
+            rect.y,
+            CHANGE_TEXT,
+            TEXT.add_modifier(Modifier::UNDERLINED),
+        );
         if let Some(target) = target {
             let cost = target.resource_cost();
             let stored = city.resource_stored();
@@ -440,13 +504,6 @@ impl<'a> Widget for CityWindow<'a> {
             width: inner.width,
             height: mid_h as u16,
         };
-        let bottom_top = mid.bottom() + 1;
-        let bottom = Rect {
-            x: inner.x,
-            y: bottom_top,
-            width: inner.width,
-            height: ih as u16 - (bottom_top - inner.y),
-        };
 
         self.draw_population_panel(buf, city, pop);
         hrule(buf, pop.bottom(), inner.x, inner.right() - 1);
@@ -490,28 +547,10 @@ impl<'a> Widget for CityWindow<'a> {
         self.draw_improvements(buf, city, improvements);
 
         // Bottom band: three equal panels with black rules between.
-        let panel_w = (iw - 2) / 3;
-        let food = Rect {
-            x: bottom.x,
-            y: bottom.y,
-            width: panel_w as u16,
-            height: bottom.height,
-        };
-        let units_x = food.right() + 1;
-        let units = Rect {
-            x: units_x,
-            y: bottom.y,
-            width: panel_w as u16,
-            height: bottom.height,
-        };
-        let production = Rect {
-            x: units.right() + 1,
-            y: bottom.y,
-            width: bottom.right() - (units.right() + 1),
-            height: bottom.height,
-        };
-        vrule(buf, food.right(), bottom.y, bottom.bottom() - 1);
-        vrule(buf, units.right(), bottom.y, bottom.bottom() - 1);
+        let (food, units, production) = bottom_panels(window);
+
+        vrule(buf, food.right(), food.y, food.bottom() - 1);
+        vrule(buf, units.right(), units.y, units.bottom() - 1);
 
         self.draw_food_panel(buf, city, &income, food);
         self.draw_units_panel(buf, city, units);
@@ -587,6 +626,15 @@ mod tests {
         }
         fn home_units(&self, _city: CityId) -> Vec<&crate::model::units::Unit> {
             Vec::new()
+        }
+        fn production_choices(&self, _city: CityId) -> Vec<ProductionTarget> {
+            vec![
+                ProductionTarget::Unit(UnitClass::Settler),
+                ProductionTarget::Unit(UnitClass::Militia),
+                ProductionTarget::Unit(UnitClass::Phalanx),
+                ProductionTarget::Improvement(CityImprovement::Barracks),
+                ProductionTarget::Improvement(CityImprovement::Marketplace),
+            ]
         }
         fn explored(&self, _x: usize, _y: usize) -> bool {
             true
