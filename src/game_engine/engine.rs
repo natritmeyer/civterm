@@ -14,8 +14,38 @@ use crate::utils::Rng;
 
 const DEFAULT_SEED: u64 = 0xC0FFEE;
 const HIT_POINTS: u32 = 10;
-/// Calendar years advanced per turn, mirroring classic Civ's early-game pacing.
-const YEARS_PER_TURN: i32 = 50;
+/// Classic Civ's calendar pacing, shrunk as the eras roll on, slowed down so
+/// the ancient era stretches out instead of racing through the centuries. Each
+/// entry is `(start_year, end_year, years_per_turn)` in astronomical years,
+/// where the BC era runs negative (4000 BC is -4000). There is no year 0:
+/// reaching astronomical year 0 means the game now shows 1 AD, the familiar
+/// jump straight from 25 BC to 1 AD.
+const CALENDAR_SCHEDULE: [(i32, i32, i32); 7] = [
+    (-4000, -1000, 50),
+    (-1000, 0, 25),
+    (0, 500, 10),
+    (500, 1500, 5),
+    (1500, 1750, 2),
+    (1750, 2000, 1),
+    (2000, 2100, 1),
+];
+
+/// The astronomical year (BC negative, 0 reads as 1 AD) that `turn` falls in,
+/// counting from turn 1 in 4000 BC. Past the end of the schedule the game
+/// keeps advancing one year per turn.
+fn calendar_year(turn: u32) -> i32 {
+    let mut remaining = turn.saturating_sub(1) as i32;
+    let mut year = CALENDAR_SCHEDULE[0].0;
+    for &(start, end, years_per_turn) in &CALENDAR_SCHEDULE {
+        let steps = (end - start).div_euclid(years_per_turn);
+        if remaining <= steps {
+            return year + remaining * years_per_turn;
+        }
+        remaining -= steps;
+        year = end;
+    }
+    year + remaining
+}
 
 /// Default width of a generated world, mirroring classic Civ: 80 × 50.
 pub const DEFAULT_MAP_WIDTH: usize = 80;
@@ -889,8 +919,7 @@ impl GameView for Engine {
     }
 
     fn year(&self) -> i32 {
-        let elapsed = (self.turn - 1) as i32 * YEARS_PER_TURN;
-        4000 - elapsed
+        calendar_year(self.turn)
     }
 
     fn gold(&self) -> u32 {
@@ -957,6 +986,44 @@ mod tests {
         assert_eq!(engine.height(), DEFAULT_MAP_HEIGHT);
         assert_eq!(DEFAULT_MAP_WIDTH, 80);
         assert_eq!(DEFAULT_MAP_HEIGHT, 50);
+    }
+
+    #[test]
+    fn the_calendar_starts_in_4000_bc_at_50_years_a_turn() {
+        assert_eq!(calendar_year(1), -4000);
+        assert_eq!(calendar_year(2), -3950);
+        assert_eq!(calendar_year(10), -3550);
+    }
+
+    #[test]
+    fn the_calendar_speeds_up_through_the_eras() {
+        // 50 years per turn until 1000 BC.
+        assert_eq!(calendar_year(61), -1000);
+        // 25 years per turn from 1000 BC, ending in 1 BC (astronomical 0).
+        assert_eq!(calendar_year(62), -975);
+        assert_eq!(calendar_year(100), -25);
+        // No year 0: the calendar jumps straight from 25 BC to 1 AD.
+        assert_eq!(calendar_year(101), 0);
+        // 10 years per turn across the early AD era.
+        assert_eq!(calendar_year(102), 10);
+        assert_eq!(calendar_year(151), 500);
+        // 5 years per turn through the middle ages.
+        assert_eq!(calendar_year(152), 505);
+        assert_eq!(calendar_year(351), 1500);
+    }
+
+    #[test]
+    fn the_calendar_keeps_advancing_after_the_schedule_ends() {
+        // 825 calendar steps take the game from 4000 BC to 2100 AD on turn 826.
+        assert_eq!(calendar_year(726), 2000);
+        assert_eq!(calendar_year(826), 2100);
+        assert_eq!(calendar_year(827), 2101);
+    }
+
+    #[test]
+    fn the_engine_reports_the_first_turn_as_4000_bc() {
+        let engine = Engine::default();
+        assert_eq!(engine.year(), -4000);
     }
 
     fn test_engine() -> Engine {

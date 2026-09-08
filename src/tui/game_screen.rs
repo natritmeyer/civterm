@@ -607,10 +607,11 @@ fn draw_city_label(buf: &mut Buffer, tile_cx: u16, row_y: u16, name: &str) {
 }
 
 fn format_year(year: i32) -> String {
-    if year < 0 {
-        format!("{} BC", -year)
-    } else {
-        format!("{year} AD")
+    match year.cmp(&0) {
+        std::cmp::Ordering::Less => format!("{} BC", -year),
+        // There is no year 0; the calendar jumps from 1 BC straight to 1 AD.
+        std::cmp::Ordering::Equal => "1 AD".to_string(),
+        std::cmp::Ordering::Greater => format!("{year} AD"),
     }
 }
 
@@ -752,7 +753,7 @@ mod tests {
             1
         }
         fn year(&self) -> i32 {
-            4000
+            -4000
         }
         fn gold(&self) -> u32 {
             50
@@ -813,10 +814,11 @@ mod tests {
     }
 
     #[test]
-    fn year_4000_bc_is_formatted() {
+    fn years_are_formatted_with_a_bc_and_ad_boundary() {
         assert_eq!(format_year(-4000), "4000 BC");
+        assert_eq!(format_year(-1), "1 BC");
+        assert_eq!(format_year(0), "1 AD");
         assert_eq!(format_year(50), "50 AD");
-        assert_eq!(format_year(0), "0 AD");
     }
 
     #[test]
