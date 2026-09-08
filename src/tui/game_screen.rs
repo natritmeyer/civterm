@@ -114,31 +114,33 @@ pub(crate) fn paint_tile(
             // A city with no unit on its tile shows its population on a
             // background of the owning civilization's colour.
             (population_digit(city.population()), Some(city.name.clone()))
-        } else if let Some(u) = unit.first() {
+        } else if explored && let Some(u) = unit.first() {
             // A unit always shows its class letter ahead of the terrain, even
             // when it stands on a city tile; the city keeps its name label
             // beneath.
             (
                 first_letter(u.unit_class),
-                if explored {
-                    city.as_ref().map(|c| c.name.clone())
-                } else {
-                    None
-                },
+                city.as_ref().map(|c| c.name.clone()),
             )
-        } else {
+        } else if explored {
             (terrain.as_char(), None)
+        } else {
+            // Unexplored tiles are blank fog: the terrain letter, units and
+            // cities on them must never show, even when the terminal's text
+            // selection inverts the colours.
+            (' ', None)
         };
 
         // A unit (whether in a city or not) is painted exactly like any other
         // unit: its letter on the tile's terrain, bold and underlined, so its
         // idle flash is visible too. The city colouring and the selected-city
         // outline only apply when no unit covers the tile.
-        if !unit.is_empty() {
+        if explored && !unit.is_empty() {
             style = style
                 .add_modifier(Modifier::BOLD)
                 .add_modifier(Modifier::UNDERLINED);
-        } else if city_name.is_some()
+        } else if explored
+            && city_name.is_some()
             && let Some(city) = city
         {
             style = style.bg(civilization_color(view.civilization_of(city.owner())));
@@ -1637,10 +1639,10 @@ mod tests {
             .buffer()
             .cell((px as u16, py as u16))
             .unwrap();
-        assert_ne!(
+        assert_eq!(
             cell.symbol(),
-            "1",
-            "an undiscovered city must not reveal its population"
+            " ",
+            "an undiscovered tile must be blank fog, not its terrain"
         );
         assert_ne!(
             cell.style().bg,
@@ -1662,6 +1664,56 @@ mod tests {
         assert!(
             !label.contains("Hidden"),
             "an undiscovered city must not reveal its name (got {label:?})"
+        );
+    }
+
+    #[test]
+    fn a_unit_on_an_unexplored_tile_stays_hidden() {
+        let unit = crate::model::units::Unit::new(
+            crate::model::units::UnitClass::Knight,
+            crate::model::cartography::Location::new(0, 0),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(0),
+            crate::model::units::UnitId::new(0),
+        );
+        let view = FakeView {
+            w: 80,
+            h: 50,
+            tile: crate::model::cartography::Tile::new(crate::model::geography::Terrain::Plains),
+            city: None,
+            unit: Some(unit),
+            explored: false,
+        };
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::ZERO,
+                        false,
+                        &[],
+                        None,
+                    ),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let px = LEFT_COLUMN_WIDTH as usize;
+        let py = 1;
+        let cell = terminal
+            .backend()
+            .buffer()
+            .cell((px as u16, py as u16))
+            .unwrap();
+        assert_eq!(
+            cell.symbol(),
+            " ",
+            "an undiscovered unit must not reveal its class letter"
         );
     }
 
