@@ -33,6 +33,9 @@ pub const STATUS_FADE: Duration = Duration::from_secs(1);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// The number of most-recent event messages the log keeps in view.
 pub const EVENT_LOG_SIZE: usize = 5;
+/// How many screen cells a left-button press may travel before it becomes a
+/// map drag rather than a click.
+const CLICK_SLOP: i32 = 2;
 
 #[derive(PartialEq)]
 enum Phase {
@@ -98,6 +101,21 @@ pub struct App {
     /// The most recent mouse position, so hover can steer the map highlight.
     mouse_position: Cell<Option<(u16, u16)>>,
     camera: Cell<(usize, usize)>,
+    /// Where the left button was pressed over the map pane, while a
+    /// click-or-drag gesture is in progress.
+    drag_origin: Cell<Option<(u16, u16)>>,
+    /// The pointer position of the previous drag move, for per-move deltas.
+    drag_last: Cell<Option<(u16, u16)>>,
+    /// Leftover screen-column deltas while dragging (two columns per world
+    /// tile) carried into the next move.
+    drag_carry: Cell<(i32, i32)>,
+    /// True once a press has travelled past `CLICK_SLOP` and is a map drag.
+    drag_engaged: Cell<bool>,
+    /// False once the player has dragged the map by hand, so the camera stops
+    /// auto-centring on the selected unit until the player interacts again.
+    camera_follow: Cell<bool>,
+    /// The last-drawn map pane rectangle, for drag hit-testing and clamping.
+    map_pane: Cell<Option<Rect>>,
     show_help: bool,
     show_events: bool,
     event_log: Vec<GameEvent>,
@@ -134,6 +152,12 @@ impl App {
             picker_rect: Cell::new(None),
             mouse_position: Cell::new(None),
             camera: Cell::new((0, 0)),
+            drag_origin: Cell::new(None),
+            drag_last: Cell::new(None),
+            drag_carry: Cell::new((0, 0)),
+            drag_engaged: Cell::new(false),
+            camera_follow: Cell::new(true),
+            map_pane: Cell::new(None),
             show_help: false,
             show_events: false,
             event_log: Vec::new(),
@@ -201,13 +225,27 @@ impl App {
                     let focus = focus_coordinate(engine, app.selected_unit);
                     let map_pane_width = area.width.saturating_sub(LEFT_COLUMN_WIDTH);
                     let pane_cols = (map_pane_width as usize) / 2;
-                    let camera = camera_for(
-                        focus,
-                        (engine.width(), engine.height()),
-                        (pane_cols, area.height as usize),
-                        app.camera.get(),
-                    );
+                    // While the player has dragged the map by hand, the camera
+                    // stays where they left it; otherwise it follows the
+                    // selected unit.
+                    let camera = if app.camera_follow.get() {
+                        camera_for(
+                            focus,
+                            (engine.width(), engine.height()),
+                            (pane_cols, area.height as usize),
+                            app.camera.get(),
+                        )
+                    } else {
+                        app.camera.get()
+                    };
                     app.camera.set(camera);
+                    let map_pane = Rect {
+                        x: LEFT_COLUMN_WIDTH,
+                        y: area.y,
+                        width: map_pane_width,
+                        height: area.height,
+                    };
+                    app.map_pane.set(Some(map_pane));
                     let hover_target = app.hovered_move_target(engine);
                     frame.render_widget(
                         GameScreen::new(
@@ -478,6 +516,12 @@ impl App {
         engine.populate_starting_world();
         self.engine = Some(engine);
         self.select_first_unit();
+        self.camera.set((0, 0));
+        self.camera_follow.set(true);
+        self.drag_origin.set(None);
+        self.drag_last.set(None);
+        self.drag_carry.set((0, 0));
+        self.drag_engaged.set(false);
         self.phase = Phase::Playing;
         self.reset_setup();
         self.event_log.clear();
@@ -588,6 +632,7 @@ impl App {
         } else {
             self.selected_unit = None;
         }
+        self.camera_follow.set(true);
     }
 
     fn cycle_unit_selection(&mut self) {
@@ -610,12 +655,13 @@ impl App {
             None => 0,
         };
         self.selected_unit = Some(units[next].id());
+        self.camera_follow.set(true);
     }
 
-    /// Selects the city whose map tile was clicked, matching the pane geometry
-    /// the game screen renders with: the map pane starts just right of the left
-    /// column and lays world tiles out one row per screen row, two columns per
-    /// tile. Clicks on empty tiles or the left column clear the selection.
+    /// Routes mouse input during play. Left presses over the map start a
+    /// click-or-drag gesture: the click is deferred until the button is
+    /// released without the pointer having travelled beyond `CLICK_SLOP`, so
+    /// dragging the map never accidentally moves a unit or opens a city.
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         if self.phase != Phase::Playing {
             return;
@@ -624,7 +670,7 @@ impl App {
             return;
         }
         // Remember the pointer position on every mouse event (clicks and
-        // drags too) so hover can drive the pointer shape.
+        // drags too) so hover can steer the map highlight.
         if mouse.column != u16::MAX && mouse.row != u16::MAX {
             self.mouse_position.set(Some((mouse.column, mouse.row)));
         }
@@ -648,17 +694,26 @@ impl App {
                 _ => {}
             }
         }
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-            return;
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => self.mouse_pressed(),
+            MouseEventKind::Drag(MouseButton::Left) => self.mouse_dragged(),
+            MouseEventKind::Up(MouseButton::Left) => self.mouse_released(),
+            _ => {}
         }
-        let column = mouse.column;
-        let row = mouse.row;
-        // Something clicked without a real position.
+    }
+
+    /// A left press over the map pane begins a click-or-drag gesture. Presses
+    /// over the city window or its buttons act immediately, and presses over
+    /// the left column just clear the city selection.
+    fn mouse_pressed(&mut self) {
+        let Some((column, row)) = self.mouse_position.get() else {
+            return;
+        };
         if column == u16::MAX || row == u16::MAX {
             return;
         }
         // While the window is open, the "Change" button opens the production
-        // picker, the close button dismisses the window, and clicks anywhere
+        // picker, the close button dismisses the window, and presses anywhere
         // else inside it are consumed rather than reaching the map.
         if let Some((window, close)) = self.moused_window.get() {
             let change =
@@ -680,24 +735,105 @@ impl App {
             self.selected_city = None;
             return;
         }
+        // A press on the map pane starts a potential drag.
+        let pane = self.map_pane.get();
+        if !pane.is_some_and(|pane| pane.contains((column, row).into())) {
+            return;
+        }
+        self.drag_origin.set(Some((column, row)));
+        self.drag_last.set(Some((column, row)));
+        self.drag_carry.set((0, 0));
+        self.drag_engaged.set(false);
+    }
+
+    /// Follows a held left button over the map pane, panning the camera so the
+    /// map moves with the hand. The first `CLICK_SLOP` cells of travel are
+    /// consumed as click jitter; beyond that the gesture is a drag and the
+    /// camera stops auto-following the selected unit.
+    fn mouse_dragged(&mut self) {
+        let Some((column, row)) = self.mouse_position.get() else {
+            return;
+        };
+        let Some((origin_col, origin_row)) = self.drag_origin.get() else {
+            return;
+        };
+        let pane = self.map_pane.get();
+        if !pane.is_some_and(|pane| pane.contains((column, row).into())) {
+            return;
+        }
+        if !self.drag_engaged.get() {
+            let travelled = (column as i32 - origin_col as i32)
+                .abs()
+                .max((row as i32 - origin_row as i32).abs());
+            if travelled < CLICK_SLOP {
+                return;
+            }
+            self.drag_engaged.set(true);
+            self.camera_follow.set(false);
+        }
+        let (last_col, last_row) = self.drag_last.get().unwrap_or((origin_col, origin_row));
+        let dcol = column as i32 - last_col as i32;
+        let drow = row as i32 - last_row as i32;
+        self.drag_last.set(Some((column, row)));
+        if dcol == 0 && drow == 0 {
+            return;
+        }
+        let (map_w, map_h) = {
+            let engine = self.engine.as_ref().expect("engine exists in play");
+            (engine.width(), engine.height())
+        };
+        // The guard above keeps the cursor over the pane, so unwrap is safe.
+        let pane = pane.expect("pane checked above");
+        // Horizontal deltas accumulate over two screen columns per world tile,
+        // carrying the leftover fraction into the next drag move. Rows map 1:1.
+        let mut carry = self.drag_carry.get();
+        carry.0 += dcol;
+        let shift_x = carry.0.div_euclid(TILE_WIDTH as i32);
+        carry.0 -= shift_x * TILE_WIDTH as i32;
+        let (camera_x, camera_y) = self.camera.get();
+        let new_x = (camera_x as i32 - shift_x).rem_euclid(map_w as i32) as usize;
+        let pane_rows = pane.height as usize;
+        let max_y = map_h.saturating_sub(pane_rows);
+        let new_y = (camera_y as i32 - drow).clamp(0, max_y as i32) as usize;
+        self.camera.set((new_x, new_y));
+        self.drag_carry.set(carry);
+    }
+
+    /// Ends a left press. Releases that stayed within `CLICK_SLOP` of the
+    /// press are clicks and act on the map underneath the press point;
+    /// anything longer is a completed drag, which leaves the camera where it
+    /// was pushed.
+    fn mouse_released(&mut self) {
+        let origin = self.drag_origin.get();
+        self.drag_origin.set(None);
+        self.drag_last.set(None);
+        self.drag_carry.set((0, 0));
+        let engaged = self.drag_engaged.get();
+        self.drag_engaged.set(false);
+        if let Some((column, row)) = origin.filter(|_| !engaged) {
+            self.map_click(column, row);
+        }
+    }
+
+    /// A click on the map pane: a tile one square away moves the selected
+    /// unit, otherwise the click selects or clears the city selection.
+    fn map_click(&mut self, column: u16, row: u16) {
+        let Some(engine) = &self.engine else {
+            return;
+        };
         let tile_col = (column - LEFT_COLUMN_WIDTH) as usize / TILE_WIDTH;
         let (camera_x, camera_y) = self.camera.get();
-        let world_x = (camera_x + tile_col) % self.engine.as_ref().expect("checked").width();
+        let world_x = (camera_x + tile_col) % engine.width();
         let world_y = camera_y + row as usize;
         // A click on the tile one square away in any direction moves the
         // selected unit exactly as the arrow keys would, letting the engine
         // enforce the movement rules.
-        let adjacent_direction = self.engine.as_ref().and_then(|engine| {
-            focus_coordinate(engine, self.selected_unit)
-                .and_then(|from| adjacent_direction(from, (world_x, world_y), engine.width()))
-        });
-        if let Some(direction) = adjacent_direction {
+        let direction = focus_coordinate(engine, self.selected_unit)
+            .and_then(|from| adjacent_direction(from, (world_x, world_y), engine.width()));
+        if let Some(direction) = direction {
             self.move_selected_unit(direction);
             return;
         }
-        let Some(engine) = &self.engine else {
-            return;
-        };
         let map_h = engine.height();
         let clicked = if world_y < map_h {
             engine
@@ -718,13 +854,17 @@ impl App {
             let events = engine.submit(Command::Move { unit, direction });
             self.record_events(events);
         }
+        self.camera_follow.set(true);
     }
 
     /// The world tile the pointer currently hovers, when it lies one square
     /// away from the selected unit (so a click would move there); `None`
     /// otherwise, including while a modal panel floats over the map.
     fn hovered_move_target(&self, engine: &Engine) -> Option<(usize, usize)> {
-        if self.picker_rect.get().is_some() || self.moused_window.get().is_some() {
+        if self.picker_rect.get().is_some()
+            || self.moused_window.get().is_some()
+            || self.drag_origin.get().is_some()
+        {
             return None;
         }
         let screen = self.mouse_position.get()?;
@@ -1118,6 +1258,15 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    fn mouse_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
     #[test]
     fn pressing_q_in_the_menu_exits() {
         for code in [KeyCode::Char('q'), KeyCode::Char('Q'), KeyCode::Esc] {
@@ -1464,12 +1613,19 @@ mod tests {
         );
     }
 
-    fn left_click(column: u16, row: u16) -> MouseEvent {
-        MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column,
-            row,
-            modifiers: crossterm::event::KeyModifiers::NONE,
+    #[cfg(test)]
+    impl App {
+        fn left_click(&mut self, column: u16, row: u16) {
+            self.handle_mouse(mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+            ));
+            self.handle_mouse(mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                column,
+                row,
+            ));
         }
     }
 
@@ -1478,6 +1634,8 @@ mod tests {
         at_start(&mut app);
         app.handle_key(key(KeyCode::Char('s')));
         app.handle_key(key(KeyCode::Char('v'))); // found the starting city
+        app.map_pane
+            .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
         let (cx, cy) = {
             let engine = app.engine.as_ref().unwrap();
             let cities = engine.player_cities();
@@ -1490,10 +1648,7 @@ mod tests {
     #[test]
     fn left_clicking_a_player_city_selects_it() {
         let (mut app, cx, cy) = playing_app();
-        app.handle_mouse(left_click(
-            (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16,
-            cy as u16,
-        ));
+        app.left_click((LEFT_COLUMN_WIDTH as usize + cx * 2) as u16, cy as u16);
         let city = app
             .engine
             .as_ref()
@@ -1508,10 +1663,7 @@ mod tests {
     #[test]
     fn clicking_an_empty_tile_clears_the_selection() {
         let (mut app, cx, cy) = playing_app();
-        app.handle_mouse(left_click(
-            (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16,
-            cy as u16,
-        ));
+        app.left_click((LEFT_COLUMN_WIDTH as usize + cx * 2) as u16, cy as u16);
         assert!(app.selected_city.is_some());
 
         let (ex, ey) = {
@@ -1521,22 +1673,16 @@ mod tests {
                 .find(|(x, y)| engine.city_at(*x, *y).is_none())
                 .unwrap()
         };
-        app.handle_mouse(left_click(
-            (LEFT_COLUMN_WIDTH as usize + ex * 2) as u16,
-            ey as u16,
-        ));
+        app.left_click((LEFT_COLUMN_WIDTH as usize + ex * 2) as u16, ey as u16);
         assert_eq!(app.selected_city, None);
     }
 
     #[test]
     fn clicking_the_left_column_clears_the_selection() {
         let (mut app, cx, cy) = playing_app();
-        app.handle_mouse(left_click(
-            (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16,
-            cy as u16,
-        ));
+        app.left_click((LEFT_COLUMN_WIDTH as usize + cx * 2) as u16, cy as u16);
         assert!(app.selected_city.is_some());
-        app.handle_mouse(left_click(4, cy as u16));
+        app.left_click(4, cy as u16);
         assert_eq!(app.selected_city, None);
     }
 
@@ -1557,6 +1703,8 @@ mod tests {
         let mut app = App::new();
         at_start(&mut app);
         app.handle_key(key(KeyCode::Char('s'))); // begin the game
+        app.map_pane
+            .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
         let (ux, uy) = {
             let engine = app.engine.as_ref().unwrap();
             let unit = engine.player_units()[0];
@@ -1589,7 +1737,7 @@ mod tests {
         })
         .expect("some adjacent tile is passable");
         let column = (LEFT_COLUMN_WIDTH as usize + world_x * TILE_WIDTH) as u16;
-        app.handle_mouse(left_click(column, world_y as u16));
+        app.left_click(column, world_y as u16);
         let engine = app.engine.as_ref().unwrap();
         let moved = engine.player_units()[0];
         assert_eq!(moved.location.x as usize, world_x);
@@ -1601,6 +1749,8 @@ mod tests {
         let mut app = App::new();
         at_start(&mut app);
         app.handle_key(key(KeyCode::Char('s')));
+        app.map_pane
+            .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
         let before = {
             let engine = app.engine.as_ref().unwrap();
             let unit = engine.player_units()[0];
@@ -1610,10 +1760,10 @@ mod tests {
         // falls through to the plain city-selection handling.
         let w = app.engine.as_ref().unwrap().width();
         let (wx, wy) = ((before.0 + 2) % w, before.1);
-        app.handle_mouse(left_click(
+        app.left_click(
             (LEFT_COLUMN_WIDTH as usize + wx * TILE_WIDTH) as u16,
             wy as u16,
-        ));
+        );
         let engine = app.engine.as_ref().unwrap();
         let after = engine.player_units()[0];
         assert_eq!(
@@ -1712,10 +1862,7 @@ mod tests {
     /// its mouse hit-testing is live.
     fn with_city_window_open() -> (App, usize, usize, Rect) {
         let (mut app, cx, cy) = playing_app();
-        app.handle_mouse(left_click(
-            (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16,
-            cy as u16,
-        ));
+        app.left_click((LEFT_COLUMN_WIDTH as usize + cx * 2) as u16, cy as u16);
         assert!(app.selected_city.is_some());
         let win = Rect {
             x: 20,
@@ -1735,7 +1882,7 @@ mod tests {
         let change = crate::tui::city_window::change_button_rect(
             crate::tui::city_window::production_panel_rect(win),
         );
-        app.handle_mouse(left_click(change.x + 1, change.y));
+        app.left_click(change.x + 1, change.y);
         assert!(app.production_picker_open);
         let panel = crate::tui::production_picker::picker_rect(win);
         app.picker_rect.set(Some(panel));
@@ -1746,7 +1893,7 @@ mod tests {
     fn clicking_the_close_button_closes_the_window() {
         let (mut app, _, _, win) = with_city_window_open();
         let close = crate::tui::city_window::close_button_rect(win);
-        app.handle_mouse(left_click(close.x + 1, close.y));
+        app.left_click(close.x + 1, close.y);
         assert_eq!(app.selected_city, None);
     }
 
@@ -1754,7 +1901,7 @@ mod tests {
     fn clicks_inside_the_window_are_consumed() {
         let (mut app, _, _, win) = with_city_window_open();
         let city = app.selected_city;
-        app.handle_mouse(left_click(win.x + 2, win.y + 2));
+        app.left_click(win.x + 2, win.y + 2);
         assert_eq!(
             app.selected_city, city,
             "in-window click must not reach the map"
@@ -1767,7 +1914,7 @@ mod tests {
         // The map's left column is outside the window; clicking it still
         // clears the selection rather than being consumed.
         assert!(!win.contains((4, cy as u16).into()));
-        app.handle_mouse(left_click(4, cy as u16));
+        app.left_click(4, cy as u16);
         assert_eq!(app.selected_city, None);
         let _ = cx;
     }
@@ -1812,7 +1959,7 @@ mod tests {
             crate::tui::city_window::production_panel_rect(win),
         );
         assert!(!app.production_picker_open);
-        app.handle_mouse(left_click(change.x + 1, change.y));
+        app.left_click(change.x + 1, change.y);
         assert!(app.production_picker_open);
         assert_eq!(app.picker_cursor_col, 0);
         assert_eq!(app.picker_cursor_row, 0);
@@ -1826,10 +1973,10 @@ mod tests {
         let (mut app, panel, _) = with_production_picker_open();
         let (units_col, improvements_col) = crate::tui::production_picker::column_rects(panel);
         let rows = crate::tui::production_picker::rows_rect(panel);
-        app.handle_mouse(left_click(units_col.x + 2, rows.y + 1));
+        app.left_click(units_col.x + 2, rows.y + 1);
         assert_eq!((app.picker_cursor_col, app.picker_cursor_row), (0, 1));
         // Clicking an improvement row moves the cursor over to that list.
-        app.handle_mouse(left_click(improvements_col.x + 2, rows.y));
+        app.left_click(improvements_col.x + 2, rows.y);
         assert_eq!((app.picker_cursor_col, app.picker_cursor_row), (1, 0));
         let target = app.current_picker_target().expect("cursor has a target");
         assert!(matches!(target, ProductionTarget::Improvement(_)));
@@ -1902,7 +2049,7 @@ mod tests {
         app.handle_key(key(KeyCode::Char('j')));
         let target = app.current_picker_target().unwrap();
         let save = crate::tui::production_picker::save_button_rect(panel);
-        app.handle_mouse(left_click(save.x + 1, save.y));
+        app.left_click(save.x + 1, save.y);
         assert!(!app.production_picker_open);
         let city = app
             .engine
@@ -1918,7 +2065,7 @@ mod tests {
         let (mut app, panel, _) = with_production_picker_open();
         app.handle_key(key(KeyCode::Char('j')));
         let cancel = crate::tui::production_picker::cancel_button_rect(panel);
-        app.handle_mouse(left_click(cancel.x + 1, cancel.y));
+        app.left_click(cancel.x + 1, cancel.y);
         assert!(!app.production_picker_open);
         let city = app
             .engine
@@ -1934,7 +2081,7 @@ mod tests {
         let (mut app, panel, _) = with_production_picker_open();
         let city = app.selected_city;
         // Inside the window but outside the panel's rows and buttons.
-        app.handle_mouse(left_click(panel.x + 1, panel.y + 1));
+        app.left_click(panel.x + 1, panel.y + 1);
         assert!(app.production_picker_open);
         assert_eq!(
             app.selected_city, city,
@@ -1964,6 +2111,96 @@ mod tests {
         });
         assert_eq!(app.picker_scroll, 0);
         assert_eq!(app.city_window_scroll, before);
+    }
+
+    /// Presses the left button at the first point and drags through the rest,
+    /// releasing on the last point, so mouse-driven gestures can be scripted in
+    /// terms of the (column, row) pixels they cross.
+    fn press_and_drag(app: &mut App, track: &[(u16, u16)]) {
+        let (c0, r0) = track.first().expect("a drag track has a press");
+        app.handle_mouse(mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            *c0,
+            *r0,
+        ));
+        for &(column, row) in &track[1..] {
+            app.handle_mouse(mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                column,
+                row,
+            ));
+        }
+        let (last_c, last_r) = track.last().expect("a drag track has a release");
+        app.handle_mouse(mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            *last_c,
+            *last_r,
+        ));
+    }
+
+    #[test]
+    fn dragging_the_map_pans_the_camera() {
+        let (mut app, _, _) = playing_app();
+        let map_w = app.engine.as_ref().unwrap().width();
+        // Press, pull twelve screen columns rightward across two drag moves,
+        // and release. Six world tiles' worth of hand travel pans the camera
+        // six tiles west.
+        press_and_drag(&mut app, &[(48, 12), (50, 12), (60, 12)]);
+        let expected_x = (0i32 - 6).rem_euclid(map_w as i32) as usize;
+        assert_eq!(app.camera.get(), (expected_x, 0));
+        assert!(!app.camera_follow.get(), "dragging lets the hand steer");
+        assert!(!app.drag_engaged.get(), "release ends the drag");
+        assert_eq!(app.selected_city, None, "a drag must not select a city");
+    }
+
+    #[test]
+    fn a_drag_past_the_slop_never_clicks() {
+        let (mut app, cx, cy) = playing_app();
+        // The drag starts on top of the player's city but travels beyond the
+        // click slop, so the camera pans and the city is left unselected.
+        let column = (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16;
+        press_and_drag(&mut app, &[(column, cy as u16), (column + 6, cy as u16)]);
+        assert_eq!(app.selected_city, None, "drag must not act as a click");
+        assert_eq!(app.camera.get().0, 77, "three tiles of carry pans west");
+        assert!(!app.camera_follow.get());
+    }
+
+    #[test]
+    fn dragging_up_clamps_the_camera_to_the_bottom_of_the_map() {
+        let (mut app, _, _) = playing_app();
+        let map_h = app.engine.as_ref().unwrap().height();
+        let pane = app.map_pane.get().expect("tests set a pane");
+        let max_y = map_h.saturating_sub(pane.height as usize);
+        // Lifting the mouse twenty rows scrolls down to the bottom-most
+        // pane-sized window of the map, never beyond it.
+        press_and_drag(&mut app, &[(48, 30), (48, 10)]);
+        assert_eq!(app.camera.get().1, max_y);
+    }
+
+    #[test]
+    fn a_tiny_drag_stays_a_click() {
+        let (mut app, cx, cy) = playing_app();
+        // One screen cell of movement is click jitter: releasing on the
+        // city tile still selects it and the camera stays put.
+        let column = (LEFT_COLUMN_WIDTH as usize + cx * 2) as u16;
+        press_and_drag(&mut app, &[(column, cy as u16), (column + 1, cy as u16)]);
+        assert!(
+            app.selected_city.is_some(),
+            "jitter must not cancel a click"
+        );
+        assert_eq!(app.camera.get(), (0, 0));
+        assert!(app.camera_follow.get());
+    }
+
+    #[test]
+    fn camera_follow_resumes_when_the_unit_moves_after_a_drag() {
+        let (mut app, _, _) = playing_app();
+        press_and_drag(&mut app, &[(48, 12), (50, 12), (60, 12)]);
+        assert!(!app.camera_follow.get());
+        // Any attempt to move the selected unit hands the camera back to
+        // follow-the-selection regardless of whether the move is legal.
+        app.handle_key(key(KeyCode::Left));
+        assert!(app.camera_follow.get());
     }
 
     #[test]
