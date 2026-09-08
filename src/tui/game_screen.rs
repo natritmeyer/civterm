@@ -76,6 +76,8 @@ pub(crate) fn tile_style(explored: bool, terrain: Terrain) -> Style {
 ///
 /// `selected_city` outlines the matching city tile; `flashing` gates the
 /// selected-unit flash, which itself must be the selected unit with moves left.
+/// `hover_target` (world tile, wrapped horizontally) hatches that tile with
+/// `▓` so the player can see where clicking would move the selected unit.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_tile(
     buf: &mut Buffer,
@@ -89,7 +91,10 @@ pub(crate) fn paint_tile(
     selected_city: Option<CityId>,
     selected_unit: Option<UnitId>,
     flashing: bool,
+    hover_target: Option<(usize, usize)>,
 ) -> Option<String> {
+    let map_x = world_x % map_w;
+    let hovered = hover_target == Some((map_x, world_y));
     let map_x = world_x % map_w;
     let (symbol, style, city_name) = if world_y >= map_h {
         (' ', Style::default().bg(Color::Rgb(6, 6, 22)), None)
@@ -157,6 +162,7 @@ pub(crate) fn paint_tile(
         (symbol, style, city_name)
     };
 
+    let symbol = if hovered { '▓' } else { symbol };
     if let Some(cell) = buf.cell_mut((x, y)) {
         cell.set_symbol(&symbol.to_string());
         cell.set_style(style);
@@ -164,7 +170,7 @@ pub(crate) fn paint_tile(
     if TILE_WIDTH > 1
         && let Some(cell) = buf.cell_mut((x + 1, y))
     {
-        cell.set_symbol(" ");
+        cell.set_symbol(if hovered { "▓" } else { " " });
         cell.set_style(style);
     }
     city_name
@@ -182,6 +188,9 @@ pub struct GameScreen<'a> {
     show_events: bool,
     /// The most recent event messages, oldest first.
     events: &'a [Event],
+    /// The world tile (wrapped horizontally) hatched with `▓` to show where a
+    /// click would move the selected unit; `None` while nothing is hovered.
+    hover_target: Option<(usize, usize)>,
 }
 
 impl<'a> GameScreen<'a> {
@@ -200,6 +209,7 @@ impl<'a> GameScreen<'a> {
         now: Duration,
         show_events: bool,
         events: &'a [Event],
+        hover_target: Option<(usize, usize)>,
     ) -> Self {
         GameScreen {
             view,
@@ -210,6 +220,7 @@ impl<'a> GameScreen<'a> {
             now,
             show_events,
             events,
+            hover_target,
         }
     }
 
@@ -257,6 +268,7 @@ impl<'a> GameScreen<'a> {
                     self.selected_city,
                     self.selected_unit,
                     flashing,
+                    self.hover_target,
                 ) {
                     city_labels.push((cx, cy + 1, name));
                 }
@@ -782,7 +794,17 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, None, Duration::ZERO, false, &[]),
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::ZERO,
+                        false,
+                        &[],
+                        None,
+                    ),
                     frame.area(),
                 )
             })
@@ -857,11 +879,69 @@ mod tests {
                         Duration::ZERO,
                         false,
                         &[],
+                        None,
                     ),
                     frame.area(),
                 )
             })
             .unwrap();
+    }
+
+    #[test]
+    fn the_hovered_tile_is_shaded_while_its_neighbours_are_not() {
+        let unit = crate::model::units::Unit::new(
+            crate::model::units::UnitClass::Militia,
+            crate::model::cartography::Location::new(0, 0),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(0),
+            crate::model::units::UnitId::new(7),
+        );
+        let view = FakeView {
+            w: 80,
+            h: 50,
+            tile: crate::model::cartography::Tile::new(crate::model::geography::Terrain::Plains),
+            city: None,
+            unit: Some(unit),
+            explored: true,
+        };
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(
+                        &view,
+                        Some((0, 0)),
+                        (0, 0),
+                        Some(crate::model::units::UnitId::new(7)),
+                        None,
+                        // The mid-phase `now` turns the idle-unit flash off, so
+                        // the hovered tile keeps its plain terrain background.
+                        Duration::from_millis(600),
+                        false,
+                        &[],
+                        Some((1, 0)),
+                    ),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let base = LEFT_COLUMN_WIDTH;
+        let expected_bg = tile_style(true, crate::model::geography::Terrain::Plains).bg;
+        for (cell_x, cell_y) in [(base + 2, 0), (base + 3, 0)] {
+            let cell = buffer.cell((cell_x, cell_y)).unwrap();
+            assert_eq!(cell.symbol(), "▓", "hovered tile cells should be shaded");
+            assert_eq!(
+                cell.style().bg,
+                expected_bg,
+                "the hover shade must keep the tile's terrain background"
+            );
+        }
+        // Neighbouring tiles keep their own symbols.
+        for cell_x in [base + 4, base + 5, base + 6, base + 8] {
+            let cell = buffer.cell((cell_x, 0)).unwrap();
+            assert_ne!(cell.symbol(), "▓", "non-hovered tile must stay untouched");
+        }
     }
 
     fn events_log(events: &[&str]) -> Vec<Event> {
@@ -894,6 +974,7 @@ mod tests {
             None,
             selected_unit,
             flashing,
+            None,
         );
         (buf.cell((0, 0)).unwrap().clone(), name)
     }
@@ -1013,6 +1094,7 @@ mod tests {
                         Duration::ZERO,
                         true,
                         &events,
+                        None,
                     ),
                     frame.area(),
                 )
@@ -1052,6 +1134,7 @@ mod tests {
                         Duration::ZERO,
                         true,
                         &events,
+                        None,
                     ),
                     frame.area(),
                 )
@@ -1069,7 +1152,17 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, None, Duration::ZERO, true, &[]),
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::ZERO,
+                        true,
+                        &[],
+                        None,
+                    ),
                     frame.area(),
                 )
             })
@@ -1096,6 +1189,7 @@ mod tests {
                         Duration::ZERO,
                         false,
                         &events,
+                        None,
                     ),
                     frame.area(),
                 )
@@ -1143,6 +1237,7 @@ mod tests {
                         Duration::ZERO,
                         false,
                         &[],
+                        None,
                     ),
                     frame.area(),
                 )
@@ -1174,7 +1269,17 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, None, Duration::ZERO, false, &[]),
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::ZERO,
+                        false,
+                        &[],
+                        None,
+                    ),
                     frame.area(),
                 )
             })
@@ -1231,6 +1336,7 @@ mod tests {
                         now,
                         false,
                         &[],
+                        None,
                     ),
                     frame.area(),
                 )
@@ -1288,6 +1394,7 @@ mod tests {
                         Duration::from_millis(200),
                         false,
                         &[],
+                        None,
                     ),
                     frame.area(),
                 )
@@ -1353,6 +1460,7 @@ mod tests {
                         Duration::from_millis(200),
                         false,
                         &[],
+                        None,
                     ),
                     frame.area(),
                 )
@@ -1394,6 +1502,7 @@ mod tests {
                         Duration::from_millis(200),
                         false,
                         &[],
+                        None,
                     ),
                     frame.area(),
                 )
@@ -1464,6 +1573,7 @@ mod tests {
                         Duration::from_millis(200),
                         false,
                         &[],
+                        None,
                     ),
                     frame.area(),
                 )
@@ -1503,7 +1613,17 @@ mod tests {
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    GameScreen::new(&view, None, (0, 0), None, None, Duration::ZERO, false, &[]),
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::ZERO,
+                        false,
+                        &[],
+                        None,
+                    ),
                     frame.area(),
                 )
             })

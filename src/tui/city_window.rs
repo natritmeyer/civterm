@@ -333,6 +333,7 @@ impl<'a> CityWindow<'a> {
                     Some(city.id()),
                     None,
                     false,
+                    None,
                 );
             }
         }

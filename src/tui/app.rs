@@ -95,6 +95,8 @@ pub struct App {
     picker_scroll: usize,
     /// The last-drawn picker panel rectangle, for mouse hit-testing.
     picker_rect: Cell<Option<Rect>>,
+    /// The most recent mouse position, so hover can steer the map highlight.
+    mouse_position: Cell<Option<(u16, u16)>>,
     camera: Cell<(usize, usize)>,
     show_help: bool,
     show_events: bool,
@@ -130,6 +132,7 @@ impl App {
             picker_cursor_row: 0,
             picker_scroll: 0,
             picker_rect: Cell::new(None),
+            mouse_position: Cell::new(None),
             camera: Cell::new((0, 0)),
             show_help: false,
             show_events: false,
@@ -205,6 +208,7 @@ impl App {
                         app.camera.get(),
                     );
                     app.camera.set(camera);
+                    let hover_target = app.hovered_move_target(engine);
                     frame.render_widget(
                         GameScreen::new(
                             engine,
@@ -215,6 +219,7 @@ impl App {
                             app.started_at.elapsed(),
                             app.show_events,
                             &app.event_log[app.event_log.len().saturating_sub(EVENT_LOG_SIZE)..],
+                            hover_target,
                         ),
                         area,
                     );
@@ -618,6 +623,11 @@ impl App {
         if self.engine.is_none() {
             return;
         }
+        // Remember the pointer position on every mouse event (clicks and
+        // drags too) so hover can drive the pointer shape.
+        if mouse.column != u16::MAX && mouse.row != u16::MAX {
+            self.mouse_position.set(Some((mouse.column, mouse.row)));
+        }
         // The production picker floats above the city window and captures all
         // mouse input while it is open.
         if let Some(panel) = self.picker_rect.get() {
@@ -670,15 +680,25 @@ impl App {
             self.selected_city = None;
             return;
         }
+        let tile_col = (column - LEFT_COLUMN_WIDTH) as usize / TILE_WIDTH;
+        let (camera_x, camera_y) = self.camera.get();
+        let world_x = (camera_x + tile_col) % self.engine.as_ref().expect("checked").width();
+        let world_y = camera_y + row as usize;
+        // A click on the tile one square away in any direction moves the
+        // selected unit exactly as the arrow keys would, letting the engine
+        // enforce the movement rules.
+        let adjacent_direction = self.engine.as_ref().and_then(|engine| {
+            focus_coordinate(engine, self.selected_unit)
+                .and_then(|from| adjacent_direction(from, (world_x, world_y), engine.width()))
+        });
+        if let Some(direction) = adjacent_direction {
+            self.move_selected_unit(direction);
+            return;
+        }
         let Some(engine) = &self.engine else {
             return;
         };
-        let tile_col = (column - LEFT_COLUMN_WIDTH) as usize / TILE_WIDTH;
-        let (camera_x, camera_y) = self.camera.get();
-        let map_w = engine.width();
         let map_h = engine.height();
-        let world_x = (camera_x + tile_col) % map_w;
-        let world_y = camera_y + row as usize;
         let clicked = if world_y < map_h {
             engine
                 .city_at(world_x, world_y)
@@ -698,6 +718,24 @@ impl App {
             let events = engine.submit(Command::Move { unit, direction });
             self.record_events(events);
         }
+    }
+
+    /// The world tile the pointer currently hovers, when it lies one square
+    /// away from the selected unit (so a click would move there); `None`
+    /// otherwise, including while a modal panel floats over the map.
+    fn hovered_move_target(&self, engine: &Engine) -> Option<(usize, usize)> {
+        if self.picker_rect.get().is_some() || self.moused_window.get().is_some() {
+            return None;
+        }
+        let screen = self.mouse_position.get()?;
+        let camera = self.camera.get();
+        let map = (engine.width(), engine.height());
+        hovered_adjacent_tile(
+            screen,
+            camera,
+            map,
+            focus_coordinate(engine, self.selected_unit),
+        )
     }
 
     fn found_selected_city(&mut self) {
@@ -963,6 +1001,57 @@ fn focus_coordinate(engine: &Engine, selected: Option<UnitId>) -> Option<(usize,
             .find(|unit| unit.id() == id)
     })?;
     Some((unit.location.x as usize, unit.location.y as usize))
+}
+
+/// The adjacent `Direction` from tile `from` to tile `to`, taking the map's
+/// horizontal wrap into account. Returns `None` unless the two tiles are
+/// orthogonally or diagonally adjacent.
+fn adjacent_direction(from: (usize, usize), to: (usize, usize), map_w: usize) -> Option<Direction> {
+    let (fx, fy) = from;
+    let (tx, ty) = to;
+    let mut dx = tx as isize - fx as isize;
+    if dx > (map_w / 2) as isize {
+        dx -= map_w as isize;
+    } else if dx < -((map_w / 2) as isize) {
+        dx += map_w as isize;
+    }
+    let dy = ty as isize - fy as isize;
+    let direction = match (dx, dy) {
+        (0, -1) => Direction::N,
+        (1, -1) => Direction::NE,
+        (1, 0) => Direction::E,
+        (1, 1) => Direction::SE,
+        (0, 1) => Direction::S,
+        (-1, 1) => Direction::SW,
+        (-1, 0) => Direction::W,
+        (-1, -1) => Direction::NW,
+        _ => return None,
+    };
+    Some(direction)
+}
+
+/// The world tile under the pointer, when it lies one square away from the
+/// `selected` tile in any direction; `None` otherwise (including over the
+/// left column or beyond the bottom map edge).
+fn hovered_adjacent_tile(
+    screen: (u16, u16),
+    camera: (usize, usize),
+    map: (usize, usize),
+    selected: Option<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    let (column, row) = screen;
+    if column < LEFT_COLUMN_WIDTH {
+        return None;
+    }
+    let (map_w, map_h) = map;
+    let tile_col = (column - LEFT_COLUMN_WIDTH) as usize / TILE_WIDTH;
+    let world_x = (camera.0 + tile_col) % map_w;
+    let world_y = camera.1 + row as usize;
+    if world_y >= map_h {
+        return None;
+    }
+    adjacent_direction(selected?, (world_x, world_y), map_w)?;
+    Some((world_x, world_y))
 }
 
 /// The world-tile coordinate for the top-left of the map pane. Centres on
@@ -1461,6 +1550,156 @@ mod tests {
             modifiers: crossterm::event::KeyModifiers::NONE,
         });
         assert_eq!(app.selected_city, None);
+    }
+
+    #[test]
+    fn clicking_an_adjacent_tile_moves_the_selected_unit_there() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s'))); // begin the game
+        let (ux, uy) = {
+            let engine = app.engine.as_ref().unwrap();
+            let unit = engine.player_units()[0];
+            (unit.location.x as usize, unit.location.y as usize)
+        };
+        // Pick an adjacent tile the unit can move onto.
+        let (world_x, world_y) = [
+            (0, -1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+            (0, 1),
+            (-1, 1),
+            (-1, 0),
+            (-1, -1),
+        ]
+        .into_iter()
+        .map(|(dx, dy)| {
+            let engine = app.engine.as_ref().unwrap();
+            let w = engine.width() as isize;
+            let h = engine.height() as isize;
+            let nx = (ux as isize + dx).rem_euclid(w) as usize;
+            let ny = (uy as isize + dy).clamp(0, h - 1) as usize;
+            (nx, ny)
+        })
+        .find(|&(nx, ny)| {
+            let engine = app.engine.as_ref().unwrap();
+            let terrain = engine.tile(nx, ny).terrain;
+            terrain.is_land() && terrain.movement_cost() <= 1
+        })
+        .expect("some adjacent tile is passable");
+        let column = (LEFT_COLUMN_WIDTH as usize + world_x * TILE_WIDTH) as u16;
+        app.handle_mouse(left_click(column, world_y as u16));
+        let engine = app.engine.as_ref().unwrap();
+        let moved = engine.player_units()[0];
+        assert_eq!(moved.location.x as usize, world_x);
+        assert_eq!(moved.location.y as usize, world_y);
+    }
+
+    #[test]
+    fn clicking_a_remote_tile_does_not_move_the_selected_unit() {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        let before = {
+            let engine = app.engine.as_ref().unwrap();
+            let unit = engine.player_units()[0];
+            (unit.location.x as usize, unit.location.y as usize)
+        };
+        // A tile two squares east of the unit is not adjacent, so the click
+        // falls through to the plain city-selection handling.
+        let w = app.engine.as_ref().unwrap().width();
+        let (wx, wy) = ((before.0 + 2) % w, before.1);
+        app.handle_mouse(left_click(
+            (LEFT_COLUMN_WIDTH as usize + wx * TILE_WIDTH) as u16,
+            wy as u16,
+        ));
+        let engine = app.engine.as_ref().unwrap();
+        let after = engine.player_units()[0];
+        assert_eq!(
+            (after.location.x as usize, after.location.y as usize),
+            before
+        );
+    }
+
+    #[test]
+    fn adjacent_direction_takes_the_horizontal_wrap_into_account() {
+        assert_eq!(adjacent_direction((5, 5), (4, 5), 80), Some(Direction::W));
+        assert_eq!(adjacent_direction((5, 5), (6, 5), 80), Some(Direction::E));
+        assert_eq!(adjacent_direction((5, 5), (5, 6), 80), Some(Direction::S));
+        assert_eq!(adjacent_direction((5, 5), (6, 4), 80), Some(Direction::NE));
+        assert_eq!(adjacent_direction((5, 5), (4, 6), 80), Some(Direction::SW));
+        assert_eq!(adjacent_direction((0, 5), (79, 5), 80), Some(Direction::W));
+        assert_eq!(adjacent_direction((79, 5), (0, 5), 80), Some(Direction::E));
+        assert_eq!(adjacent_direction((5, 5), (7, 5), 80), None);
+        assert_eq!(adjacent_direction((5, 5), (5, 5), 80), None);
+        assert_eq!(adjacent_direction((5, 5), (5, 3), 80), None);
+    }
+
+    #[test]
+    fn hovering_an_adjacent_tile_reports_the_move_target() {
+        // Camera at origin, unit at (5, 5). The pointer is over the tile one
+        // square west of the unit.
+        assert_eq!(
+            hovered_adjacent_tile(
+                ((LEFT_COLUMN_WIDTH as usize + 4 * TILE_WIDTH) as u16, 5),
+                (0, 0),
+                (80, 50),
+                Some((5, 5)),
+            ),
+            Some((4, 5)),
+        );
+        assert_eq!(
+            hovered_adjacent_tile(
+                ((LEFT_COLUMN_WIDTH as usize + 6 * TILE_WIDTH) as u16, 4),
+                (0, 0),
+                (80, 50),
+                Some((5, 5)),
+            ),
+            Some((6, 4)),
+        );
+        // Hovering the unit's own tile, a distant tile, the left column, the
+        // area below the map, or without a selected unit yields no target.
+        assert_eq!(
+            hovered_adjacent_tile(
+                ((LEFT_COLUMN_WIDTH as usize + 5 * TILE_WIDTH) as u16, 5),
+                (0, 0),
+                (80, 50),
+                Some((5, 5)),
+            ),
+            None,
+        );
+        assert_eq!(
+            hovered_adjacent_tile(
+                ((LEFT_COLUMN_WIDTH as usize + 9 * TILE_WIDTH) as u16, 5),
+                (0, 0),
+                (80, 50),
+                Some((5, 5)),
+            ),
+            None,
+        );
+        assert_eq!(
+            hovered_adjacent_tile((4, 5), (0, 0), (80, 50), Some((5, 5))),
+            None
+        );
+        assert_eq!(
+            hovered_adjacent_tile(
+                ((LEFT_COLUMN_WIDTH as usize + 4 * TILE_WIDTH) as u16, 60),
+                (0, 0),
+                (80, 50),
+                Some((5, 5)),
+            ),
+            None,
+        );
+        assert_eq!(
+            hovered_adjacent_tile(
+                ((LEFT_COLUMN_WIDTH as usize + 4 * TILE_WIDTH) as u16, 5),
+                (0, 0),
+                (80, 50),
+                None,
+            ),
+            None,
+        );
     }
 
     #[test]
