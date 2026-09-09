@@ -19,10 +19,10 @@ const RULE: Style = Style::new().fg(BLACK).bg(VANILLA_BG);
 
 /// Fixed-width emoji (single codepoint, two terminal cells each).
 const FA_FOOD: char = '🌾';
-const FA_SHIELD: char = '🪖';
+const FA_PRODUCTION: char = '🔧';
 const FA_TRADE: char = '🛒';
 const FA_RESEARCH: char = '💡';
-const FA_GOLD: char = '🪎';
+const FA_GOLD: char = '💰';
 const FA_POP: char = '🧍';
 
 const CLOSE_TEXT: &str = "✕ Close";
@@ -273,7 +273,7 @@ impl<'a> CityWindow<'a> {
         let mut y = rect.y + 1;
         let rows: [(&str, char, u32); 5] = [
             ("Food", FA_FOOD, income.food),
-            ("Shields", FA_SHIELD, income.resources),
+            ("Production", FA_PRODUCTION, income.resources),
             ("Trade", FA_TRADE, income.trade),
             ("Research", FA_RESEARCH, income.research),
             ("Gold", FA_GOLD, income.gold),
@@ -422,12 +422,12 @@ impl<'a> CityWindow<'a> {
             let cost = target.resource_cost();
             let stored = city.resource_stored();
             let mut lines = vec![
-                format!("{} Stored   {stored}", FA_SHIELD),
-                format!("{} Cost     {cost}", FA_SHIELD),
-                format!("{} Income   {}", FA_SHIELD, income.resources),
+                format!("{} Stored   {stored}", FA_PRODUCTION),
+                format!("{} Cost     {cost}", FA_PRODUCTION),
+                format!("{} Income   {}", FA_PRODUCTION, income.resources),
             ];
             if let Some(t) = turns_to(cost.saturating_sub(stored), income.resources) {
-                lines.push(format!("{} Turns    {t}", FA_SHIELD));
+                lines.push(format!("{} Turns    {t}", FA_PRODUCTION));
             }
             for (i, line) in lines.iter().enumerate() {
                 let row = rect.y + 1 + i as u16;
@@ -752,7 +752,7 @@ mod tests {
         let buf = render(london(), 0);
         let (x, y) = pos_of(1, 4);
         assert!(row_text(&buf, x, y, 20).contains("City Resources"));
-        for needle in ["Food", "Shields", "Trade", "Research", "Gold"] {
+        for needle in ["Food", "Production", "Trade", "Research", "Gold"] {
             let found = (1..=11).any(|row| row_text(&buf, x, y + row, 20).contains(needle));
             assert!(found, "missing {needle} row");
         }

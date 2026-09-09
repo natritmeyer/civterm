@@ -11,6 +11,7 @@ use crate::model::units::{Unit, UnitClass, UnitId};
 use super::game::Game;
 use crate::game_engine::{MoveError, SettleError};
 use crate::utils::Rng;
+use strum::IntoEnumIterator;
 
 const DEFAULT_SEED: u64 = 0xC0FFEE;
 const HIT_POINTS: u32 = 10;
@@ -149,6 +150,19 @@ impl Engine {
             Command::EndTurn => self.end_turn(),
         }
         std::mem::take(&mut self.events)
+    }
+
+    /// The advancements `player` has already discovered, in discovery order.
+    pub fn player_advances(&self, player: PlayerId) -> Vec<Advancement> {
+        self.game.players[player.index()].advances_made().to_vec()
+    }
+
+    /// The advancements `player` may begin researching right now: not yet
+    /// discovered, with every prerequisite already discovered.
+    pub fn researchable_advancements_for(&self, player: PlayerId) -> Vec<Advancement> {
+        Advancement::iter()
+            .filter(|advancement| self.game.can_research(player, *advancement))
+            .collect()
     }
 
     fn move_unit(&mut self, unit: UnitId, direction: Direction) {
@@ -2794,7 +2808,7 @@ mod tests {
         engine.submit(Command::SetResearchTarget {
             advancement: Advancement::Wheel,
         });
-        // Wheel costs 40; the city produces 4 beakers per turn.
+        // Wheel costs 15; the city produces 4 research per turn.
         let mut discovered = false;
         for _ in 0..20 {
             let events = engine.submit(Command::EndTurn);
@@ -2872,7 +2886,7 @@ mod tests {
     #[test]
     fn setting_production_allows_gated_units_once_the_advancement_is_discovered() {
         let mut engine = research_engine();
-        // Wheel costs 40; the city produces 4 beakers per turn.
+        // Wheel costs 15; the city produces 4 research per turn.
         engine.submit(Command::SetResearchTarget {
             advancement: Advancement::Wheel,
         });

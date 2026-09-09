@@ -88,11 +88,11 @@ impl Player {
         self.research_progress = 0;
     }
 
-    /// Add this turn's beakers from all cities. When the current target's cost
+    /// Add this turn's research from all cities. When the current target's cost
     /// is reached, the advancement is discovered and returned.
-    pub(super) fn advance_research(&mut self, beakers: u32) -> Option<Advancement> {
+    pub(super) fn advance_research(&mut self, research: u32) -> Option<Advancement> {
         let target = self.advancement_in_progress?;
-        self.research_progress += beakers;
+        self.research_progress += research;
         if self.research_progress >= target.cost() {
             self.advances_made.push(target);
             self.advancement_in_progress = None;
@@ -215,8 +215,8 @@ mod tests {
     fn setting_research_target_resets_progress() {
         let mut player = Player::new(Civilization::English);
         player.begin_research();
-        player.advance_research(50);
-        assert_eq!(player.research_progress(), 50);
+        player.advance_research(5);
+        assert_eq!(player.research_progress(), 5);
         player.set_research_target(Advancement::Wheel);
         assert_eq!(player.research_progress(), 0);
         assert_eq!(player.advancement_in_progress(), Some(Advancement::Wheel));
@@ -225,10 +225,10 @@ mod tests {
     #[test]
     fn research_accumulates_towards_the_target_and_discovers_it_at_cost() {
         let mut player = Player::new(Civilization::English);
-        player.set_research_target(Advancement::Wheel); // cost 40
-        assert_eq!(player.advance_research(30), None);
-        assert_eq!(player.research_progress(), 30);
-        assert_eq!(player.advance_research(10), Some(Advancement::Wheel));
+        player.set_research_target(Advancement::Wheel); // cost 15
+        assert_eq!(player.advance_research(10), None);
+        assert_eq!(player.research_progress(), 10);
+        assert_eq!(player.advance_research(5), Some(Advancement::Wheel));
         assert!(player.has_advancement(Advancement::Wheel));
         assert_eq!(player.advancement_in_progress(), None);
         assert_eq!(player.research_progress(), 0);

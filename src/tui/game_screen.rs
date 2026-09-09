@@ -5,7 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
-use super::theme::{ACCENT, DIM, draw_text};
+use super::theme::{ACCENT, DARK_GREY, DIM, draw_text};
 use crate::game_engine::{Event, GameView};
 use crate::model::cities::CityId;
 use crate::model::civilizations::Civilization;
@@ -433,7 +433,7 @@ impl<'a> GameScreen<'a> {
             x,
             header_y,
             &label,
-            Style::default().fg(Color::Rgb(180, 140, 255)),
+            Style::default().fg(DARK_GREY),
         );
         if let Some(cost) = cost {
             let pct = if cost == 0 {

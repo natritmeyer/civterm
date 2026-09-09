@@ -15,14 +15,16 @@ use super::difficulty_selector::DifficultySelector;
 use super::game_screen::{GameScreen, LEFT_COLUMN_WIDTH, TILE_WIDTH};
 use super::playing_help::PlayingHelp;
 use super::production_picker::{self, PickRow, ProductionPicker};
+use super::research_dialog::{self, ResearchDialog};
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
 use super::status_bar::{ITEMS, StatusBar};
 use crate::game_engine::event::Event as GameEvent;
 use crate::game_engine::{Command, Engine, GameView, Player};
+use crate::model::advancements::Advancement;
 use crate::model::cartography::Direction;
 use crate::model::cities::{CityId, ProductionTarget};
-use crate::model::civilizations::Civilization;
+use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
 use crate::model::units::{UnitClass, UnitId};
@@ -67,6 +69,16 @@ impl StartChoice {
             StartChoice::Quit => 1,
         }
     }
+}
+
+/// The research-completion dialog's live state: the advancement just
+/// discovered, the researchable advancements on offer, and the cursor/scroll
+/// within that list.
+struct ResearchDialogState {
+    discovered: Advancement,
+    choices: Vec<Advancement>,
+    cursor: usize,
+    scroll: usize,
 }
 
 pub struct App {
@@ -119,6 +131,10 @@ pub struct App {
     show_help: bool,
     show_events: bool,
     event_log: Vec<GameEvent>,
+    /// The open advancement-completion dialog, if one is showing.
+    research_dialog: Option<ResearchDialogState>,
+    /// The last-drawn research-dialog rectangle, for mouse hit-testing.
+    research_dialog_rect: Cell<Option<Rect>>,
 }
 
 impl Default for App {
@@ -161,6 +177,8 @@ impl App {
             show_help: false,
             show_events: false,
             event_log: Vec::new(),
+            research_dialog: None,
+            research_dialog_rect: Cell::new(None),
         }
     }
 
@@ -312,6 +330,25 @@ impl App {
                             app.moused_window.set(None);
                             app.picker_rect.set(None);
                         }
+                    }
+                    // The research dialog floats above everything: at the start
+                    // of a turn an advancement may have completed, and the
+                    // player must choose the next research target.
+                    if let Some(state) = &app.research_dialog {
+                        let rect = research_dialog::dialog_rect(area);
+                        frame.render_widget(
+                            ResearchDialog::new(
+                                engine,
+                                state.discovered,
+                                state.choices.clone(),
+                                state.cursor,
+                                state.scroll,
+                            ),
+                            rect,
+                        );
+                        app.research_dialog_rect.set(Some(rect));
+                    } else {
+                        app.research_dialog_rect.set(None);
                     }
                 }
             }
@@ -533,6 +570,8 @@ impl App {
         self.picker_cursor_row = 0;
         self.picker_scroll = 0;
         self.picker_rect = Cell::new(None);
+        self.research_dialog = None;
+        self.research_dialog_rect = Cell::new(None);
     }
 
     fn start_new_game(&mut self) {
@@ -541,6 +580,12 @@ impl App {
     }
 
     fn handle_playing_key(&mut self, key: KeyEvent) -> bool {
+        // While the research dialog is open it captures the keyboard: the
+        // player may only pick a research target and confirm it.
+        if self.research_dialog.is_some() {
+            self.handle_research_dialog_key(key);
+            return false;
+        }
         // While the production picker is open it captures the keyboard.
         if self.production_picker_open {
             match key.code {
@@ -673,6 +718,12 @@ impl App {
         // drags too) so hover can steer the map highlight.
         if mouse.column != u16::MAX && mouse.row != u16::MAX {
             self.mouse_position.set(Some((mouse.column, mouse.row)));
+        }
+        // The research dialog floats above everything and captures all mouse
+        // input while it is open.
+        if self.research_dialog_rect.get().is_some() {
+            self.handle_research_dialog_mouse(mouse);
+            return;
         }
         // The production picker floats above the city window and captures all
         // mouse input while it is open.
@@ -861,7 +912,8 @@ impl App {
     /// away from the selected unit (so a click would move there); `None`
     /// otherwise, including while a modal panel floats over the map.
     fn hovered_move_target(&self, engine: &Engine) -> Option<(usize, usize)> {
-        if self.picker_rect.get().is_some()
+        if self.research_dialog_rect.get().is_some()
+            || self.picker_rect.get().is_some()
             || self.moused_window.get().is_some()
             || self.drag_origin.get().is_some()
         {
@@ -890,11 +942,156 @@ impl App {
     }
 
     fn end_turn(&mut self) {
-        if let Some(engine) = &mut self.engine {
+        let human = PlayerId::new(0);
+        let (events, discovered, wrapped) = if let Some(engine) = &mut self.engine {
+            let advances_before = engine.player_advances(human);
             let events = engine.submit(Command::EndTurn);
-            self.record_events(events);
+            // An advancement completes at the start of the human's turn: once
+            // play wraps back to player zero, their research has advanced and
+            // a discovery leaves them with no research in progress. Offer the
+            // research-completion dialog so they can pick the next target.
+            let discovered = engine
+                .player_advances(human)
+                .get(advances_before.len())
+                .copied();
+            let wrapped = engine.current_player_id() == human;
+            (events, discovered, wrapped)
+        } else {
+            (Vec::new(), None, false)
+        };
+        self.record_events(events);
+        if wrapped && let Some(discovered) = discovered {
+            let choices = self
+                .engine
+                .as_ref()
+                .map(|engine| engine.researchable_advancements_for(human))
+                .unwrap_or_default();
+            self.research_dialog = Some(ResearchDialogState {
+                discovered,
+                choices,
+                cursor: 0,
+                scroll: 0,
+            });
+            // The modal floats over the map; drop any stale overlays so
+            // the player isn't asked about both at once.
+            self.selected_city = None;
+            self.city_window_scroll = 0;
+            self.moused_window = Cell::new(None);
+            self.production_picker_open = false;
+            self.picker_rect = Cell::new(None);
         }
         self.select_first_unit();
+    }
+
+    fn handle_research_dialog_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.move_research_cursor(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_research_cursor(1),
+            KeyCode::Enter | KeyCode::Char(' ') => self.research_dialog_confirm(),
+            _ => {}
+        }
+    }
+
+    fn handle_research_dialog_mouse(&mut self, mouse: MouseEvent) {
+        let Some(dialog) = &self.research_dialog else {
+            return;
+        };
+        let Some(panel) = self.research_dialog_rect.get() else {
+            return;
+        };
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if mouse.column == u16::MAX || mouse.row == u16::MAX {
+                    return;
+                }
+                let position = (mouse.column, mouse.row).into();
+                if research_dialog::ok_button_rect(panel).contains(position) {
+                    self.research_dialog_confirm();
+                    return;
+                }
+                let rows = research_dialog::list_rect(panel);
+                if rows.contains(position) {
+                    let row_in_view = (mouse.row as usize).saturating_sub(rows.y as usize);
+                    let choice = row_in_view + dialog.scroll;
+                    if choice < dialog.choices.len() {
+                        self.move_research_cursor_to(choice);
+                    }
+                }
+            }
+            MouseEventKind::ScrollUp => self.move_research_scroll(-1),
+            MouseEventKind::ScrollDown => self.move_research_scroll(1),
+            _ => {}
+        }
+    }
+
+    fn research_dialog_confirm(&mut self) {
+        let Some(dialog) = self.research_dialog.take() else {
+            return;
+        };
+        self.research_dialog_rect.set(None);
+        if let Some(advancement) = dialog.choices.get(dialog.cursor).copied()
+            && let Some(engine) = &mut self.engine
+        {
+            let events = engine.submit(Command::SetResearchTarget { advancement });
+            self.record_events(events);
+        }
+    }
+
+    /// Move the research dialog's cursor by `delta` rows.
+    fn move_research_cursor(&mut self, delta: isize) {
+        let visible = self.research_visible_rows();
+        let Some(dialog) = &mut self.research_dialog else {
+            return;
+        };
+        if dialog.choices.is_empty() {
+            return;
+        }
+        let len = dialog.choices.len();
+        dialog.cursor = if delta > 0 {
+            advance(dialog.cursor, len)
+        } else {
+            retreat(dialog.cursor, len)
+        };
+        Self::clamp_research_scroll(dialog, visible);
+    }
+
+    /// Jump the research dialog's cursor to a specific row.
+    fn move_research_cursor_to(&mut self, choice: usize) {
+        let visible = self.research_visible_rows();
+        let Some(dialog) = &mut self.research_dialog else {
+            return;
+        };
+        if choice < dialog.choices.len() {
+            dialog.cursor = choice;
+        }
+        Self::clamp_research_scroll(dialog, visible);
+    }
+
+    /// Scroll the research dialog's list by `delta` rows (if it overflows).
+    fn move_research_scroll(&mut self, delta: isize) {
+        let visible = self.research_visible_rows();
+        let Some(dialog) = &mut self.research_dialog else {
+            return;
+        };
+        let base = dialog.scroll as isize + delta;
+        let max_offset = dialog.choices.len().saturating_sub(visible);
+        dialog.scroll = base.clamp(0, max_offset as isize) as usize;
+    }
+
+    /// Keep the scroll so the cursor stays inside the scrolled window.
+    fn clamp_research_scroll(dialog: &mut ResearchDialogState, visible: usize) {
+        let max_offset = dialog.choices.len().saturating_sub(visible);
+        let lo = (dialog.cursor as isize + 1 - visible as isize).max(0) as usize;
+        let hi = dialog.cursor.min(max_offset);
+        dialog.scroll = dialog.scroll.clamp(lo, hi);
+    }
+
+    /// The number of research-dialog list rows visible on screen right now.
+    fn research_visible_rows(&self) -> usize {
+        self.research_dialog_rect
+            .get()
+            .map(|panel| research_dialog::list_rect(panel).height as usize)
+            .unwrap_or(8)
     }
 
     fn record_events(&mut self, events: Vec<GameEvent>) {
@@ -2561,5 +2758,98 @@ mod tests {
     fn status_bar_finishes_fading_after_three_seconds() {
         assert_eq!(fade_progress(Duration::from_secs(3)), 1.0);
         assert_eq!(fade_progress(Duration::from_secs(10)), 1.0);
+    }
+
+    /// Play until the research-completion dialog opens. The starting city
+    /// begins researching Construction (auto target at 10 research points),
+    /// so a handful of wrapped turns is enough to finish it.
+    fn app_with_research_dialog() -> App {
+        let (mut app, _, _) = playing_app();
+        let mut turns = 0;
+        while app.research_dialog.is_none() && turns < 80 {
+            app.handle_key(key(KeyCode::Char(' ')));
+            turns += 1;
+        }
+        assert!(
+            app.research_dialog.is_some(),
+            "research dialog never opened after {turns} presses"
+        );
+        app
+    }
+
+    #[test]
+    fn ending_turns_opens_the_research_dialog_on_a_discovery() {
+        let app = app_with_research_dialog();
+        let dialog = app.research_dialog.as_ref().unwrap();
+        assert_eq!(dialog.discovered, Advancement::Construction);
+        assert_eq!(dialog.cursor, 0);
+        assert!(!dialog.choices.contains(&Advancement::Construction));
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(
+            dialog.choices,
+            engine.researchable_advancements_for(PlayerId::new(0))
+        );
+    }
+
+    #[test]
+    fn the_research_dialog_navigates_and_confirms() {
+        let mut app = app_with_research_dialog();
+        let third = app.research_dialog.as_ref().unwrap().choices[2];
+        app.handle_key(key(KeyCode::Char('j')));
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(app.research_dialog.as_ref().unwrap().cursor, 2);
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.research_dialog.is_none());
+        assert_eq!(app.research_dialog_rect.get(), None);
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(engine.advancement_in_progress(), Some(third));
+        assert_eq!(engine.research_progress(), 0);
+    }
+
+    #[test]
+    fn the_research_dialog_swallows_game_keys() {
+        let mut app = app_with_research_dialog();
+        for code in [KeyCode::Char('q'), KeyCode::Char('v'), KeyCode::Tab] {
+            let was_quit = app.handle_key(key(code));
+            assert!(!was_quit, "dialog must capture {code:?}");
+        }
+        assert!(app.research_dialog.is_some());
+        assert!(matches!(app.phase, Phase::Playing));
+    }
+
+    #[test]
+    fn clicking_ok_confirms_the_research_dialog() {
+        let mut app = app_with_research_dialog();
+        let target = app.research_dialog.as_ref().unwrap().choices[0];
+        let area = {
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+            assert!(app.research_dialog_rect.get().is_some());
+            terminal.size().unwrap()
+        };
+        let ok = research_dialog::ok_button_rect(research_dialog::dialog_rect(area.into()));
+        app.left_click(ok.x + ok.width / 2, ok.y.max(1));
+        assert!(app.research_dialog.is_none());
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(engine.advancement_in_progress(), Some(target));
+    }
+
+    #[test]
+    fn clicking_a_dialog_row_moves_the_cursor_then_ok_confirms() {
+        let mut app = app_with_research_dialog();
+        let third = app.research_dialog.as_ref().unwrap().choices[2];
+        let area = {
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+            terminal.size().unwrap()
+        };
+        let rows = research_dialog::list_rect(research_dialog::dialog_rect(area.into()));
+        app.left_click(rows.x + 1, rows.y + 2);
+        assert_eq!(app.research_dialog.as_ref().unwrap().cursor, 2);
+        let ok = research_dialog::ok_button_rect(research_dialog::dialog_rect(area.into()));
+        app.left_click(ok.x + ok.width / 2, ok.y.max(1));
+        assert!(app.research_dialog.is_none());
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(engine.advancement_in_progress(), Some(third));
     }
 }

@@ -46,9 +46,9 @@ pub trait GameView {
     fn gold(&self) -> u32;
     /// The advancement the current player is researching, if any.
     fn advancement_in_progress(&self) -> Option<Advancement>;
-    /// Beakers accumulated toward the current research target.
+    /// Research accumulated toward the current research target.
     fn research_progress(&self) -> u32;
-    /// Beakers required to complete the current research target, if one is set.
+    /// Research required to complete the current research target, if one is set.
     fn research_cost(&self) -> Option<u32>;
     /// Research income per turn for the current player.
     fn research_income(&self) -> u32;

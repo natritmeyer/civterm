@@ -150,7 +150,7 @@ impl Game {
 
     /// The full per-turn harvest of a city for display: food, resources and
     /// trade from its worked tiles (the city centre is always the first of
-    /// them), gold from the Gold resource, beakers from research, and the
+    /// them), gold from the Gold resource, research from cities, and the
     /// distinct special resources being worked.
     pub fn city_breakdown(&self, city_id: CityId) -> CityIncome {
         let city = self
@@ -189,7 +189,7 @@ impl Game {
         }
     }
 
-    /// Total beakers produced by all of a player's cities this turn.
+    /// Total research produced by all of a player's cities this turn.
     pub fn research_income(&self, owner: PlayerId) -> u32 {
         self.cities
             .iter()
@@ -228,8 +228,8 @@ impl Game {
     }
 
     pub(crate) fn advance_research(&mut self, owner: PlayerId) -> Option<Advancement> {
-        let beakers = self.research_income(owner);
-        self.players[owner.index()].advance_research(beakers)
+        let research = self.research_income(owner);
+        self.players[owner.index()].advance_research(research)
     }
 
     /// The Chebyshev radius-2 footprint around a city (the 21 fog-reveal tiles),
@@ -663,12 +663,10 @@ mod tests {
         assert!(!game.can_research(player(), Advancement::Astronomy));
 
         game.set_research_target(player(), Advancement::Wheel);
-        assert_eq!(game.advance_research(player()), None);
         assert_eq!(game.advance_research(player()), Some(Advancement::Wheel));
         assert!(!game.can_research(player(), Advancement::Wheel));
 
         game.set_research_target(player(), Advancement::BronzeWorking);
-        assert_eq!(game.advance_research(player()), None);
         assert_eq!(
             game.advance_research(player()),
             Some(Advancement::BronzeWorking)

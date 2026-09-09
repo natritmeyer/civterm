@@ -3,6 +3,7 @@ use ratatui::style::{Color, Style};
 
 pub(crate) const ACCENT: Color = Color::Rgb(212, 175, 55);
 pub(crate) const DIM: Color = Color::Rgb(120, 120, 160);
+pub(crate) const DARK_GREY: Color = Color::Rgb(70, 70, 85);
 pub(crate) const HIGHLIGHT_BG: Color = Color::Rgb(45, 45, 95);
 
 pub(crate) fn draw_text(
