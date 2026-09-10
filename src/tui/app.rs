@@ -19,6 +19,7 @@ use super::research_dialog::{self, ResearchDialog};
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
 use super::status_bar::{ITEMS, StatusBar};
+use super::work_picker::{self, WorkPicker};
 use crate::game_engine::event::Event as GameEvent;
 use crate::game_engine::{Command, Engine, GameView, Player};
 use crate::model::advancements::Advancement;
@@ -27,6 +28,7 @@ use crate::model::cities::{CityId, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
+use crate::model::geography::TerrainImprovement;
 use crate::model::units::{UnitClass, UnitId};
 use strum::IntoEnumIterator;
 
@@ -135,6 +137,14 @@ pub struct App {
     research_dialog: Option<ResearchDialogState>,
     /// The last-drawn research-dialog rectangle, for mouse hit-testing.
     research_dialog_rect: Cell<Option<Rect>>,
+    /// Whether the work picker floats over the map.
+    work_picker_open: bool,
+    /// The picker cursor: which improvement row is selected.
+    work_picker_cursor: usize,
+    /// Vertical scroll offset of the work picker's list.
+    work_picker_scroll: usize,
+    /// The last-drawn work picker panel rectangle, for mouse hit-testing.
+    work_picker_rect: Cell<Option<Rect>>,
 }
 
 impl Default for App {
@@ -179,6 +189,10 @@ impl App {
             event_log: Vec::new(),
             research_dialog: None,
             research_dialog_rect: Cell::new(None),
+            work_picker_open: false,
+            work_picker_cursor: 0,
+            work_picker_scroll: 0,
+            work_picker_rect: Cell::new(None),
         }
     }
 
@@ -349,6 +363,27 @@ impl App {
                         app.research_dialog_rect.set(Some(rect));
                     } else {
                         app.research_dialog_rect.set(None);
+                    }
+                    // The work picker floats over the map when the player is
+                    // about to give a settler a terrain-improvement order.
+                    if app.work_picker_open {
+                        if let Some(unit) = app.selected_unit {
+                            let panel = work_picker::work_picker_rect(area);
+                            frame.render_widget(
+                                WorkPicker::new(
+                                    engine,
+                                    unit,
+                                    app.work_picker_cursor,
+                                    app.work_picker_scroll,
+                                ),
+                                panel,
+                            );
+                            app.work_picker_rect.set(Some(panel));
+                        } else {
+                            app.work_picker_rect.set(None);
+                        }
+                    } else {
+                        app.work_picker_rect.set(None);
                     }
                 }
             }
@@ -572,6 +607,10 @@ impl App {
         self.picker_rect = Cell::new(None);
         self.research_dialog = None;
         self.research_dialog_rect = Cell::new(None);
+        self.work_picker_open = false;
+        self.work_picker_cursor = 0;
+        self.work_picker_scroll = 0;
+        self.work_picker_rect = Cell::new(None);
     }
 
     fn start_new_game(&mut self) {
@@ -584,6 +623,18 @@ impl App {
         // player may only pick a research target and confirm it.
         if self.research_dialog.is_some() {
             self.handle_research_dialog_key(key);
+            return false;
+        }
+        // While the work picker is open it captures the keyboard: the player
+        // may only pick an improvement and confirm it.
+        if self.work_picker_open {
+            match key.code {
+                KeyCode::Esc => self.close_work_picker(),
+                KeyCode::Enter => self.save_work_picker(),
+                KeyCode::Down | KeyCode::Char('j') => self.move_work_cursor(1),
+                KeyCode::Up | KeyCode::Char('k') => self.move_work_cursor(-1),
+                _ => {}
+            }
             return false;
         }
         // While the production picker is open it captures the keyboard.
@@ -663,6 +714,14 @@ impl App {
                 self.found_selected_city();
                 false
             }
+            KeyCode::Char('w') => {
+                self.open_work_picker();
+                false
+            }
+            KeyCode::Char('c') => {
+                self.cancel_selected_unit_order();
+                false
+            }
             KeyCode::Char('e') => {
                 self.show_events = !self.show_events;
                 false
@@ -723,6 +782,12 @@ impl App {
         // input while it is open.
         if self.research_dialog_rect.get().is_some() {
             self.handle_research_dialog_mouse(mouse);
+            return;
+        }
+        // The work picker floats over the map and captures all mouse input
+        // while it is open.
+        if let Some(panel) = self.work_picker_rect.get() {
+            self.handle_work_picker_mouse(panel, mouse);
             return;
         }
         // The production picker floats above the city window and captures all
@@ -913,6 +978,7 @@ impl App {
     /// otherwise, including while a modal panel floats over the map.
     fn hovered_move_target(&self, engine: &Engine) -> Option<(usize, usize)> {
         if self.research_dialog_rect.get().is_some()
+            || self.work_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
             || self.moused_window.get().is_some()
             || self.drag_origin.get().is_some()
@@ -979,6 +1045,9 @@ impl App {
             self.moused_window = Cell::new(None);
             self.production_picker_open = false;
             self.picker_rect = Cell::new(None);
+            self.work_picker_open = false;
+            self.work_picker_scroll = 0;
+            self.work_picker_rect = Cell::new(None);
         }
         self.select_first_unit();
     }
@@ -1255,6 +1324,141 @@ impl App {
         self.picker_scroll = self.picker_scroll.clamp(lo, hi);
     }
 
+    /// The improvements the selected settler can build on its tile right now.
+    fn work_rows(&self) -> Vec<TerrainImprovement> {
+        let Some(unit) = self.selected_unit else {
+            return Vec::new();
+        };
+        let Some(engine) = &self.engine else {
+            return Vec::new();
+        };
+        engine
+            .player_units()
+            .into_iter()
+            .find(|u| u.id() == unit)
+            .map(|u| engine.tile(u.location.x as usize, u.location.y as usize))
+            .map(work_picker::buildable_improvements)
+            .unwrap_or_default()
+    }
+
+    /// The number of work picker rows visible on screen right now.
+    fn work_visible_rows(&self) -> usize {
+        self.work_picker_rect
+            .get()
+            .map(|panel| work_picker::rows_rect(panel).height as usize)
+            .unwrap_or(work_picker::MAX_VISIBLE_ROWS as usize)
+    }
+
+    /// Open the work picker over the map, but only when the selected unit is
+    /// a settler (the only unit class that builds improvements).
+    fn open_work_picker(&mut self) {
+        let is_settler = self
+            .engine
+            .as_ref()
+            .and_then(|engine| {
+                self.selected_unit
+                    .and_then(|unit| engine.player_units().into_iter().find(|u| u.id() == unit))
+            })
+            .is_some_and(|u| u.unit_class == UnitClass::Settler);
+        if !is_settler {
+            return;
+        }
+        self.work_picker_open = true;
+        self.work_picker_cursor = 0;
+        self.work_picker_scroll = 0;
+    }
+
+    fn close_work_picker(&mut self) {
+        self.work_picker_open = false;
+        self.work_picker_scroll = 0;
+        self.work_picker_rect.set(None);
+    }
+
+    /// Issue the selected settler's chosen improvement order, then close.
+    fn save_work_picker(&mut self) {
+        let unit = self.selected_unit;
+        let improvement = self.work_rows().get(self.work_picker_cursor).copied();
+        self.close_work_picker();
+        let (Some(unit), Some(improvement)) = (unit, improvement) else {
+            return;
+        };
+        if let Some(engine) = &mut self.engine {
+            let events = engine.submit(Command::Work { unit, improvement });
+            self.record_events(events);
+        }
+    }
+
+    /// Move the work picker's cursor by `delta` rows, keeping it in view.
+    fn move_work_cursor(&mut self, delta: isize) {
+        let len = self.work_rows().len();
+        if len == 0 {
+            return;
+        }
+        self.work_picker_cursor = if delta > 0 {
+            advance(self.work_picker_cursor, len)
+        } else {
+            retreat(self.work_picker_cursor, len)
+        };
+        let visible = self.work_visible_rows();
+        let max_offset = len.saturating_sub(visible);
+        let row = self.work_picker_cursor;
+        let lo = (row as isize + 1 - visible as isize).max(0) as usize;
+        let hi = row.min(max_offset);
+        self.work_picker_scroll = self.work_picker_scroll.clamp(lo, hi);
+    }
+
+    /// Cancel the selected unit's order (fortify, sentry, or improvement).
+    fn cancel_selected_unit_order(&mut self) {
+        let Some(unit) = self.selected_unit else {
+            return;
+        };
+        if let Some(engine) = &mut self.engine {
+            let events = engine.submit(Command::CancelOrder { unit });
+            self.record_events(events);
+        }
+    }
+
+    fn handle_work_picker_mouse(&mut self, panel: Rect, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.work_picker_scroll = self.work_picker_scroll.saturating_sub(1);
+                return;
+            }
+            MouseEventKind::ScrollDown => {
+                let rows = self.work_rows();
+                let max_offset = rows.len().saturating_sub(self.work_visible_rows());
+                self.work_picker_scroll = (self.work_picker_scroll + 1).min(max_offset);
+                return;
+            }
+            MouseEventKind::Down(MouseButton::Left) => {}
+            _ => return,
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        let position = (mouse.column, mouse.row).into();
+        if !panel.contains(position) {
+            // Clicks outside the picker are swallowed while it is open.
+            return;
+        }
+        if work_picker::cancel_button_rect(panel).contains(position) {
+            self.close_work_picker();
+            return;
+        }
+        if work_picker::save_button_rect(panel).contains(position) {
+            self.save_work_picker();
+            return;
+        }
+        let rows = work_picker::rows_rect(panel);
+        if rows.contains(position) {
+            let row_in_view = (mouse.row as usize).saturating_sub(rows.y as usize);
+            let global_row = row_in_view + self.work_picker_scroll;
+            if global_row < self.work_rows().len() {
+                self.work_picker_cursor = global_row;
+            }
+        }
+    }
+
     fn reset_setup(&mut self) {
         self.civ_index = 0;
         self.chosen_civ = None;
@@ -1448,6 +1652,7 @@ fn fade_progress(elapsed: Duration) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::units::UnitOrder;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
 
@@ -2851,5 +3056,204 @@ mod tests {
         assert!(app.research_dialog.is_none());
         let engine = app.engine.as_ref().unwrap();
         assert_eq!(engine.advancement_in_progress(), Some(third));
+    }
+
+    /// A game begun (but not yet founding a city), so the starting settler
+    /// still stands on its tile ready to take a work order.
+    fn app_with_settler() -> App {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s')));
+        assert!(
+            app.engine
+                .as_ref()
+                .unwrap()
+                .player_units()
+                .iter()
+                .any(|u| u.unit_class == UnitClass::Settler)
+        );
+        app
+    }
+
+    #[test]
+    fn pressing_w_opens_the_work_picker_for_the_selected_settler() {
+        let mut app = app_with_settler();
+        app.handle_key(key(KeyCode::Char('w')));
+        assert!(app.work_picker_open);
+        assert_eq!(app.work_picker_cursor, 0);
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.work_picker_open);
+        assert_eq!(app.work_picker_rect.get(), None);
+    }
+
+    #[test]
+    fn a_game_that_has_founded_its_first_city_has_no_settler_left_to_work() {
+        let (mut app, _, _) = playing_app();
+        app.handle_key(key(KeyCode::Char('w')));
+        assert!(!app.work_picker_open);
+    }
+
+    #[test]
+    fn the_work_picker_only_offers_buildable_improvements() {
+        let mut app = app_with_settler();
+        app.handle_key(key(KeyCode::Char('w')));
+        let unit = app.engine.as_ref().unwrap().player_units()[0];
+        let tile = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .tile(unit.location.x as usize, unit.location.y as usize);
+        assert_eq!(app.work_rows(), work_picker::buildable_improvements(tile));
+        assert!(
+            app.work_rows().contains(&TerrainImprovement::Road),
+            "a settler on land can always build a road: {:?}",
+            app.work_rows()
+        );
+    }
+
+    #[test]
+    fn saving_the_work_picker_orders_the_settler_and_the_road_lands_next_turn() {
+        let mut app = app_with_settler();
+        app.handle_key(key(KeyCode::Char('w')));
+        let road = app
+            .work_rows()
+            .iter()
+            .position(|&improvement| improvement == TerrainImprovement::Road)
+            .expect("a settler on land can always build a road");
+        for _ in 0..road {
+            app.handle_key(key(KeyCode::Char('j')));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.work_picker_open);
+        let engine = app.engine.as_ref().unwrap();
+        let unit = engine.player_units()[0];
+        assert_eq!(unit.order(), UnitOrder::Improving(TerrainImprovement::Road));
+        assert_eq!(unit.moves_remaining(), 0);
+        let location = unit.location;
+        assert!(
+            !engine
+                .tile(location.x as usize, location.y as usize)
+                .has_road()
+        );
+
+        // The settler keeps working, and the road lands on its next own turn:
+        // end the human turn, play through the rivals, and wait until play
+        // wraps back to the human.
+        let mut presses = 0;
+        loop {
+            app.handle_key(key(KeyCode::Char(' ')));
+            presses += 1;
+            if app.engine.as_ref().unwrap().current_player_id() == PlayerId::new(0) || presses >= 6
+            {
+                break;
+            }
+        }
+        let engine = app.engine.as_ref().unwrap();
+        let unit = engine.player_units()[0];
+        assert!(
+            engine
+                .tile(location.x as usize, location.y as usize)
+                .has_road()
+        );
+        assert_eq!(unit.order(), UnitOrder::Idle);
+    }
+
+    #[test]
+    fn esc_closes_the_work_picker_without_an_order() {
+        let mut app = app_with_settler();
+        app.handle_key(key(KeyCode::Char('w')));
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.work_picker_open);
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(engine.player_units()[0].order(), UnitOrder::Idle);
+    }
+
+    #[test]
+    fn the_work_picker_requires_a_real_selected_settler() {
+        let mut app = app_with_settler();
+        app.selected_unit = None;
+        app.handle_key(key(KeyCode::Char('w')));
+        assert!(!app.work_picker_open);
+        // A selection that picks out no living unit must not open either: the
+        // engine itself rejects non-settler work orders.
+        app.selected_unit = Some(crate::model::units::UnitId::new(999));
+        app.handle_key(key(KeyCode::Char('w')));
+        assert!(!app.work_picker_open);
+    }
+
+    #[test]
+    fn pressing_c_cancels_the_selected_units_work_order() {
+        let mut app = app_with_settler();
+        app.handle_key(key(KeyCode::Char('w')));
+        let first = app.work_rows()[0];
+        app.handle_key(key(KeyCode::Enter));
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(
+            engine.player_units()[0].order(),
+            UnitOrder::Improving(first)
+        );
+        app.handle_key(key(KeyCode::Char('c')));
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(engine.player_units()[0].order(), UnitOrder::Idle);
+    }
+
+    #[test]
+    fn the_work_picker_swallows_game_keys() {
+        let mut app = app_with_settler();
+        app.handle_key(key(KeyCode::Char('w')));
+        let turn = app.engine.as_ref().unwrap().turn();
+        for code in [KeyCode::Char('q'), KeyCode::Char('l'), KeyCode::Char(' ')] {
+            let was_quit = app.handle_key(key(code));
+            assert!(!was_quit, "work picker must capture {code:?}");
+        }
+        assert!(app.work_picker_open);
+        assert!(matches!(app.phase, Phase::Playing));
+        assert_eq!(
+            app.engine.as_ref().unwrap().turn(),
+            turn,
+            "no end turn while the picker is open"
+        );
+    }
+
+    #[test]
+    fn clicking_a_row_then_save_issues_the_work_order() {
+        let mut app = app_with_settler();
+        app.handle_key(key(KeyCode::Char('w')));
+        let expected = app.work_rows()[0];
+        let area = {
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+            assert!(app.work_picker_rect.get().is_some());
+            terminal.size().unwrap()
+        };
+        let panel = work_picker::work_picker_rect(area.into());
+        let rows = work_picker::rows_rect(panel);
+        app.left_click(rows.x + 1, rows.y);
+        assert_eq!(app.work_picker_cursor, 0);
+        let save = work_picker::save_button_rect(panel);
+        app.left_click(save.x + save.width / 2, save.y.max(1));
+        assert!(!app.work_picker_open);
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(
+            engine.player_units()[0].order(),
+            UnitOrder::Improving(expected)
+        );
+    }
+
+    #[test]
+    fn clicking_cancel_closes_the_work_picker_without_an_order() {
+        let mut app = app_with_settler();
+        app.handle_key(key(KeyCode::Char('w')));
+        let area = {
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+            terminal.size().unwrap()
+        };
+        let panel = work_picker::work_picker_rect(area.into());
+        let cancel = work_picker::cancel_button_rect(panel);
+        app.left_click(cancel.x + cancel.width / 2, cancel.y.max(1));
+        assert!(!app.work_picker_open);
+        let engine = app.engine.as_ref().unwrap();
+        assert_eq!(engine.player_units()[0].order(), UnitOrder::Idle);
     }
 }

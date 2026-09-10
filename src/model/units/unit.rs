@@ -14,6 +14,7 @@ pub struct Unit {
     order: UnitOrder,
     veteran: bool,
     moves_remaining: u8,
+    work_progress: u8,
 }
 
 impl Unit {
@@ -33,6 +34,7 @@ impl Unit {
             order: UnitOrder::Idle,
             veteran: false,
             moves_remaining: unit_class.moves(),
+            work_progress: 0,
         }
     }
 
@@ -78,10 +80,22 @@ impl Unit {
 
     pub fn work(&mut self, improvement: TerrainImprovement) {
         self.order = UnitOrder::Improving(improvement);
+        self.work_progress = 1;
+    }
+
+    /// How many turns of work have gone into the current order already.
+    pub fn work_progress(&self) -> u8 {
+        self.work_progress
+    }
+
+    /// Records one more turn of building on the current work order.
+    pub fn advance_work(&mut self) {
+        self.work_progress += 1;
     }
 
     pub fn cancel_order(&mut self) {
         self.order = UnitOrder::Idle;
+        self.work_progress = 0;
     }
 
     pub fn is_veteran(&self) -> bool {

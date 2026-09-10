@@ -7,6 +7,7 @@ use ratatui::widgets::Widget;
 
 use super::theme::{ACCENT, DARK_GREY, DIM, draw_text};
 use crate::game_engine::{Event, GameView};
+use crate::model::cartography::Tile;
 use crate::model::cities::CityId;
 use crate::model::civilizations::Civilization;
 use crate::model::geography::Terrain;
@@ -33,6 +34,24 @@ fn terrain_colors(terrain: Terrain) -> (Color, Color) {
         Tundra => (Color::Rgb(170, 200, 200), Color::Rgb(70, 90, 90)),
         Swamp => (Color::Rgb(90, 150, 120), Color::Rgb(40, 80, 60)),
         Grassland => (Color::Rgb(60, 160, 80), Color::Rgb(25, 75, 40)),
+    }
+}
+
+/// The watermark painted in a tile's spare column when it carries a terrain
+/// improvement, so units and cities can keep their letters in the first
+/// column: `≈` for irrigation, `⛏` for a mine, `+` for a road. When a tile
+/// holds several improvements the most informative marker wins: irrigation,
+/// then mine, then road. Each glyph uses a muted colour that stays readable on
+/// the terrain backgrounds.
+fn improvement_glyph(tile: &Tile) -> Option<(char, Color)> {
+    if tile.is_irrigated() {
+        Some(('≈', Color::Rgb(120, 200, 255)))
+    } else if tile.is_mined() {
+        Some(('⛏', Color::Rgb(235, 225, 245)))
+    } else if tile.has_road() {
+        Some(('+', Color::Rgb(215, 195, 135)))
+    } else {
+        None
     }
 }
 
@@ -96,6 +115,11 @@ pub(crate) fn paint_tile(
     let map_x = world_x % map_w;
     let hovered = hover_target == Some((map_x, world_y));
     let map_x = world_x % map_w;
+    let marker = if world_y < map_h && view.explored(map_x, world_y) {
+        improvement_glyph(view.tile(map_x, world_y))
+    } else {
+        None
+    };
     let (symbol, style, city_name) = if world_y >= map_h {
         (' ', Style::default().bg(Color::Rgb(6, 6, 22)), None)
     } else {
@@ -169,11 +193,22 @@ pub(crate) fn paint_tile(
         cell.set_symbol(&symbol.to_string());
         cell.set_style(style);
     }
+    // The spare column carries the improvement watermark (≈ irrigation, + road,
+    // ⛏ mine) on explored tiles; fog and the below-map gutter stay blank, and
+    // hovering the tile hatches the whole tile.
     if TILE_WIDTH > 1
         && let Some(cell) = buf.cell_mut((x + 1, y))
     {
-        cell.set_symbol(if hovered { "▓" } else { " " });
-        cell.set_style(style);
+        if hovered {
+            cell.set_symbol("▓");
+            cell.set_style(style);
+        } else if let Some((glyph, color)) = marker {
+            cell.set_symbol(&glyph.to_string());
+            cell.set_style(style.fg(color));
+        } else {
+            cell.set_symbol(" ");
+            cell.set_style(style);
+        }
     }
     city_name
 }
@@ -487,6 +522,22 @@ impl<'a> GameScreen<'a> {
                         Style::default().fg(Color::Rgb(230, 200, 120)),
                     );
                     row += 1;
+                    if let UnitOrder::Improving(improvement) = unit.order() {
+                        draw_text(
+                            buf,
+                            area.right(),
+                            x,
+                            row,
+                            &format!(
+                                "Building {} {} of {} turns",
+                                improvement.name().to_lowercase(),
+                                unit.work_progress(),
+                                improvement.work_turns()
+                            ),
+                            Style::default().fg(Color::Rgb(150, 220, 160)),
+                        );
+                        row += 1;
+                    }
                 } else {
                     draw_text(
                         buf,
@@ -523,22 +574,21 @@ impl<'a> GameScreen<'a> {
                 );
                 if tile.has_road() || tile.is_mined() || tile.is_irrigated() {
                     row += 1;
+                    let improvements = [
+                        tile.is_irrigated().then_some("≈ irrigation"),
+                        tile.is_mined().then_some("⛏ mine"),
+                        tile.has_road().then_some("+ road"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(", ");
                     draw_text(
                         buf,
                         area.right(),
                         x,
                         row,
-                        &[
-                            tile.has_road().then_some("road"),
-                            tile.is_mined().then_some("mine"),
-                            tile.is_irrigated().then_some("irrigation"),
-                        ]
-                        .iter()
-                        .flatten()
-                        .copied()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                        .to_string(),
+                        &improvements,
                         Style::default().fg(DIM),
                     );
                 }
@@ -983,6 +1033,32 @@ mod tests {
         (buf.cell((0, 0)).unwrap().clone(), name)
     }
 
+    /// Paints one world tile into a scratch buffer via `paint_tile`, keeping
+    /// the whole tile so tests can read the improvement watermark in the spare
+    /// column.
+    fn painted_buffer(
+        view: &dyn GameView,
+        selected_unit: Option<crate::model::units::UnitId>,
+        flashing: bool,
+    ) -> Buffer {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 8));
+        paint_tile(
+            &mut buf,
+            0,
+            0,
+            view,
+            2,
+            2,
+            80,
+            50,
+            None,
+            selected_unit,
+            flashing,
+            None,
+        );
+        buf
+    }
+
     fn city_and_unit_view() -> FakeView {
         let mut view = fake_view();
         view.city = Some(crate::model::cities::City::new(
@@ -1065,6 +1141,66 @@ mod tests {
             dimmed.style().bg,
             Some(civilization_color(Civilization::English))
         );
+    }
+
+    fn improved_view() -> FakeView {
+        let mut view = fake_view();
+        view.tile = crate::model::cartography::Tile::new(Terrain::Grassland);
+        view.tile.irrigate().unwrap();
+        view.tile.build_road().unwrap();
+        view
+    }
+
+    #[test]
+    fn an_irrigated_tile_shows_a_watermark_in_its_spare_column() {
+        let view = improved_view();
+        let (tile, _) = painted_cell(&view, None, false);
+        assert_eq!(
+            tile.symbol(),
+            "v",
+            "the terrain letter keeps the first column"
+        );
+        let buf = painted_buffer(&view, None, false);
+        assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "≈");
+        // The marker keeps the tile's background so the tile still reads whole.
+        assert_eq!(buf.cell((1, 0)).unwrap().style().bg, tile.style().bg);
+    }
+
+    #[test]
+    fn an_irrigated_tile_with_a_road_shows_the_irrigation_watermark() {
+        // Both improvements are present; the most informative one wins.
+        let (_, name) = painted_cell(&improved_view(), None, false);
+        assert_eq!(name, None);
+        let buf = painted_buffer(&improved_view(), None, false);
+        assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "≈");
+    }
+
+    #[test]
+    fn a_mine_and_a_road_each_show_their_own_watermark() {
+        let mut mined = fake_view();
+        mined.tile = crate::model::cartography::Tile::new(Terrain::Hills);
+        mined.tile.mine().unwrap();
+        let buf = painted_buffer(&mined, None, false);
+        assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "⛏");
+
+        let mut roaded = fake_view();
+        roaded.tile = crate::model::cartography::Tile::new(Terrain::Plains);
+        roaded.tile.build_road().unwrap();
+        let buf = painted_buffer(&roaded, None, false);
+        assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "+");
+    }
+
+    #[test]
+    fn an_plain_tile_and_fog_draw_no_watermark() {
+        let plain = fake_view();
+        let buf = painted_buffer(&plain, None, false);
+        assert_eq!(buf.cell((1, 0)).unwrap().symbol(), " ");
+
+        // Fog hides the improvement even though the tile owns one.
+        let mut foggy = improved_view();
+        foggy.explored = false;
+        let buf = painted_buffer(&foggy, None, false);
+        assert_eq!(buf.cell((1, 0)).unwrap().symbol(), " ");
     }
 
     #[test]

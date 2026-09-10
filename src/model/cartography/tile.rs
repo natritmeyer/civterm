@@ -41,6 +41,19 @@ impl Tile {
         self.apply_improvement(TerrainImprovement::Road)
     }
 
+    /// Whether a settler may start `improvement` here: the terrain must
+    /// support it and it must not already be built on the tile.
+    pub fn can_build(&self, improvement: TerrainImprovement) -> bool {
+        if !self.terrain.supports(improvement) {
+            return false;
+        }
+        match improvement {
+            TerrainImprovement::Irrigation => !self.irrigated,
+            TerrainImprovement::Mine => !self.mined,
+            TerrainImprovement::Road => !self.has_road,
+        }
+    }
+
     pub fn apply_improvement(
         &mut self,
         improvement: TerrainImprovement,

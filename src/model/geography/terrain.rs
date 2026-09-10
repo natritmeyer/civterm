@@ -123,6 +123,22 @@ impl Terrain {
             Terrain::Jungle => 'T',
         }
     }
+
+    /// The terrain's name as it should appear to players.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Terrain::Ocean => "Ocean",
+            Terrain::Grassland => "Grassland",
+            Terrain::Plains => "Plains",
+            Terrain::Forest => "Forest",
+            Terrain::Hills => "Hills",
+            Terrain::Mountain => "Mountain",
+            Terrain::Desert => "Desert",
+            Terrain::Tundra => "Tundra",
+            Terrain::Swamp => "Swamp",
+            Terrain::Jungle => "Jungle",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -356,5 +372,30 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), 10, "every geography needs a distinct char");
+    }
+
+    #[test]
+    fn every_geography_has_a_distinct_playable_name() {
+        let names: Vec<&str> = [
+            Terrain::Ocean,
+            Terrain::Grassland,
+            Terrain::Plains,
+            Terrain::Forest,
+            Terrain::Hills,
+            Terrain::Mountain,
+            Terrain::Desert,
+            Terrain::Tundra,
+            Terrain::Swamp,
+            Terrain::Jungle,
+        ]
+        .iter()
+        .map(|geography| geography.name())
+        .collect();
+        assert_eq!(names.len(), 10);
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 10, "every geography needs a distinct name");
+        assert!(names.iter().all(|name| !name.is_empty()));
     }
 }

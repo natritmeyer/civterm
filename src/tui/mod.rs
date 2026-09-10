@@ -11,4 +11,5 @@ pub mod splash;
 pub mod start_confirm;
 pub mod status_bar;
 pub mod theme;
+pub mod work_picker;
 pub use app::App;

@@ -6,7 +6,7 @@ use crate::model::cartography::{Direction, Location, Tile};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::geography::{Terrain, TerrainImprovement};
-use crate::model::units::{Unit, UnitClass, UnitId};
+use crate::model::units::{Unit, UnitClass, UnitId, UnitOrder};
 
 use super::game::Game;
 use crate::game_engine::{MoveError, SettleError};
@@ -423,33 +423,33 @@ impl Engine {
 
     fn work(&mut self, unit: UnitId, improvement: TerrainImprovement) {
         let location = match self.owned_unit(unit) {
-            Some(u) => u.location,
+            Some(u) => {
+                if u.unit_class != UnitClass::Settler {
+                    self.events
+                        .push(Event::new("Only settlers can build improvements"));
+                    return;
+                }
+                u.location
+            }
             None => {
                 self.events.push(Event::new("No such unit"));
                 return;
             }
         };
-        let result = self
-            .game
-            .map
-            .tile_at_mut(location)
-            .apply_improvement(improvement);
-        match result {
-            Ok(()) => {
-                if let Some(u) = self.owned_unit_mut(unit) {
-                    u.work(improvement);
-                    u.spend_turn();
-                }
-                self.events.push(Event::new(format!(
-                    "Unit {} builds {:?}",
-                    unit.index(),
-                    improvement
-                )));
-            }
-            Err(_) => self
-                .events
-                .push(Event::new(format!("Cannot build {:?} here", improvement))),
+        if !self.game.map.tile_at(location).can_build(improvement) {
+            self.events
+                .push(Event::new(format!("Cannot build {:?} here", improvement)));
+            return;
         }
+        if let Some(u) = self.owned_unit_mut(unit) {
+            u.work(improvement);
+            u.spend_turn();
+        }
+        self.events.push(Event::new(format!(
+            "Unit {} begins building {:?}",
+            unit.index(),
+            improvement
+        )));
     }
 
     fn cancel_order(&mut self, unit: UnitId) {
@@ -818,7 +818,31 @@ impl Engine {
             .iter_mut()
             .filter(|unit| unit.owner() == self.current_player_index)
         {
-            unit.restore_moves();
+            if let UnitOrder::Improving(improvement) = unit.order() {
+                // A settler mid-build gets no moves back; it works the tile
+                // instead. When the last turn lands, the improvement is
+                // applied and the settler's turn is spent finishing it.
+                unit.advance_work();
+                if unit.work_progress() >= improvement.work_turns() {
+                    let location = unit.location;
+                    let done = unit.id();
+                    let finished = self
+                        .game
+                        .map
+                        .tile_at_mut(location)
+                        .apply_improvement(improvement)
+                        .is_ok();
+                    unit.cancel_order();
+                    unit.spend_turn();
+                    self.events.push(Event::new(if finished {
+                        format!("Unit {} finishes {:?}", done.index(), improvement)
+                    } else {
+                        format!("Cannot build {:?} here", improvement)
+                    }));
+                }
+            } else {
+                unit.restore_moves();
+            }
         }
         self.process_cities(self.current_player_index);
         self.process_research(self.current_player_index);
@@ -1321,7 +1345,7 @@ mod tests {
     }
 
     #[test]
-    fn work_command_improves_the_tile_and_orders_the_unit() {
+    fn work_command_orders_the_unit_but_the_improvement_lands_later() {
         let mut engine = test_engine();
         engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
         assert!(!engine.game.map.tile_at(Location::new(1, 1)).has_road());
@@ -1329,13 +1353,94 @@ mod tests {
             unit: UnitId::new(0),
             improvement: TerrainImprovement::Road,
         });
-        assert!(engine.game.map.tile_at(Location::new(1, 1)).has_road());
+        // The settler is ordered to build, but the tile stays untouched until
+        // the build finishes.
+        assert!(!engine.game.map.tile_at(Location::new(1, 1)).has_road());
         assert_eq!(
             engine.game.units[0].order(),
             UnitOrder::Improving(TerrainImprovement::Road)
         );
+        assert_eq!(engine.game.units[0].work_progress(), 1);
+        assert_eq!(engine.game.units[0].moves_remaining(), 0);
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].message(), "Unit 0 builds Road");
+        assert_eq!(events[0].message(), "Unit 0 begins building Road");
+    }
+
+    #[test]
+    fn a_road_build_takes_two_turns() {
+        let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
+        engine.submit(Command::Work {
+            unit: UnitId::new(0),
+            improvement: TerrainImprovement::Road,
+        });
+        let events = engine.submit(Command::EndTurn);
+        assert!(
+            engine.game.map.tile_at(Location::new(1, 1)).has_road(),
+            "the road lands on the settler's second turn of work"
+        );
+        assert_eq!(engine.game.units[0].order(), UnitOrder::Idle);
+        assert!(events.iter().any(|e| e.message() == "Unit 0 finishes Road"));
+    }
+
+    #[test]
+    fn an_irrigation_build_takes_two_turns() {
+        let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
+        engine.submit(Command::Work {
+            unit: UnitId::new(0),
+            improvement: TerrainImprovement::Irrigation,
+        });
+        assert!(!engine.game.map.tile_at(Location::new(1, 1)).is_irrigated());
+        engine.submit(Command::EndTurn);
+        assert!(engine.game.map.tile_at(Location::new(1, 1)).is_irrigated());
+        assert_eq!(engine.game.units[0].order(), UnitOrder::Idle);
+    }
+
+    #[test]
+    fn a_mine_build_takes_three_turns() {
+        let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Mountain;
+        engine.submit(Command::Work {
+            unit: UnitId::new(0),
+            improvement: TerrainImprovement::Mine,
+        });
+
+        // One more turn of work: still mid-build, no moves back, no output.
+        engine.submit(Command::EndTurn);
+        assert!(!engine.game.map.tile_at(Location::new(1, 1)).is_mined());
+        assert_eq!(
+            engine.game.units[0].order(),
+            UnitOrder::Improving(TerrainImprovement::Mine)
+        );
+        assert_eq!(engine.game.units[0].work_progress(), 2);
+        assert_eq!(engine.game.units[0].moves_remaining(), 0);
+
+        // The third turn finishes the mine.
+        let events = engine.submit(Command::EndTurn);
+        assert!(engine.game.map.tile_at(Location::new(1, 1)).is_mined());
+        assert_eq!(engine.game.units[0].order(), UnitOrder::Idle);
+        assert!(events.iter().any(|e| e.message() == "Unit 0 finishes Mine"));
+    }
+
+    #[test]
+    fn cancel_order_aborts_a_build_before_it_finishes() {
+        let mut engine = test_engine();
+        engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
+        engine.submit(Command::Work {
+            unit: UnitId::new(0),
+            improvement: TerrainImprovement::Road,
+        });
+        engine.submit(Command::CancelOrder {
+            unit: UnitId::new(0),
+        });
+        assert_eq!(engine.game.units[0].order(), UnitOrder::Idle);
+        assert_eq!(engine.game.units[0].work_progress(), 0);
+        engine.submit(Command::EndTurn);
+        assert!(
+            !engine.game.map.tile_at(Location::new(1, 1)).has_road(),
+            "a cancelled build never lands"
+        );
     }
 
     #[test]
@@ -1349,6 +1454,27 @@ mod tests {
         assert!(!engine.game.map.tile_at(Location::new(1, 1)).is_mined());
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].message(), "Cannot build Mine here");
+    }
+
+    #[test]
+    fn work_command_is_limited_to_settlers() {
+        let mut engine = test_engine();
+        let location = Location::new(1, 0);
+        engine.game.map.tile_at_mut(location).terrain = Terrain::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            location,
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let events = engine.submit(Command::Work {
+            unit: legion,
+            improvement: TerrainImprovement::Road,
+        });
+        assert!(!engine.game.map.tile_at(location).has_road());
+        assert_eq!(engine.game.units.last().unwrap().order(), UnitOrder::Idle);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].message(), "Only settlers can build improvements");
     }
 
     #[test]
