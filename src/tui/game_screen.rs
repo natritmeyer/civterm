@@ -7,7 +7,7 @@ use ratatui::widgets::Widget;
 
 use super::theme::{ACCENT, DARK_GREY, DIM, draw_text};
 use crate::game_engine::{Event, GameView};
-use crate::model::cartography::Tile;
+use crate::model::cartography::{Location, Tile};
 use crate::model::cities::CityId;
 use crate::model::civilizations::Civilization;
 use crate::model::geography::Terrain;
@@ -52,6 +52,35 @@ fn improvement_glyph(tile: &Tile) -> Option<(char, Color)> {
         Some(('+', Color::Rgb(215, 195, 135)))
     } else {
         None
+    }
+}
+
+/// How long a battle's explosion flash stays on screen: a 💥 that sits on the
+/// defended tile for a second, then disappears.
+pub(crate) const BATTLE_FLASH_DURATION: Duration = Duration::from_millis(1000);
+
+/// A single battle's on-screen flash. After a move attacks into an enemy
+/// square the defender's tile shows a 💥 for `BATTLE_FLASH_DURATION`, then
+/// reverts to its normal display. The explosion is anchored in the tile's left
+/// column, where the two-cell-wide glyph exactly covers the tile: anchoring it
+/// in the right column would spill it one cell into the neighbour to the east.
+/// `start` is the value of `GameScreen.now` when combat happened, so the
+/// animation is a pure function of the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BattleAnimation {
+    /// The defended world tile (already wrapped horizontally) that flashes.
+    pub(crate) location: Location,
+    /// The clock value when the battle was resolved.
+    pub(crate) start: Duration,
+}
+
+impl BattleAnimation {
+    /// The explosion glyph for `now`, or `None` once the flash has run
+    /// `BATTLE_FLASH_DURATION`. Always anchored at the tile's left column so
+    /// the two-cell-wide 💥 covers exactly that tile.
+    fn glyph(&self, now: Duration) -> Option<&'static str> {
+        let elapsed = now.saturating_sub(self.start);
+        (elapsed < BATTLE_FLASH_DURATION).then_some("💥")
     }
 }
 
@@ -155,22 +184,28 @@ pub(crate) fn paint_tile(
             (' ', None)
         };
 
-        // A unit (whether in a city or not) is painted exactly like any other
-        // unit: its letter on the tile's terrain, bold and underlined, so its
-        // idle flash is visible too. The city colouring and the selected-city
-        // outline only apply when no unit covers the tile.
-        if explored && !unit.is_empty() {
-            style = style
-                .add_modifier(Modifier::BOLD)
-                .add_modifier(Modifier::UNDERLINED);
-        } else if explored
-            && city_name.is_some()
-            && let Some(city) = city
-        {
-            style = style.bg(civilization_color(view.civilization_of(city.owner())));
-            // The selected city's tile is outlined so it stands out.
-            if selected_city == Some(city.id()) {
-                style = style.add_modifier(Modifier::UNDERLINED);
+        // A visible city's tile always wears its owner's civilization colour,
+        // even beneath a unit standing on it: a freshly captured city changes
+        // colour the instant it falls, before the conquering unit moves off.
+        if explored {
+            if let Some(city) = city {
+                style = style.bg(civilization_color(view.civilization_of(city.owner())));
+                // The selected city's tile is outlined so it stands out —
+                // unless a unit covers the tile and is already underlined.
+                if selected_city == Some(city.id()) && unit.is_empty() {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+            }
+            // A unit (in a city or not) is painted like any other unit: its
+            // letter on the tile, bold and underlined. On a city tile it sits
+            // on the city's colour, so the conquest colour is visible through
+            // the occupation. Its idle flash still turns the tile the flag
+            // colour; on an own city that matches the background, so the pulse
+            // is most visible when the unit stands on foreign ground.
+            if !unit.is_empty() {
+                style = style
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::UNDERLINED);
             }
         }
 
@@ -228,6 +263,8 @@ pub struct GameScreen<'a> {
     /// The world tile (wrapped horizontally) hatched with `▓` to show where a
     /// click would move the selected unit; `None` while nothing is hovered.
     hover_target: Option<(usize, usize)>,
+    /// The in-flight battle explosion on the defender's tile, if any.
+    battle_animation: Option<BattleAnimation>,
 }
 
 impl<'a> GameScreen<'a> {
@@ -258,7 +295,15 @@ impl<'a> GameScreen<'a> {
             show_events,
             events,
             hover_target,
+            battle_animation: None,
         }
+    }
+
+    /// Show a battle explosion on the defender's tile while the flash is
+    /// running.
+    pub(crate) fn with_battle_animation(mut self, animation: Option<BattleAnimation>) -> Self {
+        self.battle_animation = animation;
+        self
     }
 
     /// Whether the selected idle unit's tile is currently showing the
@@ -282,6 +327,13 @@ impl<'a> GameScreen<'a> {
         // painted, so a label on one row's tiles is not overwritten by the next
         // map row below it.
         let mut city_labels: Vec<(u16, u16, String)> = Vec::new();
+
+        // The battle flash is painted in a final pass after every tile has
+        // been drawn, so it sits on top of the whole map — tiles, units,
+        // markers and city labels. When the animation is running, this holds
+        // the painted tile's left column; the two-column-wide 💥 covers the
+        // tile from there.
+        let mut flash_cell: Option<(u16, u16)> = None;
 
         // Tiles are shown at 1:1; `camera` is the top-left world tile. The map
         // wraps horizontally (east/west) but not vertically — tiles beyond the
@@ -309,12 +361,38 @@ impl<'a> GameScreen<'a> {
                 ) {
                     city_labels.push((cx, cy + 1, name));
                 }
+
+                if let Some(animation) = self.battle_animation
+                    && src_x % map_w == animation.location.x as usize
+                    && src_y == animation.location.y as usize
+                    && animation.glyph(self.now).is_some()
+                {
+                    flash_cell = Some((cx, cy));
+                }
             }
         }
 
-        // Second pass: city name labels, so they sit on top of the map.
+        // Second pass: city name labels sit on top of the map.
         for (tile_cx, row_y, name) in city_labels {
             draw_city_label(buf, tile_cx, row_y, &name);
+        }
+
+        // Third and final pass: the battle explosion, anchored in the tile's
+        // left column so the wide glyph covers exactly the defended tile, with
+        // the tile's right column blanked beneath it. Painted last, it is at
+        // the top of the z-order and nothing the map draws can cover it.
+        if let Some((cx, cy)) = flash_cell
+            && let Some(animation) = self.battle_animation
+            && let Some(glyph) = animation.glyph(self.now)
+        {
+            if let Some(cell) = buf.cell_mut((cx, cy)) {
+                cell.set_symbol(glyph);
+            }
+            if TILE_WIDTH > 1
+                && let Some(cell) = buf.cell_mut((cx + 1, cy))
+            {
+                cell.set_symbol(" ");
+            }
         }
     }
 
@@ -798,8 +876,12 @@ mod tests {
         fn current_player(&self) -> Civilization {
             Civilization::English
         }
-        fn civilization_of(&self, _player: crate::model::civilizations::PlayerId) -> Civilization {
-            Civilization::English
+        fn civilization_of(&self, player: crate::model::civilizations::PlayerId) -> Civilization {
+            if player == crate::model::civilizations::PlayerId::new(1) {
+                Civilization::Zulu
+            } else {
+                Civilization::English
+            }
         }
         fn turn(&self) -> u32 {
             1
@@ -1087,9 +1169,10 @@ mod tests {
     }
 
     #[test]
-    fn a_unit_in_a_city_is_styled_like_any_other_unit() {
+    fn a_unit_in_a_city_stands_on_the_citys_owner_colour() {
         // The same militiaman is painted once alone and once standing in the
-        // city; the two tiles must share symbol, colours and emphasis.
+        // city; the two tiles share symbol and emphasis, but the city tile
+        // wears the city owner's colour rather than the terrain's.
         let mut plain = fake_view();
         plain.unit = Some(crate::model::units::Unit::new(
             crate::model::units::UnitClass::Militia,
@@ -1104,7 +1187,6 @@ mod tests {
         let (city_cell, city_name) = painted_cell(&view, None, false);
 
         assert_eq!(city_cell.symbol(), plain_cell.symbol());
-        assert_eq!(city_cell.style(), plain_cell.style());
         assert!(city_cell.style().add_modifier.contains(Modifier::BOLD));
         assert!(
             city_cell
@@ -1112,32 +1194,75 @@ mod tests {
                 .add_modifier
                 .contains(Modifier::UNDERLINED)
         );
-        // The unit's tile shows the terrain, not the civilization flag colour.
-        assert_eq!(city_cell.style().bg, plain_cell.style().bg);
-        assert_ne!(
+        // The tile shows the city's owner colour, not the unit's terrain: it
+        // belongs to English in this view, while a plain unit keeps the terrain.
+        assert_eq!(
             city_cell.style().bg,
             Some(civilization_color(Civilization::English))
         );
+        assert_ne!(plain_cell.style().bg, city_cell.style().bg);
         // The city is still identified below the unit.
         assert_eq!(plain_name, None);
         assert_eq!(city_name.as_deref(), Some("London"));
     }
 
     #[test]
-    fn a_selected_idle_unit_in_a_city_flashes_like_any_other() {
+    fn a_captured_city_changes_colour_beneath_the_conquering_unit() {
+        // A Zulu city (player 1) occupied by the attacking English militia
+        // still shows Zulu's colour while it remains foreign.
+        let mut foreign = fake_view();
+        foreign.city = Some(crate::model::cities::City::new(
+            "Glasgow",
+            crate::model::cartography::Location::new(2, 2),
+            crate::model::civilizations::PlayerId::new(1),
+            crate::model::cities::CityId::new(2),
+        ));
+        foreign.unit = Some(crate::model::units::Unit::new(
+            crate::model::units::UnitClass::Militia,
+            crate::model::cartography::Location::new(2, 2),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(2),
+            crate::model::units::UnitId::new(3),
+        ));
+        let (occupied, _) = painted_cell(&foreign, None, false);
+        assert_eq!(
+            occupied.style().bg,
+            Some(civilization_color(Civilization::Zulu)),
+            "an occupied but unconquered city keeps its old owner's colour"
+        );
+
+        // The instant the same city is captured (its owner becomes player 0)
+        // its tile turns English while the victorious unit still stands on it.
+        foreign.city = Some(crate::model::cities::City::new(
+            "Glasgow",
+            crate::model::cartography::Location::new(2, 2),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(2),
+        ));
+        let (conquered, _) = painted_cell(&foreign, None, false);
+        assert_eq!(
+            conquered.style().bg,
+            Some(civilization_color(Civilization::English)),
+            "a conquered city turns to the conqueror's colour immediately"
+        );
+    }
+
+    #[test]
+    fn a_selected_idle_unit_in_a_city_keeps_the_city_colour_when_dimmed() {
         let idle = crate::model::units::UnitId::new(1);
         let view = city_and_unit_view();
 
-        // Idle with moves left: the tile flashes the civilization colour.
+        // Flashing: the tile turns the civilization flag colour.
         let (flashing, _) = painted_cell(&view, Some(idle), true);
         assert_eq!(
             flashing.style().bg,
             Some(civilization_color(Civilization::English))
         );
 
-        // Turned off, it returns to the terrain colours.
+        // Dimmed again, the city's own colour shows through beneath the unit
+        // (the same English flag colour, since the unit sits in its own city).
         let (dimmed, _) = painted_cell(&view, Some(idle), false);
-        assert_ne!(
+        assert_eq!(
             dimmed.style().bg,
             Some(civilization_color(Civilization::English))
         );
@@ -1618,6 +1743,164 @@ mod tests {
             cell.style().bg,
             Some(civilization_color(Civilization::English)),
             "an idle unit with zero moves left should not flash even on-phase"
+        );
+    }
+
+    /// Renders the map with a battle flash on world tile (2, 2) that started at
+    /// `start`, observed at clock `now`, and returns the two cells of that tile
+    /// plus a neighbour tile's left cell so tests can prove the flash is local.
+    fn render_battle_flash(now: Duration, start: Duration) -> (Buffer, u16, u16) {
+        let view = FakeView {
+            w: 80,
+            h: 50,
+            tile: crate::model::cartography::Tile::new(crate::model::geography::Terrain::Plains),
+            city: None,
+            unit: None,
+            explored: true,
+        };
+        let animation = BattleAnimation {
+            location: crate::model::cartography::Location::new(2, 2),
+            start,
+        };
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(&view, None, (0, 0), None, None, now, false, &[], None)
+                        .with_battle_animation(Some(animation)),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let base = LEFT_COLUMN_WIDTH + 4; // tile (2, 2)'s left column on screen
+        (terminal.backend().buffer().clone(), base, 2)
+    }
+
+    #[test]
+    fn the_flash_glyph_lasts_for_the_whole_flash_duration() {
+        let animation = BattleAnimation {
+            location: crate::model::cartography::Location::new(0, 0),
+            start: Duration::from_millis(100),
+        };
+        assert_eq!(animation.glyph(Duration::from_millis(100)), Some("💥"));
+        assert_eq!(animation.glyph(Duration::from_millis(599)), Some("💥"));
+        assert_eq!(animation.glyph(Duration::from_millis(600)), Some("💥"));
+        assert_eq!(animation.glyph(Duration::from_millis(1099)), Some("💥"));
+    }
+
+    #[test]
+    fn the_flash_glyph_is_gone_once_a_full_second_has_passed() {
+        let animation = BattleAnimation {
+            location: crate::model::cartography::Location::new(0, 0),
+            start: Duration::from_millis(100),
+        };
+        assert_eq!(animation.glyph(Duration::from_millis(1100)), None);
+    }
+
+    #[test]
+    fn the_flash_shows_the_explosion_in_the_defended_tiles_left_column() {
+        let (buffer, left, row) = render_battle_flash(Duration::from_millis(200), Duration::ZERO);
+        assert_eq!(
+            buffer.cell((left, row)).unwrap().symbol(),
+            "💥",
+            "the explosion shows in the left column"
+        );
+        assert_eq!(
+            buffer.cell((left + 1, row)).unwrap().symbol(),
+            " ",
+            "the right column is cleared while the explosion is showing"
+        );
+        assert_eq!(
+            buffer.cell((left + 2, row)).unwrap().symbol(),
+            ".",
+            "the neighbouring tile is untouched"
+        );
+        assert_eq!(
+            buffer.cell((left, row + 1)).unwrap().symbol(),
+            ".",
+            "the tile below is untouched"
+        );
+    }
+
+    #[test]
+    fn the_flash_stays_on_the_defended_tile_in_the_second_half_second() {
+        let (buffer, left, row) = render_battle_flash(Duration::from_millis(600), Duration::ZERO);
+        // Only the left column is a legitimate anchor for the double-width
+        // explosion: drawn one cell right it would cover the neighbour tile.
+        assert_eq!(
+            buffer.cell((left, row)).unwrap().symbol(),
+            "💥",
+            "the explosion stays anchored on the defended tile"
+        );
+        assert_eq!(
+            buffer.cell((left + 1, row)).unwrap().symbol(),
+            " ",
+            "the right column is clear, so the wide glyph cannot spill east"
+        );
+        assert_eq!(
+            buffer.cell((left + 2, row)).unwrap().symbol(),
+            ".",
+            "the tile to the east is untouched"
+        );
+    }
+
+    #[test]
+    fn the_flash_is_painted_on_top_of_city_labels() {
+        // A city tile on the row above paints its name label across the row
+        // where the battle is raging; the flash is drawn last, so its cells
+        // win over what the label pass wrote first.
+        let mut view = fake_view();
+        view.city = Some(crate::model::cities::City::new(
+            "London",
+            crate::model::cartography::Location::new(1, 1),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(0),
+        ));
+        let animation = BattleAnimation {
+            location: crate::model::cartography::Location::new(2, 2),
+            start: Duration::ZERO,
+        };
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::from_millis(200),
+                        false,
+                        &[],
+                        None,
+                    )
+                    .with_battle_animation(Some(animation)),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let left = LEFT_COLUMN_WIDTH + 4; // tile (2, 2)'s left column
+        let row = 2;
+        // The label for the city above spans these columns; the explosion still
+        // owns the flash tile's two cells.
+        assert_eq!(buffer.cell((left, row)).unwrap().symbol(), "💥");
+        assert_eq!(buffer.cell((left + 1, row)).unwrap().symbol(), " ");
+    }
+
+    #[test]
+    fn the_flash_disappears_and_the_tile_returns_to_normal() {
+        let (buffer, left, row) = render_battle_flash(Duration::from_millis(1000), Duration::ZERO);
+        assert_eq!(
+            buffer.cell((left, row)).unwrap().symbol(),
+            ".",
+            "once the flash ends the tile shows its plain terrain again"
+        );
+        assert_eq!(
+            buffer.cell((left + 1, row)).unwrap().symbol(),
+            " ",
+            "the spare column is blank again once the flash ends"
         );
     }
 

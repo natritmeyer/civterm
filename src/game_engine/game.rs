@@ -110,6 +110,22 @@ impl Game {
         disbanded
     }
 
+    /// Remove every unit owned by `owner` (used when a civilization is
+    /// eliminated). Returns the number of units removed.
+    pub fn remove_units_owned_by(&mut self, owner: PlayerId) -> u32 {
+        let mut removed = 0;
+        let mut i = 0;
+        while i < self.units.len() {
+            if self.units[i].owner() == owner {
+                self.units.swap_remove(i);
+                removed += 1;
+            } else {
+                i += 1;
+            }
+        }
+        removed
+    }
+
     pub fn add_city(
         &mut self,
         owner: PlayerId,
@@ -596,6 +612,27 @@ mod tests {
         );
         assert_eq!(game.disband_units_homed_to(home()), 0);
         assert_eq!(game.units.len(), 1);
+    }
+
+    #[test]
+    fn removing_units_owned_by_a_player_leaves_other_units_behind() {
+        let mut game = Game::new(
+            3,
+            2,
+            Player::new(Civilization::English),
+            vec![Player::new(Civilization::Zulu)],
+        );
+        game.spawn_unit(UnitClass::Legion, Location::new(0, 0), player(), home());
+        game.spawn_unit(UnitClass::Militia, Location::new(0, 1), player(), home());
+        let rival = game.spawn_unit(
+            UnitClass::Phalanx,
+            Location::new(1, 1),
+            PlayerId::new(1),
+            home(),
+        );
+        assert_eq!(game.remove_units_owned_by(player()), 2);
+        assert_eq!(game.units.len(), 1);
+        assert!(game.units.iter().any(|unit| unit.id() == rival));
     }
 
     #[test]

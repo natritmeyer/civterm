@@ -19,6 +19,7 @@ pub struct Player {
     explored: Exploration,
     pub(super) at_war_with: Vec<PlayerId>,
     pub(super) at_peace_with: Vec<PlayerId>,
+    eliminated: bool,
 }
 
 impl Player {
@@ -32,11 +33,22 @@ impl Player {
             explored: Exploration::empty(),
             at_war_with: Vec::new(),
             at_peace_with: Vec::new(),
+            eliminated: false,
         }
     }
 
     pub fn gold(&self) -> u32 {
         self.gold
+    }
+
+    /// Whether this civilization has been removed from play. An eliminated
+    /// civilization gets no further turns and holds no units or cities.
+    pub fn eliminated(&self) -> bool {
+        self.eliminated
+    }
+
+    pub(super) fn mark_eliminated(&mut self) {
+        self.eliminated = true;
     }
 
     pub fn at_war_with(&self) -> &[PlayerId] {

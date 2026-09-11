@@ -3,6 +3,7 @@ pub mod city_window;
 pub mod civ_selector;
 pub mod competition_selector;
 pub mod difficulty_selector;
+pub mod diplomacy_dialog;
 pub mod game_screen;
 pub mod playing_help;
 pub mod production_picker;

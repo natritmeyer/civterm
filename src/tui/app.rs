@@ -12,7 +12,10 @@ use super::city_window::{self, CityWindow};
 use super::civ_selector::CivSelector;
 use super::competition_selector::CompetitionSelector;
 use super::difficulty_selector::DifficultySelector;
-use super::game_screen::{GameScreen, LEFT_COLUMN_WIDTH, TILE_WIDTH};
+use super::diplomacy_dialog::{self, DiplomacyChoice, DiplomacyDialog, DiplomacyOrigin};
+use super::game_screen::{
+    BATTLE_FLASH_DURATION, BattleAnimation, GameScreen, LEFT_COLUMN_WIDTH, TILE_WIDTH,
+};
 use super::playing_help::PlayingHelp;
 use super::production_picker::{self, PickRow, ProductionPicker};
 use super::research_dialog::{self, ResearchDialog};
@@ -23,7 +26,7 @@ use super::work_picker::{self, WorkPicker};
 use crate::game_engine::event::Event as GameEvent;
 use crate::game_engine::{Command, Engine, GameView, Player};
 use crate::model::advancements::Advancement;
-use crate::model::cartography::Direction;
+use crate::model::cartography::{Direction, Location};
 use crate::model::cities::{CityId, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::competition::Competition;
@@ -83,6 +86,17 @@ struct ResearchDialogState {
     scroll: usize,
 }
 
+/// The war-or-peace dialog's live state: who it is about, why it opened, and
+/// the answer currently on the cursor. A blocked move keeps the unit and
+/// direction it would retake once war is declared.
+#[derive(Clone, Copy)]
+struct DiplomacyState {
+    opponent: PlayerId,
+    origin: DiplomacyOrigin,
+    choice: DiplomacyChoice,
+    pending: Option<(UnitId, Direction)>,
+}
+
 pub struct App {
     started_at: Instant,
     selected: usize,
@@ -137,6 +151,10 @@ pub struct App {
     research_dialog: Option<ResearchDialogState>,
     /// The last-drawn research-dialog rectangle, for mouse hit-testing.
     research_dialog_rect: Cell<Option<Rect>>,
+    /// The open war-or-peace dialog, if one is showing.
+    diplomacy: Option<DiplomacyState>,
+    /// The last-drawn diplomacy-dialog rectangle, for mouse hit-testing.
+    diplomacy_rect: Cell<Option<Rect>>,
     /// Whether the work picker floats over the map.
     work_picker_open: bool,
     /// The picker cursor: which improvement row is selected.
@@ -145,6 +163,9 @@ pub struct App {
     work_picker_scroll: usize,
     /// The last-drawn work picker panel rectangle, for mouse hit-testing.
     work_picker_rect: Cell<Option<Rect>>,
+    /// The in-flight battle flash on the defender's tile, if a combat has just
+    /// resolved; `None` once the animation has run its course.
+    battle_animation: Option<BattleAnimation>,
 }
 
 impl Default for App {
@@ -189,10 +210,13 @@ impl App {
             event_log: Vec::new(),
             research_dialog: None,
             research_dialog_rect: Cell::new(None),
+            diplomacy: None,
+            diplomacy_rect: Cell::new(None),
             work_picker_open: false,
             work_picker_cursor: 0,
             work_picker_scroll: 0,
             work_picker_rect: Cell::new(None),
+            battle_animation: None,
         }
     }
 
@@ -202,6 +226,7 @@ impl App {
     ) -> io::Result<()> {
         loop {
             terminal.draw(|frame| Self::draw(frame, self))?;
+            self.clear_expired_battle_animation(self.started_at.elapsed());
             if !event::poll(POLL_INTERVAL)? {
                 continue;
             }
@@ -212,6 +237,18 @@ impl App {
                 Event::Mouse(mouse) => self.handle_mouse(mouse),
                 _ => {}
             }
+        }
+    }
+
+    /// The battle flash lasts `BATTLE_FLASH_DURATION`; once it has run that
+    /// long, drop the state so later draws no longer reserve the defender's
+    /// tile. `now` is the current value of the app clock.
+    fn clear_expired_battle_animation(&mut self, now: Duration) {
+        if self
+            .battle_animation
+            .is_some_and(|animation| now.saturating_sub(animation.start) >= BATTLE_FLASH_DURATION)
+        {
+            self.battle_animation = None;
         }
     }
 
@@ -290,7 +327,8 @@ impl App {
                             app.show_events,
                             &app.event_log[app.event_log.len().saturating_sub(EVENT_LOG_SIZE)..],
                             hover_target,
-                        ),
+                        )
+                        .with_battle_animation(app.battle_animation),
                         area,
                     );
                     if app.show_help {
@@ -363,6 +401,23 @@ impl App {
                         app.research_dialog_rect.set(Some(rect));
                     } else {
                         app.research_dialog_rect.set(None);
+                    }
+                    // The diplomacy window floats above the map when a new
+                    // civilization is met or a unit tries to cross a peaceful
+                    // border, asking whether to declare war or stay at peace.
+                    if let Some(state) = &app.diplomacy {
+                        let rect = diplomacy_dialog::dialog_rect(area);
+                        frame.render_widget(
+                            DiplomacyDialog::new(
+                                engine.civilization_of(state.opponent),
+                                state.origin,
+                                state.choice,
+                            ),
+                            rect,
+                        );
+                        app.diplomacy_rect.set(Some(rect));
+                    } else {
+                        app.diplomacy_rect.set(None);
                     }
                     // The work picker floats over the map when the player is
                     // about to give a settler a terrain-improvement order.
@@ -607,6 +662,8 @@ impl App {
         self.picker_rect = Cell::new(None);
         self.research_dialog = None;
         self.research_dialog_rect = Cell::new(None);
+        self.diplomacy = None;
+        self.diplomacy_rect = Cell::new(None);
         self.work_picker_open = false;
         self.work_picker_cursor = 0;
         self.work_picker_scroll = 0;
@@ -623,6 +680,12 @@ impl App {
         // player may only pick a research target and confirm it.
         if self.research_dialog.is_some() {
             self.handle_research_dialog_key(key);
+            return false;
+        }
+        // While the diplomacy window is open it captures the keyboard: the
+        // player may only choose to declare war or remain at peace.
+        if self.diplomacy.is_some() {
+            self.handle_diplomacy_key(key);
             return false;
         }
         // While the work picker is open it captures the keyboard: the player
@@ -777,6 +840,12 @@ impl App {
         // drags too) so hover can steer the map highlight.
         if mouse.column != u16::MAX && mouse.row != u16::MAX {
             self.mouse_position.set(Some((mouse.column, mouse.row)));
+        }
+        // The diplomacy window floats above everything and captures all mouse
+        // input while it is open.
+        if self.diplomacy_rect.get().is_some() {
+            self.handle_diplomacy_mouse(mouse);
+            return;
         }
         // The research dialog floats above everything and captures all mouse
         // input while it is open.
@@ -963,14 +1032,117 @@ impl App {
     }
 
     fn move_selected_unit(&mut self, direction: Direction) {
-        let Some(unit) = self.selected_unit else {
-            return;
-        };
+        if let Some(unit) = self.selected_unit {
+            self.move_unit(unit, direction);
+        }
+    }
+
+    fn move_unit(&mut self, unit: UnitId, direction: Direction) {
+        // The tile the move aims at, computed before the move: combat always
+        // happens on the destination square, so that is where the flash goes.
+        // The step wraps east/west like the map does.
+        let destination = self.engine.as_ref().and_then(|engine| {
+            engine
+                .player_units()
+                .iter()
+                .find(|u| u.id() == unit)
+                .and_then(|u| {
+                    let (width, height) = (engine.width(), engine.height());
+                    let (dx, dy) = direction.delta();
+                    let x = (u.location.x as isize + dx).rem_euclid(width as isize);
+                    let y = u.location.y as isize + dy;
+                    if y >= 0 && y < height as isize {
+                        Some(Location::new(x as u16, y as u16))
+                    } else {
+                        None
+                    }
+                })
+        });
         if let Some(engine) = &mut self.engine {
             let events = engine.submit(Command::Move { unit, direction });
+            if events
+                .iter()
+                .any(|event| event.message().contains("attacks"))
+            {
+                if let Some(location) = destination {
+                    self.battle_animation = Some(BattleAnimation {
+                        location,
+                        start: self.started_at.elapsed(),
+                    });
+                }
+                // The battle may have cost the player their acting unit (a
+                // repelled attacker is removed). Drop the stale selection so
+                // the map stops flashing a ghost.
+                if engine.player_units().iter().all(|u| u.id() != unit) {
+                    self.selected_unit = None;
+                }
+            }
+            // A freshly met rival presents the war-or-peace choice.
+            if let Some(opponent) = events
+                .iter()
+                .find_map(|event| self.contact_opponent(event.message()))
+            {
+                self.diplomacy = Some(DiplomacyState {
+                    opponent,
+                    origin: DiplomacyOrigin::Contact,
+                    choice: DiplomacyChoice::Peace,
+                    pending: None,
+                });
+            }
+            // A step onto a peaceful foreign tile offers the same choice, and
+            // keeps the move pending so declaring war retakes it as an attack.
+            if self.diplomacy.is_none()
+                && events.iter().any(|event| {
+                    event
+                        .message()
+                        .contains("cannot move onto a tile occupied by a civilization at peace")
+                })
+                && let Some(opponent) =
+                    destination.and_then(|location| self.occupant_owner(location))
+            {
+                self.diplomacy = Some(DiplomacyState {
+                    opponent,
+                    origin: DiplomacyOrigin::Movement,
+                    choice: DiplomacyChoice::Peace,
+                    pending: Some((unit, direction)),
+                });
+            }
             self.record_events(events);
         }
         self.camera_follow.set(true);
+    }
+
+    /// The rival just met in `message` ("{Civ} and {Civ} meet for the first
+    /// time"), stripped down to its player id. Only the human's moves trigger
+    /// meetings, so one of the two names is always the human's civilization.
+    fn contact_opponent(&self, message: &str) -> Option<PlayerId> {
+        if !message.contains(" meet for the first time") {
+            return None;
+        }
+        let engine = self.engine.as_ref()?;
+        let human = PlayerId::new(0);
+        let human_civilization = engine.civilization_of(human);
+        let other = Civilization::iter()
+            .find(|civ| *civ != human_civilization && message.contains(civ.display_name()))?;
+        engine.player_id_of(other)
+    }
+
+    /// The foreign owner of the city or unit standing on `location`, if any.
+    fn occupant_owner(&self, location: Location) -> Option<PlayerId> {
+        let engine = self.engine.as_ref()?;
+        let human = PlayerId::new(0);
+        let (x, y) = (location.x as usize, location.y as usize);
+        engine
+            .units_at(x, y)
+            .into_iter()
+            .map(|unit| unit.owner())
+            .find(|owner| *owner != human)
+            .or_else(|| {
+                engine
+                    .city_at(x, y)
+                    .map(|city| city.owner())
+                    .filter(|owner| *owner != human)
+            })
     }
 
     /// The world tile the pointer currently hovers, when it lies one square
@@ -978,6 +1150,7 @@ impl App {
     /// otherwise, including while a modal panel floats over the map.
     fn hovered_move_target(&self, engine: &Engine) -> Option<(usize, usize)> {
         if self.research_dialog_rect.get().is_some()
+            || self.diplomacy_rect.get().is_some()
             || self.work_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
             || self.moused_window.get().is_some()
@@ -1104,6 +1277,90 @@ impl App {
             let events = engine.submit(Command::SetResearchTarget { advancement });
             self.record_events(events);
         }
+    }
+
+    fn handle_diplomacy_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Left | KeyCode::Up | KeyCode::Char('h') | KeyCode::Char('k') => {
+                self.diplomacy_choice(DiplomacyChoice::War)
+            }
+            KeyCode::Right | KeyCode::Down | KeyCode::Char('l') | KeyCode::Char('j') => {
+                self.diplomacy_choice(DiplomacyChoice::Peace)
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => self.diplomacy_confirm(),
+            KeyCode::Esc => self.diplomacy_cancel(),
+            _ => {}
+        }
+    }
+
+    fn handle_diplomacy_mouse(&mut self, mouse: MouseEvent) {
+        let Some(panel) = self.diplomacy_rect.get() else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        let position = (mouse.column, mouse.row).into();
+        if diplomacy_dialog::war_button_rect(panel).contains(position) {
+            self.diplomacy_confirm_choice(DiplomacyChoice::War);
+        } else if diplomacy_dialog::peace_button_rect(panel).contains(position) {
+            self.diplomacy_confirm_choice(DiplomacyChoice::Peace);
+        }
+    }
+
+    /// Steer the diplomacy cursor to `choice`.
+    fn diplomacy_choice(&mut self, choice: DiplomacyChoice) {
+        if let Some(state) = &mut self.diplomacy {
+            state.choice = choice;
+        }
+    }
+
+    /// Confirm the answer currently on the diplomacy cursor.
+    fn diplomacy_confirm(&mut self) {
+        let choice = self.diplomacy.map(|state| state.choice);
+        if let Some(choice) = choice {
+            self.diplomacy_confirm_choice(choice);
+        }
+    }
+
+    /// Close the diplomacy window and act on the given answer.
+    fn diplomacy_confirm_choice(&mut self, choice: DiplomacyChoice) {
+        let Some(state) = self.diplomacy.take() else {
+            return;
+        };
+        self.diplomacy_rect.set(None);
+        match choice {
+            DiplomacyChoice::War => {
+                if let Some(engine) = &mut self.engine {
+                    let events = engine.submit(Command::DeclareWar {
+                        opponent: state.opponent,
+                    });
+                    self.record_events(events);
+                }
+                // The blocked step becomes the first attack of the war.
+                if let Some((unit, direction)) = state.pending {
+                    self.move_unit(unit, direction);
+                }
+            }
+            DiplomacyChoice::Peace => {
+                if let Some(engine) = &mut self.engine {
+                    let events = engine.submit(Command::MakePeace {
+                        opponent: state.opponent,
+                    });
+                    self.record_events(events);
+                }
+            }
+        }
+    }
+
+    /// Close the diplomacy window without declaring war; a pending move is
+    /// abandoned and the unit stays put.
+    fn diplomacy_cancel(&mut self) {
+        self.diplomacy = None;
+        self.diplomacy_rect = Cell::new(None);
     }
 
     /// Move the research dialog's cursor by `delta` rows.
@@ -3073,6 +3330,407 @@ mod tests {
                 .any(|u| u.unit_class == UnitClass::Settler)
         );
         app
+    }
+
+    /// A game where the starting settler has a rival militia standing on an
+    /// adjacent land tile, with the two civilizations at war. Returns the app,
+    /// the settler's id, the direction the settler can step, and the tile the
+    /// attack will land on.
+    fn app_with_adjacent_enemy() -> Option<(App, UnitId, Direction, Location)> {
+        let mut app = app_with_settler();
+        let (settler_id, location) = {
+            let engine = app.engine.as_ref().unwrap();
+            let unit = engine
+                .player_units()
+                .into_iter()
+                .find(|unit| unit.unit_class == UnitClass::Settler)
+                .expect("the starting settler exists");
+            (unit.id(), unit.location)
+        };
+        let adjacent = {
+            let engine = app.engine.as_ref().unwrap();
+            let (width, height) = (engine.width(), engine.height());
+            Direction::iter().find_map(|direction| {
+                let (dx, dy) = direction.delta();
+                let nx = (location.x as isize + dx).rem_euclid(width as isize) as usize;
+                let ny = location.y as isize + dy;
+                if ny < 0 || ny >= height as isize {
+                    return None;
+                }
+                let terrain = engine.tile(nx, ny as usize).terrain;
+                if terrain.is_land() && terrain.movement_cost() <= 1 {
+                    Some((direction, Location::new(nx as u16, ny as u16)))
+                } else {
+                    None
+                }
+            })
+        };
+        let (direction, enemy_tile) = adjacent?;
+        let engine = app.engine.as_mut().unwrap();
+        engine.submit(Command::DeclareWar {
+            opponent: PlayerId::new(1),
+        });
+        engine.spawn_unit(
+            UnitClass::Militia,
+            enemy_tile,
+            PlayerId::new(1),
+            CityId::new(0),
+        );
+        Some((app, settler_id, direction, enemy_tile))
+    }
+
+    /// A game where the starting settler has a rival militia standing on an
+    /// adjacent land tile, the two civilizations never having been at war.
+    /// Returns the app, the settler's id and starting tile, the direction the
+    /// settler can step, and the rival's tile.
+    fn app_with_adjacent_foreigner() -> Option<(App, UnitId, Direction, Location, Location)> {
+        let mut app = app_with_settler();
+        let (settler_id, home) = {
+            let engine = app.engine.as_ref().unwrap();
+            let unit = engine
+                .player_units()
+                .into_iter()
+                .find(|unit| unit.unit_class == UnitClass::Settler)
+                .expect("the starting settler exists");
+            (unit.id(), unit.location)
+        };
+        let adjacent = {
+            let engine = app.engine.as_ref().unwrap();
+            let (width, height) = (engine.width(), engine.height());
+            Direction::iter().find_map(|direction| {
+                let (dx, dy) = direction.delta();
+                let nx = (home.x as isize + dx).rem_euclid(width as isize) as usize;
+                let ny = home.y as isize + dy;
+                if ny < 0 || ny >= height as isize {
+                    return None;
+                }
+                let terrain = engine.tile(nx, ny as usize).terrain;
+                if terrain.is_land() && terrain.movement_cost() <= 1 {
+                    Some((direction, Location::new(nx as u16, ny as u16)))
+                } else {
+                    None
+                }
+            })
+        };
+        let (direction, enemy_tile) = adjacent?;
+        let engine = app.engine.as_mut().unwrap();
+        engine.spawn_unit(
+            UnitClass::Militia,
+            enemy_tile,
+            PlayerId::new(1),
+            CityId::new(0),
+        );
+        Some((app, settler_id, direction, enemy_tile, home))
+    }
+
+    /// A game where the starting settler has a rival militia standing two
+    /// land tiles away, the two civilizations never having met. Returns the
+    /// app, the settler's id, the direction of the first step, and the empty
+    /// tile that step lands on (adjacent to the rival, so moving there meets
+    /// them).
+    fn app_with_unknown_neighbor() -> Option<(App, UnitId, Direction, Location)> {
+        let mut app = app_with_settler();
+        let (settler_id, home) = {
+            let engine = app.engine.as_ref().unwrap();
+            let unit = engine
+                .player_units()
+                .into_iter()
+                .find(|unit| unit.unit_class == UnitClass::Settler)
+                .expect("the starting settler exists");
+            (unit.id(), unit.location)
+        };
+        let step = {
+            let engine = app.engine.as_ref().unwrap();
+            let (width, height) = (engine.width(), engine.height());
+            let step_to = |from: Location, direction: Direction| -> Option<Location> {
+                let (dx, dy) = direction.delta();
+                let x = (from.x as isize + dx).rem_euclid(width as isize) as usize;
+                let y = from.y as isize + dy;
+                if y < 0 || y >= height as isize {
+                    None
+                } else {
+                    Some(Location::new(x as u16, y as u16))
+                }
+            };
+            Direction::iter().find_map(|direction| {
+                let meet = step_to(home, direction)?;
+                let far = step_to(meet, direction)?;
+                let walkable = |tile: Location| {
+                    let terrain = engine.tile(tile.x as usize, tile.y as usize).terrain;
+                    terrain.is_land() && terrain.movement_cost() <= 1
+                };
+                if walkable(meet) && walkable(far) {
+                    Some((direction, meet))
+                } else {
+                    None
+                }
+            })
+        };
+        let (direction, meet_tile) = step?;
+        let far_tile = {
+            let engine = app.engine.as_ref().unwrap();
+            let (width, height) = (engine.width(), engine.height());
+            let (dx, dy) = direction.delta();
+            let x = (meet_tile.x as isize + dx).rem_euclid(width as isize) as u16;
+            let y = meet_tile.y as isize + dy;
+            Location::new(x, y.clamp(0, height as isize - 1) as u16)
+        };
+        let engine = app.engine.as_mut().unwrap();
+        engine.spawn_unit(
+            UnitClass::Militia,
+            far_tile,
+            PlayerId::new(1),
+            CityId::new(0),
+        );
+        Some((app, settler_id, direction, meet_tile))
+    }
+
+    #[test]
+    fn moving_next_to_an_unknown_rival_opens_a_contact_diplomacy_window() {
+        let Some((mut app, settler_id, direction, meet_tile)) = app_with_unknown_neighbor() else {
+            return;
+        };
+        app.move_selected_unit(direction);
+        let dialog = app
+            .diplomacy
+            .expect("first contact opens the war-or-peace window");
+        assert_eq!(dialog.opponent, PlayerId::new(1));
+        assert_eq!(dialog.origin, DiplomacyOrigin::Contact);
+        assert_eq!(dialog.choice, DiplomacyChoice::Peace);
+        assert!(dialog.pending.is_none());
+        // The settler still completed its step onto the meet tile.
+        let unit = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == settler_id)
+            .unwrap();
+        assert_eq!(unit.location, meet_tile);
+    }
+
+    #[test]
+    fn declaring_war_from_a_contact_makes_the_rival_attackable() {
+        let Some((mut app, _, direction, _)) = app_with_unknown_neighbor() else {
+            return;
+        };
+        app.move_selected_unit(direction);
+        app.handle_key(key(KeyCode::Char('h'))); // WAR
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.diplomacy.is_none(), "the dialog closes on confirmation");
+        // With moves restored, the settler now attacks the rival outright —
+        // no second diplomacy window, just combat.
+        app.end_turn();
+        app.end_turn();
+        app.move_selected_unit(direction);
+        assert!(app.diplomacy.is_none(), "war bypasses the diplomacy window");
+        assert!(
+            app.battle_animation.is_some(),
+            "war makes the approach a battle"
+        );
+    }
+
+    #[test]
+    fn keeping_peace_from_a_contact_still_blocks_foreign_passage() {
+        let Some((mut app, settler_id, direction, meet_tile)) = app_with_unknown_neighbor() else {
+            return;
+        };
+        app.move_selected_unit(direction);
+        app.handle_key(key(KeyCode::Enter)); // PEACE
+        assert!(app.diplomacy.is_none());
+        app.end_turn();
+        app.end_turn();
+        // Still at peace, stepping onto the rival's tile reopens the window as
+        // a blocked move.
+        app.move_selected_unit(direction);
+        let dialog = app
+            .diplomacy
+            .expect("peaceful passage still prompts diplomacy");
+        assert_eq!(dialog.opponent, PlayerId::new(1));
+        assert_eq!(dialog.origin, DiplomacyOrigin::Movement);
+        assert_eq!(dialog.pending, Some((settler_id, direction)));
+        let unit = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == settler_id)
+            .unwrap();
+        assert_eq!(unit.location, meet_tile, "the blocked settler never moved");
+    }
+
+    #[test]
+    fn stepping_onto_a_peaceful_foreign_tile_opens_a_blocked_move_window() {
+        let Some((mut app, settler_id, direction, _, home)) = app_with_adjacent_foreigner() else {
+            return;
+        };
+        app.move_selected_unit(direction);
+        let dialog = app
+            .diplomacy
+            .expect("a peaceful foreign step prompts diplomacy");
+        assert_eq!(dialog.opponent, PlayerId::new(1));
+        assert_eq!(dialog.origin, DiplomacyOrigin::Movement);
+        assert_eq!(dialog.choice, DiplomacyChoice::Peace);
+        assert_eq!(dialog.pending, Some((settler_id, direction)));
+        let unit = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == settler_id)
+            .unwrap();
+        assert_eq!(unit.location, home, "the blocked settler never moved");
+    }
+
+    #[test]
+    fn declaring_war_from_the_blocked_move_attacks_the_rival() {
+        let Some((mut app, _, direction, enemy_tile, _)) = app_with_adjacent_foreigner() else {
+            return;
+        };
+        app.move_selected_unit(direction);
+        app.handle_key(key(KeyCode::Char('h'))); // WAR
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.diplomacy.is_none(), "war closes the window");
+        assert!(
+            app.battle_animation.is_some(),
+            "the retaken move attacks the rival"
+        );
+        let animation = app.battle_animation.unwrap();
+        assert_eq!(animation.location, enemy_tile);
+    }
+
+    #[test]
+    fn keeping_peace_from_the_blocked_move_leaves_the_unit_in_place() {
+        let Some((mut app, settler_id, direction, _, home)) = app_with_adjacent_foreigner() else {
+            return;
+        };
+        app.move_selected_unit(direction);
+        app.handle_key(key(KeyCode::Enter)); // PEACE
+        assert!(app.diplomacy.is_none());
+        let unit = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == settler_id)
+            .unwrap();
+        assert_eq!(unit.location, home);
+    }
+
+    #[test]
+    fn the_diplomacy_window_swallows_game_keys() {
+        let Some((mut app, settler_id, direction, _, home)) = app_with_adjacent_foreigner() else {
+            return;
+        };
+        app.move_selected_unit(direction);
+        assert!(app.diplomacy.is_some());
+        app.handle_key(key(KeyCode::Char('k'))); // would move the unit
+        assert!(app.diplomacy.is_some(), "the dialog captures the key");
+        let unit = app
+            .engine
+            .as_ref()
+            .unwrap()
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == settler_id)
+            .unwrap();
+        assert_eq!(unit.location, home, "the swallowed key moved the unit");
+    }
+
+    #[test]
+    fn the_open_diplomacy_window_draws_over_the_map() {
+        let Some((mut app, _, direction, _, _)) = app_with_adjacent_foreigner() else {
+            return;
+        };
+        app.move_selected_unit(direction);
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+        assert!(
+            app.diplomacy_rect.get().is_some(),
+            "the drawn window records its rectangle"
+        );
+    }
+
+    #[test]
+    fn moving_onto_an_enemy_starts_a_battle_flash_on_the_defended_tile() {
+        let Some((mut app, settler_id, direction, enemy_tile)) = app_with_adjacent_enemy() else {
+            return;
+        };
+        app.move_selected_unit(direction);
+        let animation = app
+            .battle_animation
+            .expect("attacking an enemy starts a battle flash");
+        assert_eq!(
+            animation.location, enemy_tile,
+            "the flash sits on the tile the attack was aimed at"
+        );
+        assert!(animation.start <= app.started_at.elapsed());
+
+        // Combat is randomly resolved, but the stale selection is dropped only
+        // when the attacking settler was removed by a repelled attack.
+        let engine = app.engine.as_ref().unwrap();
+        let survived = engine
+            .player_units()
+            .iter()
+            .any(|unit| unit.id() == settler_id);
+        if survived {
+            assert_eq!(app.selected_unit, Some(settler_id));
+        } else {
+            assert_eq!(app.selected_unit, None);
+        }
+    }
+
+    #[test]
+    fn a_move_that_meets_no_enemy_starts_no_battle_flash() {
+        let mut app = app_with_settler();
+        let direction = {
+            let engine = app.engine.as_ref().unwrap();
+            let unit = engine.player_units()[0];
+            Direction::iter().find(|direction| {
+                let (dx, dy) = direction.delta();
+                let nx =
+                    (unit.location.x as isize + dx).rem_euclid(engine.width() as isize) as usize;
+                let ny = unit.location.y as isize + dy;
+                if ny < 0 || ny >= engine.height() as isize {
+                    return false;
+                }
+                let ny = ny as usize;
+                let tile = engine.tile(nx, ny).terrain;
+                tile.is_land() && tile.movement_cost() <= 1 && engine.units_at(nx, ny).is_empty()
+            })
+        };
+        let Some(direction) = direction else {
+            return; // no affordable empty neighbour; nothing legal to assert
+        };
+        app.move_selected_unit(direction);
+        assert!(
+            app.battle_animation.is_none(),
+            "a move onto an empty tile is not a battle"
+        );
+    }
+
+    #[test]
+    fn an_expired_battle_flash_is_dropped_from_the_app_state() {
+        let Some((mut app, _settler, direction, _tile)) = app_with_adjacent_enemy() else {
+            return;
+        };
+        app.move_selected_unit(direction);
+        assert!(app.battle_animation.is_some());
+        app.clear_expired_battle_animation(app.started_at.elapsed());
+        assert!(
+            app.battle_animation.is_some(),
+            "a fresh flash is not yet over"
+        );
+        let far_future = app.started_at.elapsed() + BATTLE_FLASH_DURATION + Duration::from_secs(1);
+        app.clear_expired_battle_animation(far_future);
+        assert_eq!(
+            app.battle_animation, None,
+            "once the flash has run its course the state is cleared"
+        );
     }
 
     #[test]

@@ -152,6 +152,28 @@ impl Engine {
         std::mem::take(&mut self.events)
     }
 
+    /// Place a fresh unit for `owner`. Exposed only to the crate's tests so
+    /// `src/tui` can stage combat scenarios; the game itself never calls it.
+    #[cfg(test)]
+    pub(crate) fn spawn_unit(
+        &mut self,
+        unit_class: UnitClass,
+        location: Location,
+        owner: PlayerId,
+        home_city: CityId,
+    ) -> UnitId {
+        self.game.spawn_unit(unit_class, location, owner, home_city)
+    }
+
+    /// The player governed by `civilization`, if that civilization is in play.
+    pub fn player_id_of(&self, civilization: Civilization) -> Option<PlayerId> {
+        self.game
+            .players
+            .iter()
+            .position(|player| player.civilization == civilization)
+            .map(PlayerId::new)
+    }
+
     /// The advancements `player` has already discovered, in discovery order.
     pub fn player_advances(&self, player: PlayerId) -> Vec<Advancement> {
         self.game.players[player.index()].advances_made().to_vec()
@@ -227,6 +249,8 @@ impl Engine {
 
         let attacker_id = self.game.units[attacker_idx].id();
         let defender_id = self.game.units[defender_idx].id();
+        let attacker_owner = self.game.units[attacker_idx].owner();
+        let defender_owner = self.game.units[defender_idx].owner();
         self.events.push(Event::new(format!(
             "Unit {} attacks Unit {}",
             attacker_id.index(),
@@ -238,14 +262,15 @@ impl Engine {
         let attacker_won = self.resolve_combat(attacker_power, defender_power);
 
         if attacker_won {
-            let owner = self.game.units[attacker_idx].owner();
             let was_veteran = self.game.units[attacker_idx].is_veteran();
             self.game.remove_unit(defender_id);
-            let tile_is_clear = !self
-                .game
-                .units
-                .iter()
-                .any(|unit| unit.location == tile && self.game.at_war(owner, unit.owner()));
+            let tile_is_clear = !self.game.units.iter().any(|unit| {
+                unit.location == tile && self.game.at_war(attacker_owner, unit.owner())
+            });
+            // Advancing onto the cleared tile reveals the ring around it.
+            if tile_is_clear {
+                self.game.reveal_tiles_at(attacker_owner, tile);
+            }
             let attacker_unit = self.owned_unit_mut(attacker_id).unwrap();
             if tile_is_clear {
                 attacker_unit.location = tile;
@@ -259,6 +284,7 @@ impl Engine {
                 attacker_id.index(),
                 defender_id.index()
             )));
+            self.eliminate_if_annihilated(defender_owner);
         } else {
             self.game.remove_unit(attacker_id);
             self.events.push(Event::new(format!(
@@ -266,6 +292,7 @@ impl Engine {
                 defender_id.index(),
                 attacker_id.index()
             )));
+            self.eliminate_if_annihilated(attacker_owner);
         }
     }
 
@@ -298,6 +325,8 @@ impl Engine {
         let mut_unit = self.owned_unit_mut(unit).unwrap();
         mut_unit.location = destination;
         mut_unit.spend_turn();
+        self.game
+            .reveal_tiles_at(self.current_player_index, destination);
         self.events.push(Event::new(format!(
             "{:?} capture {} (formerly {:?}'s)",
             self.game.players[self.current_player_index.index()].civilization,
@@ -308,6 +337,50 @@ impl Engine {
             self.events.push(Event::new(format!(
                 "{} units disband with the loss of {}",
                 disbanded, city_name
+            )));
+        }
+        self.eliminate_if_cityless(old_owner);
+    }
+
+    /// A civilization that loses its last city is removed from play, even if
+    /// stragglers remain in the field.
+    fn eliminate_if_cityless(&mut self, player: PlayerId) {
+        if !self.owns_any_city(player) {
+            self.eliminate(player);
+        }
+    }
+
+    /// A civilization with no cities left is only removed once its last unit
+    /// is gone too; a settler still in the field can yet found a new city.
+    fn eliminate_if_annihilated(&mut self, player: PlayerId) {
+        if !self.owns_any_city(player) && !self.owns_any_unit(player) {
+            self.eliminate(player);
+        }
+    }
+
+    fn owns_any_city(&self, player: PlayerId) -> bool {
+        self.game.cities.iter().any(|city| city.owner() == player)
+    }
+
+    fn owns_any_unit(&self, player: PlayerId) -> bool {
+        self.game.units.iter().any(|unit| unit.owner() == player)
+    }
+
+    /// Remove `player` from play: mark them eliminated and disband whatever
+    /// units they still have. Idempotent, so the many loss sites can call it
+    /// freely.
+    fn eliminate(&mut self, player: PlayerId) {
+        if self.game.players[player.index()].eliminated() {
+            return;
+        }
+        self.game.players[player.index()].mark_eliminated();
+        let civilization = self.game.players[player.index()].civilization;
+        let disbanded = self.game.remove_units_owned_by(player);
+        self.events
+            .push(Event::new(format!("{civilization:?} has been eliminated")));
+        if disbanded > 0 {
+            self.events.push(Event::new(format!(
+                "{disbanded} units disband with the loss of {civilization:?}"
             )));
         }
     }
@@ -808,7 +881,13 @@ impl Engine {
 
     fn advance_to_next_player(&mut self) {
         let count = self.game.players.len();
-        self.current_player_index = PlayerId::new((self.current_player_index.index() + 1) % count);
+        let mut next = (self.current_player_index.index() + 1) % count;
+        let mut considered = 0;
+        while considered < count && self.game.players[next].eliminated() {
+            next = (next + 1) % count;
+            considered += 1;
+        }
+        self.current_player_index = PlayerId::new(next);
     }
 
     fn begin_turn(&mut self) {
@@ -2017,6 +2096,67 @@ mod tests {
     }
 
     #[test]
+    fn capturing_a_city_reveals_the_tiles_around_it_for_the_conqueror() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(2),
+        );
+        // The legion's starting reveal (radius 1 around (2, 2)) stops at
+        // column 3; the ring east of the conquered city is still dark.
+        assert!(!engine.explored(4, 1));
+        assert!(!engine.explored(4, 2));
+        engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        // Advancing onto the captured city reveals its surroundings as if the
+        // unit had simply occupied the tiles itself.
+        assert!(engine.explored(4, 1));
+        assert!(engine.explored(4, 2));
+        assert!(engine.explored(4, 3));
+        assert!(!engine.explored(4, 4));
+    }
+
+    #[test]
+    fn a_winning_attacker_reveals_the_tiles_it_advances_onto() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let militia = engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        assert!(!engine.explored(4, 2));
+        engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert!(!engine.game.units.iter().any(|unit| unit.id() == militia));
+        // Surviving the battle and moving onto the target tile reveals the
+        // ring of tiles around the unit's new position.
+        assert!(engine.explored(4, 1));
+        assert!(engine.explored(4, 2));
+        assert!(engine.explored(4, 3));
+        assert!(!engine.explored(4, 4));
+    }
+
+    #[test]
     fn capturing_a_city_disbands_units_homed_to_it() {
         let mut engine = blank_war_map();
         engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
@@ -2024,6 +2164,11 @@ mod tests {
         engine
             .game
             .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+        // A second Zulu city (id 1) survives, so the civilization is not
+        // eliminated and only the units homed to the captured city disband.
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Ulundi", Location::new(4, 2));
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(2, 2),
@@ -2055,6 +2200,194 @@ mod tests {
         );
         assert!(!engine.game.units.iter().any(|u| u.id() == lost_phalanx));
         assert!(engine.game.units.iter().any(|u| u.id() == other_phalanx));
+    }
+
+    #[test]
+    fn capturing_a_civilizations_last_city_removes_it_from_play() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(9),
+        );
+        // A surviving Zulu unit lies elsewhere on the map: losing the last
+        // city still ends the civilization.
+        let stray_phalanx = engine.game.spawn_unit(
+            UnitClass::Phalanx,
+            Location::new(0, 0),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "Zulu has been eliminated")
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "1 units disband with the loss of Zulu")
+        );
+        assert!(engine.game.players[1].eliminated());
+        assert!(!engine.game.units.iter().any(|u| u.id() == stray_phalanx));
+    }
+
+    #[test]
+    fn losing_a_city_but_keeping_another_leaves_the_civilization_in_play() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Ulundi", Location::new(4, 2));
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(9),
+        );
+        engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert!(!engine.game.players[1].eliminated());
+        assert_eq!(
+            engine
+                .game
+                .cities
+                .iter()
+                .filter(|c| c.owner() == PlayerId::new(1))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn annihilating_a_cityless_civilization_removes_it_from_play() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        // Zulu has no cities and sits on the map with a single militia.
+        let militia = engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let events = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        // Blank_war_map's seed sends the legion through the militia; killing
+        // Zulu's only unit while they hold no cities ends the civilization.
+        assert!(!engine.game.units.iter().any(|u| u.id() == militia));
+        assert!(engine.game.players[1].eliminated());
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "Zulu has been eliminated")
+        );
+    }
+
+    #[test]
+    fn a_settler_with_no_cities_survives_the_loss_of_other_units() {
+        let mut engine = blank_war_map();
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        // Zulu has no cities but a militia *and* a settler still in the field.
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(3, 2),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        let settler = engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(0, 0),
+            PlayerId::new(1),
+            CityId::new(1),
+        );
+        engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        // Whatever the combat result, the cityless civilization is
+        // not yet out: it still holds the settler and may found a city.
+        assert!(!engine.game.players[1].eliminated());
+        assert!(engine.game.units.iter().any(|u| u.id() == settler));
+    }
+
+    #[test]
+    fn an_eliminated_civilization_is_skipped_when_the_turn_advances() {
+        let mut engine = Engine::new(
+            5,
+            5,
+            Player::new(Civilization::English),
+            vec![
+                Player::new(Civilization::Zulu),
+                Player::new(Civilization::Roman),
+            ],
+        );
+        engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+        engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+        engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(2, 2),
+            PlayerId::new(0),
+            CityId::new(9),
+        );
+        // Capture Zulu's only city; play moves from English to Roman, Zulu
+        // never taking another turn.
+        engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert!(engine.game.players[1].eliminated());
+        let events = engine.submit(Command::EndTurn);
+        assert_eq!(engine.current_player(), Civilization::Roman);
+        assert!(events.iter().any(|e| e.message() == "Roman begins turn 1"));
+        assert!(
+            !events
+                .iter()
+                .any(|e| e.message().starts_with("Zulu begins"))
+        );
+        let events = engine.submit(Command::EndTurn);
+        assert_eq!(engine.current_player(), Civilization::English);
+        assert_eq!(engine.turn(), 2);
+        assert!(
+            events
+                .iter()
+                .any(|e| e.message() == "English begins turn 2")
+        );
     }
 
     #[test]
