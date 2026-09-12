@@ -10,6 +10,17 @@ A Civ game in your terminal
 - [![Language](https://img.shields.io/github/languages/top/natritmeyer/civterm)](<>) [![Repo size](https://img.shields.io/github/repo-size/natritmeyer/civterm)](<>)
 - [![Last commit](https://img.shields.io/github/last-commit/natritmeyer/civterm)](<>) [![Build status](https://img.shields.io/github/actions/workflow/status/natritmeyer/civterm/ci.yml?label=build)](https://github.com/natritmeyer/civterm/actions) [![Tests](https://img.shields.io/badge/tests-481%20passing-brightgreen)](<>)
 
+## Setup
+
+Run `make setup` once after cloning to install the pre-commit hook (it runs
+`make build` — fmt, clippy, build, and all tests — before every commit):
+
+```
+make setup
+```
+
+Skip the hook for a single commit with `git commit --no-verify`.
+
 ## What this is about
 
 - A bit of fun, recreating what I remember from my early teen years in the mid 90s of the MacOS version of Civilization

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Block a commit if the repo gate (`make build`) fails.
+# Bypass with `git commit --no-verify`.
+
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "Running 'make build' before commit..."
+make build

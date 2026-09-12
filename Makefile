@@ -1,4 +1,8 @@
-.PHONY: build clean run
+.PHONY: setup build clean run
+
+setup:
+	git config core.hooksPath .githooks
+	chmod +x .githooks/pre-commit
 
 clean:
 	cargo clean
