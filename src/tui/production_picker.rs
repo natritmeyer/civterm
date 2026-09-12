@@ -425,8 +425,8 @@ mod tests {
         fn current_player_id(&self) -> PlayerId {
             PlayerId::new(0)
         }
-        fn city_income(&self, _id: CityId) -> crate::game_engine::game_view::CityIncome {
-            crate::game_engine::game_view::CityIncome {
+        fn city_income(&self, _id: CityId) -> crate::game_engine::CityIncome {
+            crate::game_engine::CityIncome {
                 food: 0,
                 resources: 0,
                 trade: 0,

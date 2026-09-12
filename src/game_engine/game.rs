@@ -1,4 +1,4 @@
-use crate::game_engine::game_view::CityIncome;
+use crate::game_engine::CityIncome;
 use crate::game_engine::player::Player;
 use crate::model::advancements::Advancement;
 use crate::model::cartography::{Location, Map};

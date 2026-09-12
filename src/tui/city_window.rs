@@ -4,8 +4,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
 use super::game_screen::{TILE_WIDTH, paint_tile};
+use crate::game_engine::CityIncome;
 use crate::game_engine::GameView;
-use crate::game_engine::game_view::CityIncome;
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::geography::SpecialResource;
 
