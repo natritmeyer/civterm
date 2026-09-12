@@ -6,6 +6,7 @@ setup:
 
 clean:
 	cargo clean
+	find . -name .DS_Store -delete
 
 build:
 	cargo fmt --all -- --check
