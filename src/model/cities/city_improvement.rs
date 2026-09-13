@@ -1,7 +1,8 @@
 use crate::model::advancements::Advancement;
+use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter, Serialize, Deserialize)]
 pub enum CityImprovement {
     Aqueduct,
     Bank,

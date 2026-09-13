@@ -20,6 +20,7 @@ pub const DEFAULT_MAP_WIDTH: usize = 80;
 /// Default height of a generated world.
 pub const DEFAULT_MAP_HEIGHT: usize = 50;
 
+#[derive(Debug)]
 pub struct Engine {
     pub(crate) game: Game,
     pub(crate) turn: u32,

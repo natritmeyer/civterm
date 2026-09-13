@@ -6,7 +6,9 @@ use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 use crate::model::geography::SpecialResource;
 use crate::model::units::{Unit, UnitClass, UnitId};
+use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Game {
     pub map: Map,
     pub players: Vec<Player>,

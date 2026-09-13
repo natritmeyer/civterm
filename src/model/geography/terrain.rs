@@ -1,8 +1,9 @@
 use super::movement_category::MovementCategory;
 use super::special_resource::SpecialResource;
 use super::terrain_improvement::TerrainImprovement;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Terrain {
     Ocean,
     Grassland,

@@ -17,6 +17,7 @@ use super::game_screen::{
 use super::playing_help::PlayingHelp;
 use super::production_picker::{self, ProductionPicker};
 use super::research_dialog::{self, ResearchDialog};
+use super::save_load_prompt::{self, SaveLoadKind, SaveLoadPrompt};
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
 use super::status_bar::StatusBar;
@@ -93,6 +94,14 @@ struct DiplomacyState {
     pending: Option<(UnitId, Direction)>,
 }
 
+/// The save-or-load prompt's live state: which kind it is, the path typed so
+/// far, and any failure message to show while the prompt stays open.
+struct SaveLoadState {
+    kind: SaveLoadKind,
+    input: String,
+    error: Option<String>,
+}
+
 pub struct App {
     started_at: Instant,
     selected: usize,
@@ -151,6 +160,15 @@ pub struct App {
     diplomacy: Option<DiplomacyState>,
     /// The last-drawn diplomacy-dialog rectangle, for mouse hit-testing.
     diplomacy_rect: Cell<Option<Rect>>,
+    /// The open save-or-load prompt, if one is showing.
+    save_prompt: Option<SaveLoadState>,
+    /// The last-drawn save-prompt rectangle, for mouse hit-testing.
+    save_prompt_rect: Cell<Option<Rect>>,
+    /// The competition and difficulty the current game was started or loaded
+    /// with. The setup fields are cleared when the game starts, so the save
+    /// path keeps its own copy for the file header.
+    game_competition: Option<Competition>,
+    game_difficulty: Option<Difficulty>,
     /// Whether the work picker floats over the map.
     work_picker_open: bool,
     /// The picker cursor: which improvement row is selected.
@@ -208,6 +226,10 @@ impl App {
             research_dialog_rect: Cell::new(None),
             diplomacy: None,
             diplomacy_rect: Cell::new(None),
+            save_prompt: None,
+            save_prompt_rect: Cell::new(None),
+            game_competition: None,
+            game_difficulty: None,
             work_picker_open: false,
             work_picker_cursor: 0,
             work_picker_scroll: 0,
@@ -439,9 +461,26 @@ impl App {
                 }
             }
         }
+        // The save/load prompt floats above everything, in the menu and in
+        // play alike, asking for the path to write to or read from.
+        if let Some(state) = &app.save_prompt {
+            let rect = save_load_prompt::dialog_rect(frame.area());
+            frame.render_widget(
+                SaveLoadPrompt::new(state.kind, state.input.clone(), state.error.clone()),
+                rect,
+            );
+            app.save_prompt_rect.set(Some(rect));
+        } else {
+            app.save_prompt_rect.set(None);
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
+        // While the save/load prompt is open it captures the keyboard.
+        if self.save_prompt.is_some() {
+            self.handle_save_prompt_key(key);
+            return false;
+        }
         match self.phase {
             Phase::Menu => self.handle_menu_key(key),
             Phase::ChoosingCiv => self.handle_civ_key(key),
@@ -494,6 +533,7 @@ fn playing_commands(selected: bool, can_found: bool) -> Vec<(&'static str, &'sta
     commands.push(("tab", "next unit"));
     commands.push(("space", "end turn"));
     commands.push(("e", "events"));
+    commands.push(("S", "save"));
     commands.push(("?", "help"));
     commands.push(("q", "quit"));
     commands

@@ -1,6 +1,10 @@
 use super::*;
-use crate::game_engine::Command;
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crate::game_engine::{Command, load_game, save_game};
+use crate::model::competition::Competition;
+use crate::model::difficulty::Difficulty;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+const DEFAULT_SAVE_PATH: &str = "civterm.civ";
 
 impl App {
     pub(super) fn handle_research_dialog_key(&mut self, key: KeyEvent) {
@@ -196,5 +200,125 @@ impl App {
             .get()
             .map(|panel| research_dialog::list_rect(panel).height as usize)
             .unwrap_or(8)
+    }
+
+    /// Open the save prompt in play. The path starts on a predictable default
+    /// so a plain Enter saves without typing.
+    pub(super) fn open_save_prompt(&mut self) {
+        self.save_prompt = Some(SaveLoadState {
+            kind: SaveLoadKind::Save,
+            input: DEFAULT_SAVE_PATH.to_string(),
+            error: None,
+        });
+    }
+
+    /// Open the load prompt from the menu's "Load Saved Game" item.
+    pub(super) fn open_load_prompt(&mut self) {
+        self.selected = 1;
+        self.save_prompt = Some(SaveLoadState {
+            kind: SaveLoadKind::Load,
+            input: String::new(),
+            error: None,
+        });
+    }
+
+    /// Handle a keystroke while the save/load prompt is open: the prompt
+    /// captures everything except its own controls.
+    pub(super) fn handle_save_prompt_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(c)
+                if !c.is_control()
+                    && (key.modifiers.is_empty()
+                        || key.modifiers.contains(KeyModifiers::SHIFT)) =>
+            {
+                let Some(state) = &mut self.save_prompt else {
+                    return;
+                };
+                state.error = None;
+                if state.input.chars().count() < 200 {
+                    state.input.push(c);
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(state) = &mut self.save_prompt {
+                    state.input.pop();
+                }
+            }
+            KeyCode::Enter => self.save_prompt_confirm(),
+            KeyCode::Esc => self.close_save_prompt(),
+            _ => {}
+        }
+    }
+
+    /// Close the prompt without acting on the typed path.
+    pub(super) fn close_save_prompt(&mut self) {
+        self.save_prompt = None;
+        self.save_prompt_rect.set(None);
+    }
+
+    /// Act on the typed path: save or load as the prompt kind demands. An
+    /// empty path or a failed operation keeps the prompt open showing why.
+    pub(super) fn save_prompt_confirm(&mut self) {
+        let Some(state) = self.save_prompt.take() else {
+            return;
+        };
+        self.save_prompt_rect.set(None);
+        let path = state.input.trim().to_string();
+        if path.is_empty() {
+            self.save_prompt = Some(SaveLoadState {
+                kind: state.kind,
+                input: state.input,
+                error: Some("Enter a path".to_string()),
+            });
+            return;
+        }
+        match state.kind {
+            SaveLoadKind::Save => self.perform_save(&path),
+            SaveLoadKind::Load => self.perform_load(&path),
+        }
+    }
+
+    /// Write the current game to `path`.
+    fn perform_save(&mut self, path: &str) {
+        let Some(engine) = self.engine.take() else {
+            return;
+        };
+        let competition = self
+            .game_competition
+            .unwrap_or(Competition::new(Competition::MIN));
+        let difficulty = self.game_difficulty.unwrap_or(Difficulty::Normal);
+        let result = save_game(path, &engine, competition, difficulty);
+        self.engine = Some(engine);
+        match result {
+            Ok(()) => self.record_events(vec![GameEvent::new(format!("Game saved to {path}"))]),
+            Err(err) => {
+                self.save_prompt = Some(SaveLoadState {
+                    kind: SaveLoadKind::Save,
+                    input: path.to_string(),
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+
+    /// Load the game at `path`, replacing the current one if successful.
+    fn perform_load(&mut self, path: &str) {
+        match load_game(path) {
+            Ok(loaded) => {
+                self.engine = Some(loaded.engine);
+                self.game_competition = Some(loaded.competition);
+                self.game_difficulty = Some(loaded.difficulty);
+                self.event_log.clear();
+                self.enter_playing();
+                self.record_events(vec![GameEvent::new(format!("Loaded game from {path}"))]);
+            }
+            Err(err) => {
+                self.save_prompt = Some(SaveLoadState {
+                    kind: SaveLoadKind::Load,
+                    input: path.to_string(),
+                    error: Some(err.to_string()),
+                });
+            }
+        }
     }
 }

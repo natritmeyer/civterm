@@ -8,6 +8,7 @@ pub mod game_screen;
 pub mod playing_help;
 pub mod production_picker;
 pub mod research_dialog;
+pub mod save_load_prompt;
 pub mod splash;
 pub mod start_confirm;
 pub mod status_bar;

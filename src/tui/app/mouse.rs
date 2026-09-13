@@ -13,6 +13,11 @@ impl App {
         if self.engine.is_none() {
             return;
         }
+        // The save/load prompt is keyboard-only; swallow mouse input while it
+        // is showing so clicks cannot reach the map underneath.
+        if self.save_prompt_rect.get().is_some() {
+            return;
+        }
         // Remember the pointer position on every mouse event (clicks and
         // drags too) so hover can steer the map highlight.
         if mouse.column != u16::MAX && mouse.row != u16::MAX {

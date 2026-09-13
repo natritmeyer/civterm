@@ -1,6 +1,7 @@
 use crate::model::cartography::Location;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Exploration {
     width: usize,
     height: usize,

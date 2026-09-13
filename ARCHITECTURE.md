@@ -79,6 +79,19 @@ no cities).
   clock. The map, the starting positions, and every later random draw come
   out of that stream.
 
+## Save and load
+
+- `game_engine/save.rs` serializes the whole match — engine (map, units,
+  cities, diplomacy, research, turn counter, current player, RNG) plus the
+  UI-level competition and difficulty and the engine's event log — to JSON
+  via serde, one format per version (`SAVE_FORMAT_VERSION = 1`). The year is
+  derived from the turn on load, never stored. A newer save than the running
+  build understands is refused with a version error.
+- The `'S'` key in play opens a textual prompt (default path `civterm.civ`);
+  "Load Saved Game" on the splash menu does the same for loading. The prompt
+  is keyboard-only and consumes the mouse while open. The typed path is
+  handed to `std::fs` exactly as given.
+
 ## Rendering
 
 `main.rs` puts the terminal into raw mode, an alternate screen, and mouse

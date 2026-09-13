@@ -14,7 +14,7 @@ impl App {
                     false
                 }
                 'l' => {
-                    self.selected = 1;
+                    self.open_load_prompt();
                     false
                 }
                 _ => false,
@@ -30,6 +30,10 @@ impl App {
             KeyCode::Enter => match self.selected {
                 0 => {
                     self.start_new_game();
+                    false
+                }
+                1 => {
+                    self.open_load_prompt();
                     false
                 }
                 2 => true,
@@ -191,6 +195,16 @@ impl App {
         );
         engine.populate_starting_world();
         self.engine = Some(engine);
+        self.game_competition = self.chosen_competition;
+        self.game_difficulty = self.chosen_difficulty;
+        self.reset_setup();
+        self.event_log.clear();
+        self.enter_playing();
+    }
+
+    /// Bring the app into the given playing state: selection, camera, and the
+    /// overlay windows all start clean. Shared by a new game and a loaded one.
+    pub(super) fn enter_playing(&mut self) {
         self.select_first_unit();
         self.camera.set((0, 0));
         self.camera_follow.set(true);
@@ -199,8 +213,6 @@ impl App {
         self.drag_carry.set((0, 0));
         self.drag_engaged.set(false);
         self.phase = Phase::Playing;
-        self.reset_setup();
-        self.event_log.clear();
         self.selected_city = None;
         self.city_window_scroll = 0;
         self.moused_window = Cell::new(None);
@@ -217,6 +229,9 @@ impl App {
         self.work_picker_cursor = 0;
         self.work_picker_scroll = 0;
         self.work_picker_rect = Cell::new(None);
+        self.save_prompt = None;
+        self.save_prompt_rect = Cell::new(None);
+        self.battle_animation = None;
     }
 
     pub(super) fn start_new_game(&mut self) {

@@ -115,6 +115,10 @@ impl App {
                 self.cancel_selected_unit_order();
                 false
             }
+            KeyCode::Char('S') => {
+                self.open_save_prompt();
+                false
+            }
             KeyCode::Char('e') => {
                 self.show_events = !self.show_events;
                 false
@@ -278,6 +282,7 @@ impl App {
             || self.work_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
             || self.moused_window.get().is_some()
+            || self.save_prompt_rect.get().is_some()
             || self.drag_origin.get().is_some()
         {
             return None;

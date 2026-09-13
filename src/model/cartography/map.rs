@@ -1,7 +1,9 @@
 use crate::model::cartography::Tile;
 use crate::model::cartography::{Direction, Location};
 use crate::model::geography::Terrain;
+use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Map {
     pub width: usize,
     pub height: usize,

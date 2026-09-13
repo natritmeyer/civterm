@@ -41,11 +41,24 @@ fn new_game_opens_the_civ_selector() {
 }
 
 #[test]
-fn load_only_highlights_the_item() {
+fn load_opens_the_load_prompt() {
     let mut app = App::new();
     app.handle_key(key(KeyCode::Char('l')));
     assert_eq!(app.selected, 1);
     assert!(matches!(app.phase, Phase::Menu));
+    let prompt = app.save_prompt.as_ref().unwrap();
+    assert_eq!(prompt.kind, SaveLoadKind::Load);
+    assert_eq!(prompt.input, "");
+}
+
+#[test]
+fn enter_on_the_load_item_opens_the_load_prompt() {
+    let mut app = App::new();
+    app.handle_key(key(KeyCode::Right));
+    app.handle_key(key(KeyCode::Enter));
+    assert!(matches!(app.phase, Phase::Menu));
+    let prompt = app.save_prompt.as_ref().unwrap();
+    assert_eq!(prompt.kind, SaveLoadKind::Load);
 }
 
 #[test]
@@ -2004,4 +2017,97 @@ fn clicking_cancel_closes_the_work_picker_without_an_order() {
     assert!(!app.work_picker_open);
     let engine = app.engine.as_ref().unwrap();
     assert_eq!(engine.player_units()[0].order(), UnitOrder::Idle);
+}
+
+#[test]
+fn the_load_prompt_accumulates_typed_paths_and_esc_closes_it() {
+    let mut app = App::new();
+    app.handle_key(key(KeyCode::Char('l')));
+    for ch in "/tmp/saved.civ".chars() {
+        app.handle_key(key(KeyCode::Char(ch)));
+    }
+    assert_eq!(app.save_prompt.as_ref().unwrap().input, "/tmp/saved.civ");
+    app.handle_key(key(KeyCode::Backspace));
+    assert_eq!(app.save_prompt.as_ref().unwrap().input, "/tmp/saved.ci");
+    app.handle_key(key(KeyCode::Esc));
+    assert!(app.save_prompt.is_none());
+}
+
+#[test]
+fn saving_writes_the_game_to_disk() {
+    let (mut app, _, _) = playing_app();
+    let file = std::env::temp_dir().join(format!("civterm-app-save-{}.civ", std::process::id()));
+    let path = file.to_string_lossy().to_string();
+    app.open_save_prompt();
+    for _ in 0.."civterm.civ".len() {
+        app.handle_key(key(KeyCode::Backspace));
+    }
+    for ch in path.chars() {
+        app.handle_key(key(KeyCode::Char(ch)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+    assert!(app.save_prompt.is_none());
+    assert!(file.exists());
+    let _ = std::fs::remove_file(file);
+}
+
+#[test]
+fn an_empty_save_path_keeps_the_prompt_open_with_an_error() {
+    let (mut app, _, _) = playing_app();
+    app.open_save_prompt();
+    for _ in 0..("civterm.civ".len() + 1) {
+        app.handle_key(key(KeyCode::Backspace));
+    }
+    app.handle_key(key(KeyCode::Enter));
+    let prompt = app.save_prompt.as_ref().unwrap();
+    assert_eq!(prompt.error.as_deref(), Some("Enter a path"));
+    assert_eq!(prompt.kind, SaveLoadKind::Save);
+}
+
+#[test]
+fn loading_a_missing_file_keeps_the_prompt_open_with_an_error() {
+    let mut app = App::new();
+    app.handle_key(key(KeyCode::Char('l')));
+    let target = std::env::temp_dir().join("civterm-no-such-app-file.civ");
+    let path = target.to_string_lossy().to_string();
+    for ch in path.chars() {
+        app.handle_key(key(KeyCode::Char(ch)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+    assert!(matches!(app.phase, Phase::Menu));
+    let prompt = app.save_prompt.as_ref().unwrap();
+    assert!(prompt.error.is_some());
+}
+
+#[test]
+fn a_saved_game_loads_back_into_play() {
+    let (mut app, _, _) = playing_app();
+    let file =
+        std::env::temp_dir().join(format!("civterm-app-roundtrip-{}.civ", std::process::id()));
+    let path = file.to_string_lossy().to_string();
+    app.open_save_prompt();
+    for _ in 0.."civterm.civ".len() {
+        app.handle_key(key(KeyCode::Backspace));
+    }
+    for ch in path.chars() {
+        app.handle_key(key(KeyCode::Char(ch)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+    assert!(app.save_prompt.is_none());
+    assert!(file.exists());
+
+    // Quit to the menu and load the saved game back in.
+    app.handle_key(key(KeyCode::Char('q')));
+    assert!(matches!(app.phase, Phase::Menu));
+    app.handle_key(key(KeyCode::Char('l')));
+    for ch in path.chars() {
+        app.handle_key(key(KeyCode::Char(ch)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+    assert!(matches!(app.phase, Phase::Playing));
+    assert!(app.save_prompt.is_none());
+    let engine = app.engine.as_ref().unwrap();
+    assert_eq!(engine.current_player(), Civilization::American);
+    assert!(!engine.player_cities().is_empty());
+    let _ = std::fs::remove_file(file);
 }

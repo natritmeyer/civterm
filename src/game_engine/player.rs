@@ -4,12 +4,13 @@ use crate::model::cartography::Location;
 use crate::model::cities::{CityImprovement, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::units::UnitClass;
+use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
 /// The gold a civilization begins a new game with.
 pub const STARTING_GOLD: u32 = 50;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Player {
     pub civilization: Civilization,
     gold: u32,

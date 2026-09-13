@@ -3,8 +3,9 @@ use crate::model::cities::CityId;
 use crate::model::civilizations::PlayerId;
 use crate::model::geography::TerrainImprovement;
 use crate::model::units::{UnitClass, UnitId, UnitOrder};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Unit {
     pub unit_class: UnitClass,
     pub location: Location,

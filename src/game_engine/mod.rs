@@ -14,6 +14,7 @@ pub mod game_view;
 mod movement;
 pub mod player;
 mod research;
+pub mod save;
 mod turns;
 
 #[cfg(test)]
@@ -27,3 +28,4 @@ pub use event::Event;
 pub use exploration::Exploration;
 pub use game_view::GameView;
 pub use player::Player;
+pub use save::{LoadedGame, SAVE_FORMAT_VERSION, SaveData, SaveError, load_game, save_game};
