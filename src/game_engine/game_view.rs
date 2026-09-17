@@ -3,13 +3,16 @@ use crate::model::advancements::Advancement;
 use crate::model::cartography::Tile;
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
-use crate::model::units::Unit;
+use crate::model::units::{Unit, UnitId};
 
 pub trait GameView {
     fn width(&self) -> usize;
     fn height(&self) -> usize;
     fn tile(&self, x: usize, y: usize) -> &Tile;
     fn units_at(&self, x: usize, y: usize) -> Vec<&Unit>;
+    /// The unit with the given id, anywhere in the world — including one
+    /// being transported aboard a ship, which has no map square of its own.
+    fn unit(&self, id: UnitId) -> Option<&Unit>;
     fn city_at(&self, x: usize, y: usize) -> Option<&City>;
     /// All units owned by the current player.
     fn player_units(&self) -> Vec<&Unit>;

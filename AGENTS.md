@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 496 passing unit
+Run `make build` after any change. Current test baseline: 513 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -104,13 +104,35 @@ a hard boundary; keep it by convention.
   `spend_turn()`), then `game.reveal_tiles_at(owner, destination)`.
   Combat advances and city captures are separate early returns in
   `move_unit`, so each reveals for itself — a unit that changes tiles
-  without revealing leaves its new surroundings in fog.
+  without revealing leaves its new surroundings in fog. Boarding and
+  disembarking are the one exception to the cost: both reveal, neither
+  spends movement (the tail skips `spend_moves` when the mover was
+  transported, and `try_board` never calls it).
 - A civilization is eliminated only by an actual loss, never by a sweep over
   start-of-game state: its last city captured (even with units still in the
   field — those are removed and the city-capture disband path covers
   homed units), or its last unit killed while it owns no cities. Test
   fixtures with zero units must NOT be eliminated. Eliminated players are
   skipped when the turn advances.
+
+## Transport invariants
+
+- A naval transport (trireme, sail, frigate) carries at most
+  `UnitClass::carry_capacity()` (2) land units. Boarding is the only lawful
+  land→water transition: a land unit on a tile one step (any of the 8
+  directions) from a friendly transport with a free berth moves onto the
+  carrier's tile. Disembarking is a plain move from the carrier's tile back
+  onto an adjacent land tile. Neither costs movement.
+- A transported unit has no map square of its own. `GameView::units_at`
+  omits it, but `player_units` keeps it so it can be selected to disembark;
+  `GameView::unit(id)` finds it regardless. `Game::sync_cargo` re-points
+  every cargo unit's `location` to the carrier after each carrier move.
+- A transported unit is inert: it cannot move except ashore, fortify, work,
+  stand sentry, or found a city. Cargo never fights — `select_defender`,
+  `enemies_present` and `ensure_peaceful_passage` skip transported units.
+- When a carrier is removed, its cargo must go too: combat calls
+  `Game::disband_cargo_of`, and `disband_units_homed_to` sweeps cargo
+  aboard a doomed ship. No unit may reference a missing carrier.
 
 ## TUI rendering invariants
 

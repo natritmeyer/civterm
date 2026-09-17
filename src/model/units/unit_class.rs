@@ -71,6 +71,16 @@ impl UnitClass {
         }
     }
 
+    /// How many land units this class may carry across water. The naval
+    /// transports — trireme, sail and frigate — all ferry up to two troops;
+    /// every other class carries none.
+    pub fn carry_capacity(&self) -> usize {
+        match self {
+            UnitClass::Trireme | UnitClass::Sail | UnitClass::Frigate => 2,
+            _ => 0,
+        }
+    }
+
     pub fn resource_cost(&self) -> u32 {
         match self {
             UnitClass::Militia => 10,
@@ -272,6 +282,27 @@ mod tests {
             UnitClass::Caravan,
         ] {
             assert!(!class.can_travel_water());
+        }
+    }
+
+    #[test]
+    fn the_naval_transports_carry_units_across_water() {
+        for class in [UnitClass::Trireme, UnitClass::Sail, UnitClass::Frigate] {
+            assert_eq!(class.carry_capacity(), 2);
+        }
+        for class in [
+            UnitClass::Settler,
+            UnitClass::Militia,
+            UnitClass::Phalanx,
+            UnitClass::Legion,
+            UnitClass::Cavalry,
+            UnitClass::Chariot,
+            UnitClass::Knight,
+            UnitClass::Catapult,
+            UnitClass::Diplomat,
+            UnitClass::Caravan,
+        ] {
+            assert_eq!(class.carry_capacity(), 0);
         }
     }
 }

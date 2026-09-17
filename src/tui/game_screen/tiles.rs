@@ -168,11 +168,17 @@ pub(crate) fn paint_tile(
 
         // The selected unit awaiting instruction flashes once per second: its
         // tile turns the civilization flag colour then dims back to terrain.
+        // The lookup goes through `view.unit`, not `units_at`, so a unit being
+        // ferried aboard a ship still flashes its carrier's tile; it has no
+        // map square of its own but is still awaiting orders to disembark.
         if flashing
             && let Some(id) = selected_unit
-            && unit
-                .iter()
-                .any(|u| u.id() == id && u.order() == UnitOrder::Idle && u.moves_remaining() > 0)
+            && view.unit(id).is_some_and(|u| {
+                u.location.x == map_x as u16
+                    && u.location.y == world_y as u16
+                    && u.order() == UnitOrder::Idle
+                    && u.moves_remaining() > 0
+            })
         {
             style = style.bg(civilization_color(view.current_player()));
         }

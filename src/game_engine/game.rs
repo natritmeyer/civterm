@@ -97,19 +97,30 @@ impl Game {
     }
 
     /// Dissolve every unit whose home city is `city_id` (used when a city is
-    /// captured). Returns the number of units disbanded.
+    /// captured), along with any unit ferried aboard a disbanded ship — no
+    /// cargo outlives its carrier. Returns the number of units disbanded.
     pub fn disband_units_homed_to(&mut self, city_id: CityId) -> u32 {
-        let mut disbanded = 0;
-        let mut i = 0;
-        while i < self.units.len() {
-            if self.units[i].home_city() == city_id {
-                self.units.swap_remove(i);
-                disbanded += 1;
-            } else {
-                i += 1;
-            }
-        }
-        disbanded
+        let mut doomed: Vec<UnitId> = self
+            .units
+            .iter()
+            .filter(|unit| unit.home_city() == city_id)
+            .map(|unit| unit.id())
+            .collect();
+        // A unit aboard a doomed carrier goes down with it. Cargo is never
+        // itself a carrier, so one sweep settles the whole removal.
+        let cargo: Vec<UnitId> = self
+            .units
+            .iter()
+            .filter(|unit| {
+                unit.aboard()
+                    .is_some_and(|carrier| doomed.contains(&carrier))
+            })
+            .map(|unit| unit.id())
+            .collect();
+        doomed.extend(cargo);
+        let before = self.units.len();
+        self.units.retain(|unit| !doomed.contains(&unit.id()));
+        (before - self.units.len()) as u32
     }
 
     /// Remove every unit owned by `owner` (used when a civilization is
@@ -126,6 +137,37 @@ impl Game {
             }
         }
         removed
+    }
+
+    /// Dissolve every unit transported aboard `carrier` (used when a ship is
+    /// sunk at sea). Returns the number of units disbanded.
+    pub fn disband_cargo_of(&mut self, carrier: UnitId) -> u32 {
+        let mut disbanded = 0;
+        let mut i = 0;
+        while i < self.units.len() {
+            if self.units[i].aboard() == Some(carrier) {
+                self.units.swap_remove(i);
+                disbanded += 1;
+            } else {
+                i += 1;
+            }
+        }
+        disbanded
+    }
+
+    /// Move every unit transported aboard `carrier` onto `carrier`'s current
+    /// tile, so the embarked unit's coordinates track its ship. Call after
+    /// the carrier's own location has been updated.
+    pub fn sync_cargo(&mut self, carrier: UnitId) {
+        let Some(index) = self.units.iter().position(|unit| unit.id() == carrier) else {
+            return;
+        };
+        let tile = self.units[index].location;
+        for unit in self.units.iter_mut() {
+            if unit.aboard() == Some(carrier) {
+                unit.location = tile;
+            }
+        }
     }
 
     pub fn add_city(
@@ -617,6 +659,27 @@ mod tests {
     }
 
     #[test]
+    fn disbanding_a_homed_carrier_also_dissolves_its_cargo() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        let trireme = game.spawn_unit(UnitClass::Trireme, Location::new(0, 0), player(), home());
+        // Cargo homed elsewhere: it would survive were it not aboard the ship.
+        let cargo = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            player(),
+            CityId::new(1),
+        );
+        game.units
+            .iter_mut()
+            .find(|unit| unit.id() == cargo)
+            .unwrap()
+            .board(trireme);
+        assert_eq!(game.disband_units_homed_to(home()), 2);
+        assert!(!game.units.iter().any(|unit| unit.id() == trireme));
+        assert!(!game.units.iter().any(|unit| unit.id() == cargo));
+    }
+
+    #[test]
     fn removing_units_owned_by_a_player_leaves_other_units_behind() {
         let mut game = Game::new(
             3,
@@ -635,6 +698,76 @@ mod tests {
         assert_eq!(game.remove_units_owned_by(player()), 2);
         assert_eq!(game.units.len(), 1);
         assert!(game.units.iter().any(|unit| unit.id() == rival));
+    }
+
+    #[test]
+    fn syncing_cargo_tracks_transported_units_to_their_carrier() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        let trireme = game.spawn_unit(UnitClass::Trireme, Location::new(0, 0), player(), home());
+        let first = game.spawn_unit(UnitClass::Legion, Location::new(8, 8), player(), home());
+        let second = game.spawn_unit(UnitClass::Legion, Location::new(8, 8), player(), home());
+        game.units
+            .iter_mut()
+            .find(|unit| unit.id() == first)
+            .unwrap()
+            .board(trireme);
+        game.units
+            .iter_mut()
+            .find(|unit| unit.id() == second)
+            .unwrap()
+            .board(trireme);
+        // The ship sails west; only its own cargo follows.
+        game.units[0].location = Location::new(1, 1);
+        game.sync_cargo(trireme);
+        assert_eq!(game.units[1].location, Location::new(1, 1));
+        assert_eq!(game.units[2].location, Location::new(1, 1));
+        // An unrelated unit stays where it was.
+        let stranger = game.spawn_unit(UnitClass::Phalanx, Location::new(2, 0), player(), home());
+        game.sync_cargo(trireme);
+        assert_eq!(
+            game.units
+                .iter()
+                .find(|unit| unit.id() == stranger)
+                .unwrap()
+                .location,
+            Location::new(2, 0)
+        );
+        assert_eq!(game.units[0].location, Location::new(1, 1));
+    }
+
+    #[test]
+    fn syncing_cargo_is_a_no_op_for_an_unknown_carrier() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        let unit = game.spawn_unit(UnitClass::Legion, Location::new(0, 0), player(), home());
+        game.sync_cargo(UnitId::new(99));
+        assert_eq!(game.units.len(), 1);
+        assert!(game.units.iter().any(|u| u.id() == unit));
+    }
+
+    #[test]
+    fn disbanding_cargo_dissolves_only_units_aboard_the_sunken_ship() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        let trireme = game.spawn_unit(UnitClass::Trireme, Location::new(0, 0), player(), home());
+        let cargo = game.spawn_unit(UnitClass::Legion, Location::new(0, 0), player(), home());
+        let other = game.spawn_unit(UnitClass::Phalanx, Location::new(1, 0), player(), home());
+        game.units
+            .iter_mut()
+            .find(|unit| unit.id() == cargo)
+            .unwrap()
+            .board(trireme);
+        assert_eq!(game.disband_cargo_of(trireme), 1);
+        assert_eq!(game.units.len(), 2);
+        assert!(!game.units.iter().any(|unit| unit.id() == cargo));
+        assert!(game.units.iter().any(|unit| unit.id() == trireme));
+        assert!(game.units.iter().any(|unit| unit.id() == other));
+    }
+
+    #[test]
+    fn disbanding_cargo_with_nobody_aboard_disbands_nothing() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        let trireme = game.spawn_unit(UnitClass::Trireme, Location::new(0, 0), player(), home());
+        assert_eq!(game.disband_cargo_of(trireme), 0);
+        assert_eq!(game.units.len(), 1);
     }
 
     #[test]

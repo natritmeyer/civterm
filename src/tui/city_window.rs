@@ -598,6 +598,9 @@ mod tests {
         fn units_at(&self, _x: usize, _y: usize) -> Vec<&crate::model::units::Unit> {
             Vec::new()
         }
+        fn unit(&self, _id: crate::model::units::UnitId) -> Option<&crate::model::units::Unit> {
+            None
+        }
         fn city_at(&self, x: usize, y: usize) -> Option<&City> {
             self.city
                 .as_ref()

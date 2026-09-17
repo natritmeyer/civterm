@@ -4,7 +4,7 @@ use crate::model::advancements::Advancement;
 use crate::model::cartography::{Location, Tile};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::{Civilization, PlayerId};
-use crate::model::units::Unit;
+use crate::model::units::{Unit, UnitId};
 
 impl GameView for Engine {
     fn width(&self) -> usize {
@@ -24,7 +24,12 @@ impl GameView for Engine {
             .units
             .iter()
             .filter(|unit| unit.location.x == x as u16 && unit.location.y == y as u16)
+            .filter(|unit| !unit.is_transported())
             .collect()
+    }
+
+    fn unit(&self, id: UnitId) -> Option<&Unit> {
+        self.game.units.iter().find(|unit| unit.id() == id)
     }
 
     fn city_at(&self, x: usize, y: usize) -> Option<&City> {

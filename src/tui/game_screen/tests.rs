@@ -27,6 +27,9 @@ impl GameView for FakeView {
     fn units_at(&self, _x: usize, _y: usize) -> Vec<&crate::model::units::Unit> {
         self.unit.iter().collect()
     }
+    fn unit(&self, id: crate::model::units::UnitId) -> Option<&crate::model::units::Unit> {
+        self.unit.as_ref().filter(|unit| unit.id() == id)
+    }
     fn city_at(&self, _x: usize, _y: usize) -> Option<&crate::model::cities::City> {
         self.city.as_ref()
     }

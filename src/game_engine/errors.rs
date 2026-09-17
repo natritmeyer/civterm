@@ -7,6 +7,7 @@ pub enum MoveError {
     NoMovesRemaining(UnitId),
     CannotMoveThere,
     CannotCrossLandSeaBorder(UnitId),
+    NoShipToBoard(UnitId),
     PeacefulTileOccupied(UnitId),
 }
 
@@ -18,6 +19,9 @@ impl MoveError {
             MoveError::CannotMoveThere => "Cannot move there".to_string(),
             MoveError::CannotCrossLandSeaBorder(unit) => {
                 format!("Unit {} cannot cross land/sea border", unit.index())
+            }
+            MoveError::NoShipToBoard(unit) => {
+                format!("Unit {} cannot board: no ship there", unit.index())
             }
             MoveError::PeacefulTileOccupied(unit) => format!(
                 "Unit {} cannot move onto a tile occupied by a civilization at peace",
@@ -32,6 +36,7 @@ pub enum SettleError {
     NoSuchUnit(UnitId),
     NotASettler(UnitId),
     LandRequired(UnitId),
+    Transported(UnitId),
     CityAlreadyHere(Location),
 }
 
@@ -44,6 +49,9 @@ impl SettleError {
             }
             SettleError::LandRequired(unit) => {
                 format!("Unit {} must be on land to found a city", unit.index())
+            }
+            SettleError::Transported(unit) => {
+                format!("Unit {} is aboard a ship", unit.index())
             }
             SettleError::CityAlreadyHere(_) => "A city already occupies that tile".to_string(),
         }

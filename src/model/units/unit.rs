@@ -16,6 +16,11 @@ pub struct Unit {
     veteran: bool,
     moves_remaining: u8,
     work_progress: u8,
+    /// The ship carrying this unit, if any. A transported unit occupies no
+    /// map square of its own: it is not drawn, meets no enemies, and follows
+    /// the carrier's tile. `None` for a unit standing on the map.
+    #[serde(default)]
+    aboard: Option<UnitId>,
 }
 
 impl Unit {
@@ -36,6 +41,7 @@ impl Unit {
             veteran: false,
             moves_remaining: unit_class.moves(),
             work_progress: 0,
+            aboard: None,
         }
     }
 
@@ -57,6 +63,31 @@ impl Unit {
 
     pub fn moves_remaining(&self) -> u8 {
         self.moves_remaining
+    }
+
+    /// The ship transporting this unit, if it is aboard one.
+    pub fn aboard(&self) -> Option<UnitId> {
+        self.aboard
+    }
+
+    /// Whether the unit is aboard a ship rather than on the map. A
+    /// transported unit has no field agency and moves with its carrier.
+    pub fn is_transported(&self) -> bool {
+        self.aboard.is_some()
+    }
+
+    /// Put the unit aboard `carrier`. The caller sets the unit's `location`
+    /// to the carrier's tile; boarding drops whatever order the unit held,
+    /// since a transported unit neither fortifies nor works.
+    pub fn board(&mut self, carrier: UnitId) {
+        self.aboard = Some(carrier);
+        self.order = UnitOrder::Idle;
+        self.work_progress = 0;
+    }
+
+    /// Bring the unit back onto the map, leaving its carrier behind.
+    pub fn disembark(&mut self) {
+        self.aboard = None;
     }
 
     pub fn spend_moves(&mut self, amount: u8) {
@@ -280,5 +311,51 @@ mod tests {
         );
         unit.promote();
         assert!(unit.is_veteran());
+    }
+
+    #[test]
+    fn unit_starts_on_the_map_aboard_nothing() {
+        let unit = Unit::new(
+            UnitClass::Legion,
+            Location::new(2, 3),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
+        assert!(!unit.is_transported());
+        assert_eq!(unit.aboard(), None);
+    }
+
+    #[test]
+    fn boarding_records_the_carrier_and_drops_any_order() {
+        let mut unit = Unit::new(
+            UnitClass::Settler,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
+        unit.fortify();
+        let trireme = UnitId::new(4);
+        unit.board(trireme);
+        assert!(unit.is_transported());
+        assert_eq!(unit.aboard(), Some(trireme));
+        assert_eq!(unit.order(), UnitOrder::Idle);
+        assert_eq!(unit.work_progress(), 0);
+    }
+
+    #[test]
+    fn disembarking_returns_the_unit_to_the_map() {
+        let mut unit = Unit::new(
+            UnitClass::Legion,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
+        unit.board(UnitId::new(4));
+        unit.disembark();
+        assert!(!unit.is_transported());
+        assert_eq!(unit.aboard(), None);
     }
 }

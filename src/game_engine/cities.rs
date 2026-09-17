@@ -137,6 +137,9 @@ impl Engine {
         if !unit.unit_class.can_found_city() {
             return Err(SettleError::NotASettler(unit.id()));
         }
+        if unit.is_transported() {
+            return Err(SettleError::Transported(unit.id()));
+        }
         let location = unit.location;
         if self.game.map.tile_at(location).terrain.is_water() {
             return Err(SettleError::LandRequired(unit.id()));

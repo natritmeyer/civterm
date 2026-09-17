@@ -36,8 +36,17 @@ impl Engine {
         if attacker_won {
             let was_veteran = self.game.units[attacker_idx].is_veteran();
             self.game.remove_unit(defender_id);
+            let lost_cargo = self.game.disband_cargo_of(defender_id);
+            if lost_cargo > 0 {
+                self.events.push(Event::new(format!(
+                    "{lost_cargo} transported units are lost with Unit {}",
+                    defender_id.index()
+                )));
+            }
             let tile_is_clear = !self.game.units.iter().any(|unit| {
-                unit.location == tile && self.game.at_war(attacker_owner, unit.owner())
+                !unit.is_transported()
+                    && unit.location == tile
+                    && self.game.at_war(attacker_owner, unit.owner())
             });
             // Advancing onto the cleared tile reveals the ring around it.
             if tile_is_clear {
@@ -47,10 +56,14 @@ impl Engine {
             if tile_is_clear {
                 attacker_unit.location = tile;
             }
+            // A transported attacker stepped off its ship to fight; cargo
+            // still aboard the winner follows it onto a cleared tile.
+            attacker_unit.disembark();
             attacker_unit.spend_turn();
             if !was_veteran {
                 attacker_unit.promote();
             }
+            self.game.sync_cargo(attacker_id);
             self.events.push(Event::new(format!(
                 "Unit {} defeats Unit {}",
                 attacker_id.index(),
@@ -59,6 +72,13 @@ impl Engine {
             self.eliminate_if_annihilated(defender_owner);
         } else {
             self.game.remove_unit(attacker_id);
+            let lost_cargo = self.game.disband_cargo_of(attacker_id);
+            if lost_cargo > 0 {
+                self.events.push(Event::new(format!(
+                    "{lost_cargo} transported units are lost with Unit {}",
+                    attacker_id.index()
+                )));
+            }
             self.events.push(Event::new(format!(
                 "Unit {} repels Unit {}",
                 defender_id.index(),
@@ -94,6 +114,7 @@ impl Engine {
             .change_owner(self.current_player_index);
         let mut_unit = self.owned_unit_mut(unit).unwrap();
         mut_unit.location = destination;
+        mut_unit.disembark();
         mut_unit.spend_turn();
         self.game
             .reveal_tiles_at(self.current_player_index, destination);
@@ -158,6 +179,7 @@ impl Engine {
             .filter(|(_, unit)| {
                 unit.location == tile
                     && unit.owner() != owner
+                    && !unit.is_transported()
                     && self.game.at_war(owner, unit.owner())
             })
             .max_by(|(_, a), (_, b)| {

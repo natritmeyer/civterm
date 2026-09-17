@@ -330,6 +330,9 @@ mod tests {
         fn units_at(&self, _x: usize, _y: usize) -> Vec<&Unit> {
             Vec::new()
         }
+        fn unit(&self, id: crate::model::units::UnitId) -> Option<&Unit> {
+            (self.unit.id() == id).then_some(&self.unit)
+        }
         fn city_at(&self, _x: usize, _y: usize) -> Option<&City> {
             None
         }

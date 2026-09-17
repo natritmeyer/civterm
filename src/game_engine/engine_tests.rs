@@ -702,7 +702,7 @@ fn a_land_unit_cannot_enter_water() {
         unit: UnitId::new(0),
         direction: Direction::E,
     });
-    assert_eq!(events[0].message(), "Unit 0 cannot cross land/sea border");
+    assert_eq!(events[0].message(), "Unit 0 cannot board: no ship there");
     assert_eq!(engine.game.units[0].location, Location::new(1, 1));
     assert_eq!(engine.game.units[0].moves_remaining(), 1);
 }
@@ -2358,4 +2358,376 @@ fn capturing_a_city_harvests_more_tiles_as_it_grows() {
     }
     assert_eq!(engine.game.cities[0].population(), 4);
     assert_eq!(engine.game.cities[0].worked_tiles().len(), 5);
+}
+
+/// A 4-by-3 sea with dry strips at (0,1) and (3,1) separated by the open
+/// water of (1,1) and (2,1), so a trireme can take on cargo on the western
+/// shore, sail the strait, and put it ashore in the east.
+fn ferry_map() -> Engine {
+    let mut engine = Engine::new(4, 3, english_player(), Vec::new());
+    engine.game.map.tile_at_mut(Location::new(0, 1)).terrain = Terrain::Grassland;
+    engine.game.map.tile_at_mut(Location::new(3, 1)).terrain = Terrain::Grassland;
+    engine
+}
+
+#[test]
+fn a_land_unit_boards_a_friendly_trireme_waiting_in_water() {
+    let mut engine = ferry_map();
+    let trireme = engine.game.spawn_unit(
+        UnitClass::Trireme,
+        Location::new(1, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    let knight = engine.game.spawn_unit(
+        UnitClass::Knight,
+        Location::new(0, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    let events = engine.submit(Command::Move {
+        unit: knight,
+        direction: Direction::E,
+    });
+    assert_eq!(
+        events[0].message(),
+        format!("Unit {} boards the ship", knight.index())
+    );
+    let boarding = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == knight)
+        .unwrap();
+    assert!(boarding.is_transported());
+    assert_eq!(boarding.aboard(), Some(trireme));
+    assert_eq!(boarding.location, Location::new(1, 1));
+    assert_eq!(boarding.moves_remaining(), 3);
+    assert_eq!(boarding.order(), UnitOrder::Idle);
+}
+
+#[test]
+fn every_naval_transport_carries_two_units_and_rejects_a_third() {
+    for transport in [UnitClass::Trireme, UnitClass::Sail, UnitClass::Frigate] {
+        let mut engine = ferry_map();
+        let carrier = engine.game.spawn_unit(
+            transport,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let first = engine.game.spawn_unit(
+            UnitClass::Knight,
+            Location::new(0, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let second = engine.game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(0, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let third = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(0, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        for boarder in [first, second, third] {
+            engine.submit(Command::Move {
+                unit: boarder,
+                direction: Direction::E,
+            });
+        }
+        let aboard = engine
+            .game
+            .units
+            .iter()
+            .filter(|unit| unit.aboard() == Some(carrier))
+            .count();
+        assert_eq!(aboard, 2, "{transport:?}");
+        assert!(
+            engine
+                .game
+                .units
+                .iter()
+                .any(|unit| unit.id() == first && unit.is_transported())
+        );
+        assert!(
+            engine
+                .game
+                .units
+                .iter()
+                .any(|unit| unit.id() == second && unit.is_transported())
+        );
+        let third_unit = engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == third)
+            .unwrap();
+        assert!(!third_unit.is_transported());
+        assert_eq!(third_unit.location, Location::new(0, 1));
+        assert_eq!(third_unit.moves_remaining(), 1);
+    }
+}
+
+#[test]
+fn a_land_unit_cannot_board_an_enemy_trireme_across_the_water() {
+    let mut engine = Engine::new(
+        4,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+    engine.game.map.tile_at_mut(Location::new(0, 1)).terrain = Terrain::Grassland;
+    engine.game.spawn_unit(
+        UnitClass::Trireme,
+        Location::new(1, 1),
+        PlayerId::new(1),
+        CityId::new(1),
+    );
+    let knight = engine.game.spawn_unit(
+        UnitClass::Knight,
+        Location::new(0, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    let events = engine.submit(Command::Move {
+        unit: knight,
+        direction: Direction::E,
+    });
+    assert_eq!(
+        events[0].message(),
+        format!("Unit {} cannot board: no ship there", knight.index())
+    );
+    let knight_unit = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == knight)
+        .unwrap();
+    assert!(!knight_unit.is_transported());
+    assert_eq!(knight_unit.location, Location::new(0, 1));
+}
+
+#[test]
+fn a_trireme_carries_its_cargo_across_the_sea_and_back_to_land() {
+    let mut engine = ferry_map();
+    let trireme = engine.game.spawn_unit(
+        UnitClass::Trireme,
+        Location::new(1, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    let knight = engine.game.spawn_unit(
+        UnitClass::Knight,
+        Location::new(0, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    // Aboard on the western shore; the trireme then sails the strait.
+    engine.submit(Command::Move {
+        unit: knight,
+        direction: Direction::E,
+    });
+    engine.submit(Command::Move {
+        unit: trireme,
+        direction: Direction::E,
+    });
+    let cargo = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == knight)
+        .unwrap();
+    assert!(cargo.is_transported());
+    assert_eq!(cargo.location, Location::new(2, 1));
+    let carrier = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == trireme)
+        .unwrap();
+    assert_eq!(carrier.location, Location::new(2, 1));
+    // Disembark onto the eastern shore.
+    let events = engine.submit(Command::Move {
+        unit: knight,
+        direction: Direction::E,
+    });
+    assert_eq!(
+        events[0].message(),
+        format!("Unit {} disembarks", knight.index())
+    );
+    let disembarked = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == knight)
+        .unwrap();
+    assert!(!disembarked.is_transported());
+    assert_eq!(disembarked.location, Location::new(3, 1));
+    assert_eq!(disembarked.moves_remaining(), 3);
+}
+
+#[test]
+fn a_transported_unit_cannot_be_instructed_while_at_sea() {
+    let mut engine = ferry_map();
+    engine.game.spawn_unit(
+        UnitClass::Trireme,
+        Location::new(1, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    let knight = engine.game.spawn_unit(
+        UnitClass::Knight,
+        Location::new(0, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.submit(Command::Move {
+        unit: knight,
+        direction: Direction::E,
+    });
+    // With no shore to land on it must not paddle to another patch of open
+    // water, stand watch, or dig in.
+    let clear_water = engine.submit(Command::Move {
+        unit: knight,
+        direction: Direction::N,
+    });
+    assert_eq!(
+        clear_water[0].message(),
+        format!("Unit {} cannot cross land/sea border", knight.index())
+    );
+    let sentry = engine.submit(Command::Sentry { unit: knight });
+    assert_eq!(
+        sentry[0].message(),
+        format!("Unit {} is aboard a ship", knight.index())
+    );
+    let fortify = engine.submit(Command::Fortify { unit: knight });
+    assert_eq!(
+        fortify[0].message(),
+        format!("Unit {} is aboard a ship", knight.index())
+    );
+    let cancel = engine.submit(Command::CancelOrder { unit: knight });
+    assert_eq!(
+        cancel[0].message(),
+        format!("Unit {} is aboard a ship", knight.index())
+    );
+    let cargo = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == knight)
+        .unwrap();
+    assert!(cargo.is_transported());
+    assert_eq!(cargo.location, Location::new(1, 1));
+}
+
+#[test]
+fn a_transported_settler_cannot_found_a_city_from_the_sea() {
+    let mut engine = ferry_map();
+    engine.game.spawn_unit(
+        UnitClass::Trireme,
+        Location::new(1, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(0, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.submit(Command::Move {
+        unit: UnitId::new(1),
+        direction: Direction::E,
+    });
+    let events = engine.submit(Command::FoundCity {
+        unit: UnitId::new(1),
+        name: "London".to_string(),
+    });
+    assert_eq!(events[0].message(), "Unit 1 is aboard a ship");
+    assert!(engine.game.cities.is_empty());
+}
+
+#[test]
+fn a_trireme_lost_at_sea_dissolves_its_cargo_which_never_defends() {
+    let mut engine = Engine::new(
+        4,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+    let trireme = engine.game.spawn_unit(
+        UnitClass::Trireme,
+        Location::new(2, 1),
+        PlayerId::new(1),
+        CityId::new(1),
+    );
+    let knight = engine.game.spawn_unit(
+        UnitClass::Knight,
+        Location::new(2, 1),
+        PlayerId::new(1),
+        CityId::new(1),
+    );
+    // Board the Zulu cargo directly; only the current player can `submit`, so
+    // the English frigate below is the one that does the attacking.
+    engine
+        .game
+        .units
+        .iter_mut()
+        .find(|unit| unit.id() == knight)
+        .unwrap()
+        .board(trireme);
+    let frigate = engine.game.spawn_unit(
+        UnitClass::Frigate,
+        Location::new(1, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    // An enemy frigate sinks both the trireme and its cargo at once; the
+    // ferried knight never fights.
+    let events = engine.submit(Command::Move {
+        unit: frigate,
+        direction: Direction::E,
+    });
+    assert!(events.iter().any(|event| event.message()
+        == format!("1 transported units are lost with Unit {}", trireme.index())));
+    assert!(events.iter().any(|event| event.message()
+        == format!("Unit {} defeats Unit {}", frigate.index(), trireme.index())));
+    assert!(!engine.game.units.iter().any(|unit| unit.id() == trireme));
+    assert!(!engine.game.units.iter().any(|unit| unit.id() == knight));
+}
+
+#[test]
+fn a_transported_unit_has_no_map_square_of_its_own() {
+    let mut engine = ferry_map();
+    let trireme = engine.game.spawn_unit(
+        UnitClass::Trireme,
+        Location::new(1, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    let knight = engine.game.spawn_unit(
+        UnitClass::Knight,
+        Location::new(0, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.submit(Command::Move {
+        unit: knight,
+        direction: Direction::E,
+    });
+    // The trireme stands alone on its tile for the map's purposes, but the
+    // ferried unit remains addressable when selected.
+    assert_eq!(engine.units_at(1, 1).len(), 1);
+    assert_eq!(engine.units_at(1, 1)[0].id(), trireme);
+    assert_eq!(
+        engine.unit(knight).map(|unit| unit.aboard()),
+        Some(Some(trireme))
+    );
 }
