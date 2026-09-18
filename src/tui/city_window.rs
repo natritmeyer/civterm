@@ -2,6 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
+use std::collections::HashSet;
 
 use super::game_screen::{TILE_WIDTH, paint_tile};
 use crate::game_engine::CityIncome;
@@ -334,6 +335,7 @@ impl<'a> CityWindow<'a> {
                     None,
                     false,
                     None,
+                    &HashSet::new(),
                 );
             }
         }

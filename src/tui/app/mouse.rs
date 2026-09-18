@@ -47,6 +47,14 @@ impl App {
             self.handle_picker_mouse(panel, mouse);
             return;
         }
+        // While the rival-movement replay is in flight, mouse input is idle:
+        // the camera is being panned by the animation and the player may only
+        // watch. Hover is cleared so no stale highlight drifts over the
+        // panned map.
+        if self.rival_animation.is_some() {
+            self.mouse_position.set(None);
+            return;
+        }
         // Wheel events scroll the open city window's improvement list.
         if self.moused_window.get().is_some() {
             match mouse.kind {

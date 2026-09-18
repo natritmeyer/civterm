@@ -6,6 +6,7 @@ use crate::model::geography::Terrain;
 use crate::model::units::{UnitClass, UnitId, UnitOrder};
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier, Style};
+use std::collections::HashSet;
 
 fn terrain_colors(terrain: Terrain) -> (Color, Color) {
     use Terrain::*;
@@ -83,6 +84,9 @@ pub(crate) fn tile_style(explored: bool, terrain: Terrain) -> Style {
 /// selected-unit flash, which itself must be the selected unit with moves left.
 /// `hover_target` (world tile, wrapped horizontally) hatches that tile with
 /// `▓` so the player can see where clicking would move the selected unit.
+/// `hidden_units` suppresses the unit glyphs of the rival-move animation so a
+/// "in transit" unit is not left painted at its game-state square; hidden
+/// units still count as present for the selected-city outline.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_tile(
     buf: &mut Buffer,
@@ -97,6 +101,7 @@ pub(crate) fn paint_tile(
     selected_unit: Option<UnitId>,
     flashing: bool,
     hover_target: Option<(usize, usize)>,
+    hidden_units: &HashSet<UnitId>,
 ) -> Option<String> {
     let map_x = world_x % map_w;
     let hovered = hover_target == Some((map_x, world_y));
@@ -115,16 +120,20 @@ pub(crate) fn paint_tile(
         let mut style = tile_style(explored, terrain);
 
         let unit = view.units_at(map_x, world_y);
+        let visible_unit = unit
+            .iter()
+            .find(|u| !hidden_units.contains(&u.id()))
+            .copied();
         let city = view.city_at(map_x, world_y);
 
         let (symbol, city_name) = if explored
-            && unit.is_empty()
+            && visible_unit.is_none()
             && let Some(city) = city
         {
             // A city with no unit on its tile shows its population on a
             // background of the owning civilization's colour.
             (population_digit(city.population()), Some(city.name.clone()))
-        } else if explored && let Some(u) = unit.first() {
+        } else if explored && let Some(u) = visible_unit {
             // A unit always shows its class letter ahead of the terrain, even
             // when it stands on a city tile; the city keeps its name label
             // beneath.
@@ -159,7 +168,7 @@ pub(crate) fn paint_tile(
             // the occupation. Its idle flash still turns the tile the flag
             // colour; on an own city that matches the background, so the pulse
             // is most visible when the unit stands on foreign ground.
-            if !unit.is_empty() {
+            if visible_unit.is_some() {
                 style = style
                     .add_modifier(Modifier::BOLD)
                     .add_modifier(Modifier::UNDERLINED);
@@ -211,7 +220,8 @@ pub(crate) fn paint_tile(
     city_name
 }
 
-fn first_letter(unit_class: UnitClass) -> char {
+/// The first letter of a unit class's name, used as its map glyph.
+pub(crate) fn first_letter(unit_class: UnitClass) -> char {
     format!("{unit_class:?}").chars().next().unwrap_or('?')
 }
 

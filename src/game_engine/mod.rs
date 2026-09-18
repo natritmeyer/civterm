@@ -14,6 +14,7 @@ pub mod game_view;
 mod movement;
 pub mod player;
 mod research;
+mod rival_player_engine;
 pub mod save;
 mod turns;
 
@@ -28,4 +29,5 @@ pub use event::Event;
 pub use exploration::Exploration;
 pub use game_view::GameView;
 pub use player::Player;
+pub use rival_player_engine::RivalMotion;
 pub use save::{LoadedGame, SAVE_FORMAT_VERSION, SaveData, SaveError, load_game, save_game};

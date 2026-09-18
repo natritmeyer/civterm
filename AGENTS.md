@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 513 passing unit
+Run `make build` after any change. Current test baseline: 527 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -57,6 +57,11 @@ a hard boundary; keep it by convention.
     - `movement.rs`, `combat.rs`, `cities.rs`, `diplomacy.rs`, `research.rs`,
       `turns.rs` — private modules, one `impl Engine` block each by concern
       (`combat.rs` owns `HIT_POINTS`).
+    - `rival_player_engine.rs` — `RivalMotion` (re-exported as
+      `game_engine::RivalMotion`) plus the rival AI: `run_rival_turn`,
+      `drain_rival_motion`, and the
+      research/production/settle/garrison helpers. The AI is deterministic —
+      it never draws from `self.rng`.
     - `city_income.rs` — `CityIncome` (re-exported as
       `game_engine::CityIncome`, not a path under `game_view`).
     - `engine_tests.rs` — `#[cfg(test)] mod engine_tests;` in `mod.rs`.
@@ -115,6 +120,28 @@ a hard boundary; keep it by convention.
   fixtures with zero units must NOT be eliminated. Eliminated players are
   skipped when the turn advances.
 
+## Rival AI and turn resolution
+
+- `Command::EndTurn` resolves the whole round on the engine: each rival
+  civilization takes its turn (`run_rival_turn` — research, production,
+  settle, garrison), then control returns to the human and the turn number
+  increments once. Rivals act in player order and eliminated players are
+  skipped; the human's own turn begins again fresh (units' moves restored).
+- A rival's settler founds a new city without crowding its own: any site whose
+  21-tile working grid shares more than `CITY_FOOTPRINT_MAX_OVERLAP` (3) tiles
+  with the union of the rival's existing grids counts as crowded and is only
+  chosen when no open site remains anywhere (so the rival still expands on a
+  full map rather than stall).
+- Rival movement is recorded per step as `RivalMotion { unit, from, to }`
+  whenever a rival unit lands on a new tile — the plain move tail and
+  boarding only, gated `owner != human` so the player's own moves are never
+  recorded. The TUI drains the record (`drain_rival_motion`, oldest first)
+  after an EndTurn to replay it; the record is never persisted.
+- The AI is deterministic: it never draws from `self.rng`, so the combat RNG
+  stream is untouched and any given turn unfolds identically from the same
+  world. It respects the movement/reveal/transport/combat invariants because
+  every rival step goes out through the ordinary `move_unit` path.
+
 ## Transport invariants
 
 - A naval transport (trireme, sail, frigate) carries at most
@@ -134,17 +161,56 @@ a hard boundary; keep it by convention.
   `Game::disband_cargo_of`, and `disband_units_homed_to` sweeps cargo
   aboard a doomed ship. No unit may reference a missing carrier.
 
+## Save and load impact
+
+New features are judged for their save impact before they are built:
+
+- Ask first what state a feature introduces and whether it must survive a
+  save/load round trip. Transient state — e.g. `Engine.motion` (the rival
+  replay record), the battle flash, UI-only selection — is rebuilt fresh
+  (`Engine::into_loaded` re-initialises it) and must never be pushed into
+  `SaveData`.
+- Engine-level state is threaded by hand: `SaveData::capture` copies it and
+  `SaveData::into_loaded` restores it. Adding a field to `Engine` (or to
+  anything it owns that is not already inside `game: Game`) means updating
+  both halves together — never let new engine state be silently dropped from
+  `into_loaded`. Old fields must keep their `#[serde(default)]` so files
+  written by older builds still load; a destructive reshuffle of the format
+  bumps `SAVE_FORMAT_VERSION`.
+- Model state (`Unit`, `City`, `Player`, `Game`) round-trips through the
+  nested `game: Game` — a new field there needs `#[serde(default)]` (or a
+  version bump) but no `capture`/`into_loaded` change, unless it references
+  something outside its own struct (e.g. a unit's `aboard` carrier id), in
+  which case the save round-trip test must confirm the reference still
+  resolves after the load.
+- Save impact is verified by tests, not left to luck: state new to a feature
+  must appear in the round-trip tests (`a_captured_game_round_trips_through_json`
+  and a targeted one where the state is non-trivial — e.g.
+  `a_transported_unit_survives_save_and_load`), and the loader keeps refusing
+  formats newer than it understands.
+
 ## TUI rendering invariants
 
 - A city tile always wears its owning civilization's colour, even beneath an
   occupying unit, so a captured city flips colour the instant it falls
   rather than waiting for the victor to move off.
-- Transient overlays (the battle flash) are painted in a final pass after
-  tiles, markers and city-name labels, so they sit at the top of the
-  z-order over everything the map draws.
+- Transient overlays (the battle flash, the rival-move replay) are painted in
+  a final pass after tiles, markers and city-name labels, so they sit at the
+  top of the z-order over everything the map draws.
 - Wide (two-cell) glyphs such as 💥 must anchor in a tile's _left_ column; a
   wide glyph placed in the tile's right column spills a cell into the
   eastern neighbour. Tests assert the neighbour tile stays untouched.
+- While the rival-move replay runs, units with frames still to play are
+  lifted off their game-state squares (`hidden_units` fed through
+  `paint_tile`) so only the overlay paints them — a unit "in transit" must
+  not be left drawn at its destination. The replay plays each step as two
+  300ms sub-phases (starting tile, then ending tile). A step whose **every
+  endpoint** is unexplored by the human is dropped at the source (the TUI
+  filters the drained motion by the human's discovery map), so a rival
+  wandering the fog stays hidden; a step with at least one explored endpoint
+  is shown — including the from-fog-into-sight and out-of-sight-into-fog
+  ends, where the glyph is drawn even over undiscovered fog (the glyph,
+  never the terrain).
 
 ## Tooling
 

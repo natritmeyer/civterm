@@ -63,6 +63,7 @@ impl SaveData {
                 current_player_index: self.current_player_index,
                 events: self.events,
                 rng: self.rng,
+                motion: Vec::new(),
             },
             competition: self.competition,
             difficulty: self.difficulty,
@@ -130,8 +131,9 @@ mod tests {
     use crate::game_engine::command::Command;
     use crate::game_engine::{GameView, Player};
     use crate::model::cartography::{Direction, Location};
-    use crate::model::cities::ProductionTarget;
+    use crate::model::cities::{CityId, ProductionTarget};
     use crate::model::civilizations::{Civilization, PlayerId};
+    use crate::model::geography::Terrain;
     use crate::model::units::UnitClass;
 
     fn engine() -> Engine {
@@ -211,6 +213,83 @@ mod tests {
         fs::write(&path, "{\"version\": ").unwrap();
         assert!(matches!(load_game(&path), Err(SaveError::Json(_))));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_transported_unit_survives_save_and_load() {
+        // A legion ferried aboard a trireme must come back aboard the same
+        // ship, standing on the ship's tile and still invisible to the map,
+        // after a save/load round trip.
+        let mut engine = Engine::new(4, 3, Player::new(Civilization::English), Vec::new());
+        engine.game.map.tile_at_mut(Location::new(0, 1)).terrain = Terrain::Grassland;
+        let trireme = engine.game.spawn_unit(
+            UnitClass::Trireme,
+            Location::new(1, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let legion = engine.game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(0, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let board = engine.submit(Command::Move {
+            unit: legion,
+            direction: Direction::E,
+        });
+        assert_eq!(board[0].message(), "Unit 1 boards the ship");
+        let sail = engine.submit(Command::Move {
+            unit: trireme,
+            direction: Direction::E,
+        });
+        assert!(!sail.is_empty(), "the trireme sails");
+        assert_eq!(
+            engine
+                .game
+                .units
+                .iter()
+                .find(|unit| unit.id() == legion)
+                .unwrap()
+                .location,
+            Location::new(2, 1),
+            "the cargo sails with its ship"
+        );
+
+        let data = SaveData::capture(&engine, Competition::new(1), Difficulty::Normal);
+        let restored: SaveData =
+            serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap();
+        let loaded = restored.into_loaded().unwrap();
+        assert_eq!(loaded.engine.game, engine.game);
+
+        let cargo = loaded
+            .engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == legion)
+            .expect("the transported unit is still there");
+        let ship = loaded
+            .engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == trireme)
+            .expect("the trireme is still there");
+        assert!(cargo.is_transported(), "the unit stays aboard");
+        assert_eq!(cargo.aboard(), Some(trireme));
+        assert_eq!(
+            cargo.location, ship.location,
+            "the cargo still shares the ship's tile"
+        );
+        assert!(
+            loaded
+                .engine
+                .units_at(ship.location.x as usize, ship.location.y as usize)
+                .iter()
+                .all(|unit| unit.id() != legion),
+            "the map still omits the transported unit"
+        );
     }
 
     #[test]

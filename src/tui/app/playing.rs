@@ -43,6 +43,13 @@ impl App {
             }
             return false;
         }
+        // While the rival-movement replay is in flight the game keys are idle:
+        // the player may only watch the round they just resolved, and any
+        // command typed now would land while the camera is elsewhere. Modals
+        // opened by the round (research, diplomacy) still capture input above.
+        if self.rival_animation.is_some() {
+            return false;
+        }
         match key.code {
             KeyCode::Char(c) if c.eq_ignore_ascii_case(&'q') => {
                 self.phase = Phase::Menu;
@@ -314,6 +321,30 @@ impl App {
         let (events, discovered, wrapped) = if let Some(engine) = &mut self.engine {
             let advances_before = engine.player_advances(human);
             let events = engine.submit(Command::EndTurn);
+            // Replay the rival movements of the round just resolved, oldest
+            // step first, on the app's clock so it plays out frame by frame.
+            // Only steps the human can actually trace get replayed: a move
+            // lying entirely inside unexplored territory belongs to the fog
+            // and would leak where the rival's force went. A step with at
+            // least one discovered endpoint is shown — emerging from the
+            // unknown, or vanishing into it, included.
+            let motion = engine.drain_rival_motion();
+            let frames: Vec<RivalMoveFrame> = motion
+                .into_iter()
+                .filter(|step| {
+                    engine.explored(step.from.x as usize, step.from.y as usize)
+                        || engine.explored(step.to.x as usize, step.to.y as usize)
+                })
+                .map(|step| RivalMoveFrame {
+                    unit_id: step.unit,
+                    from: step.from,
+                    to: step.to,
+                })
+                .collect();
+            self.rival_animation = (!frames.is_empty()).then(|| RivalMoveAnimation {
+                start: self.started_at.elapsed(),
+                frames,
+            });
             // An advancement completes at the start of the human's turn: once
             // play wraps back to player zero, their research has advanced and
             // a discovery leaves them with no research in progress. Offer the

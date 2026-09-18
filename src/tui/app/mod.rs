@@ -12,7 +12,8 @@ use super::competition_selector::CompetitionSelector;
 use super::difficulty_selector::DifficultySelector;
 use super::diplomacy_dialog::{self, DiplomacyChoice, DiplomacyDialog, DiplomacyOrigin};
 use super::game_screen::{
-    BATTLE_FLASH_DURATION, BattleAnimation, GameScreen, LEFT_COLUMN_WIDTH, TILE_WIDTH,
+    BATTLE_FLASH_DURATION, BattleAnimation, GameScreen, LEFT_COLUMN_WIDTH, RivalMoveAnimation,
+    RivalMoveFrame, TILE_WIDTH,
 };
 use super::playing_help::PlayingHelp;
 use super::production_picker::{self, ProductionPicker};
@@ -180,6 +181,9 @@ pub struct App {
     /// The in-flight battle flash on the defender's tile, if a combat has just
     /// resolved; `None` once the animation has run its course.
     battle_animation: Option<BattleAnimation>,
+    /// The replay of the rival movements of the round just resolved; `None`
+    /// once the animation has run its course.
+    rival_animation: Option<RivalMoveAnimation>,
 }
 
 impl Default for App {
@@ -235,6 +239,7 @@ impl App {
             work_picker_scroll: 0,
             work_picker_rect: Cell::new(None),
             battle_animation: None,
+            rival_animation: None,
         }
     }
 
@@ -245,6 +250,7 @@ impl App {
         loop {
             terminal.draw(|frame| Self::draw(frame, self))?;
             self.clear_expired_battle_animation(self.started_at.elapsed());
+            self.clear_expired_rival_animation(self.started_at.elapsed());
             if !event::poll(POLL_INTERVAL)? {
                 continue;
             }
@@ -267,6 +273,18 @@ impl App {
             .is_some_and(|animation| now.saturating_sub(animation.start) >= BATTLE_FLASH_DURATION)
         {
             self.battle_animation = None;
+        }
+    }
+
+    /// Once the rival-movement replay has played its last frame, drop the
+    /// state so later draws stop reserving the moving units' tiles.
+    fn clear_expired_rival_animation(&mut self, now: Duration) {
+        if self
+            .rival_animation
+            .as_ref()
+            .is_some_and(|animation| animation.is_complete(now))
+        {
+            self.rival_animation = None;
         }
     }
 
@@ -312,10 +330,30 @@ impl App {
                     let focus = focus_coordinate(engine, app.selected_unit);
                     let map_pane_width = area.width.saturating_sub(LEFT_COLUMN_WIDTH);
                     let pane_cols = (map_pane_width as usize) / 2;
+                    let now = app.started_at.elapsed();
+                    // While the rival-movement replay is in flight, the camera
+                    // pans with the unit that is moving (only when it steps
+                    // outside the central 70% of the pane) instead of
+                    // following the player's selection.
+                    let replay_focus = app
+                        .rival_animation
+                        .as_ref()
+                        .and_then(|animation| animation.active_frame(now))
+                        .map(|(frame, in_from_phase)| {
+                            let tile = if in_from_phase { frame.from } else { frame.to };
+                            (tile.x as usize, tile.y as usize)
+                        });
                     // While the player has dragged the map by hand, the camera
                     // stays where they left it; otherwise it follows the
                     // selected unit.
-                    let camera = if app.camera_follow.get() {
+                    let camera = if let Some(replay_focus) = replay_focus {
+                        camera_for(
+                            Some(replay_focus),
+                            (engine.width(), engine.height()),
+                            (pane_cols, area.height as usize),
+                            app.camera.get(),
+                        )
+                    } else if app.camera_follow.get() {
                         camera_for(
                             focus,
                             (engine.width(), engine.height()),
@@ -341,12 +379,13 @@ impl App {
                             camera,
                             app.selected_unit,
                             app.selected_city,
-                            app.started_at.elapsed(),
+                            now,
                             app.show_events,
                             &app.event_log[app.event_log.len().saturating_sub(EVENT_LOG_SIZE)..],
                             hover_target,
                         )
-                        .with_battle_animation(app.battle_animation),
+                        .with_battle_animation(app.battle_animation)
+                        .with_rival_animation(app.rival_animation.as_ref()),
                         area,
                     );
                     if app.show_help {

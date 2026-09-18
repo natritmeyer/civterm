@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use ratatui::buffer::Buffer;
@@ -48,6 +49,63 @@ impl BattleAnimation {
     }
 }
 
+/// Duration of each sub-phase inside a rival-move frame: 300ms on the starting
+/// tile, 300ms on the ending tile, 600ms total per step.
+pub(crate) const RIVAL_MOVE_PHASE: Duration = Duration::from_millis(300);
+
+/// One movement step a rival unit took during its AI turn: the unit and the
+/// tiles it left and entered. Frames are replayed in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RivalMoveFrame {
+    pub(crate) unit_id: UnitId,
+    pub(crate) from: Location,
+    pub(crate) to: Location,
+}
+
+/// The full rival-move animation for one round: a sequence of per-step frames
+/// played sequentially. `start` is the clock value when the round resolved.
+#[derive(Clone, Debug)]
+pub(crate) struct RivalMoveAnimation {
+    pub(crate) start: Duration,
+    pub(crate) frames: Vec<RivalMoveFrame>,
+}
+
+impl RivalMoveAnimation {
+    /// Whether the animation has run to completion at the given clock.
+    pub(crate) fn is_complete(&self, now: Duration) -> bool {
+        let elapsed = now.saturating_sub(self.start);
+        let total = self.frames.len() as u32 * RIVAL_MOVE_PHASE.as_millis() as u32 * 2;
+        elapsed.as_millis() as u32 >= total
+    }
+
+    /// The unit IDs that should be hidden from their game-state position: all
+    /// units whose frames have not yet fully played out.
+    pub(crate) fn hidden_units(&self, now: Duration) -> HashSet<UnitId> {
+        let elapsed = now.saturating_sub(self.start);
+        let frame_ms = RIVAL_MOVE_PHASE.as_millis() as u32 * 2;
+        let active_idx = (elapsed.as_millis() as u32 / frame_ms) as usize;
+        self.frames
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i >= active_idx)
+            .map(|(_, frame)| frame.unit_id)
+            .collect()
+    }
+
+    /// The active frame and whether we are in the "from" sub-phase (first
+    /// half) or "to" sub-phase (second half). `None` once the animation has
+    /// expired.
+    pub(crate) fn active_frame(&self, now: Duration) -> Option<(&RivalMoveFrame, bool)> {
+        let elapsed = now.saturating_sub(self.start);
+        let frame_ms = RIVAL_MOVE_PHASE.as_millis() as u32 * 2;
+        let idx = (elapsed.as_millis() as u32 / frame_ms) as usize;
+        let frame = self.frames.get(idx)?;
+        let in_from_phase =
+            (elapsed.as_millis() as u32 % frame_ms) < RIVAL_MOVE_PHASE.as_millis() as u32;
+        Some((frame, in_from_phase))
+    }
+}
+
 pub struct GameScreen<'a> {
     view: &'a dyn GameView,
     focus: Option<(usize, usize)>,
@@ -65,6 +123,8 @@ pub struct GameScreen<'a> {
     hover_target: Option<(usize, usize)>,
     /// The in-flight battle explosion on the defender's tile, if any.
     battle_animation: Option<BattleAnimation>,
+    /// The rival-movement replay for the round just resolved, if any.
+    rival_animation: Option<&'a RivalMoveAnimation>,
 }
 
 impl<'a> GameScreen<'a> {
@@ -96,6 +156,7 @@ impl<'a> GameScreen<'a> {
             events,
             hover_target,
             battle_animation: None,
+            rival_animation: None,
         }
     }
 
@@ -103,6 +164,15 @@ impl<'a> GameScreen<'a> {
     /// running.
     pub(crate) fn with_battle_animation(mut self, animation: Option<BattleAnimation>) -> Self {
         self.battle_animation = animation;
+        self
+    }
+
+    /// Replay the round's rival movements over the map while they animate.
+    pub(crate) fn with_rival_animation(
+        mut self,
+        animation: Option<&'a RivalMoveAnimation>,
+    ) -> Self {
+        self.rival_animation = animation;
         self
     }
 
@@ -135,6 +205,13 @@ impl<'a> GameScreen<'a> {
         // tile from there.
         let mut flash_cell: Option<(u16, u16)> = None;
 
+        // Rival units replaying their round are lifted off their game-state
+        // squares so the overlay, not the tile pass, places them.
+        let hidden_units = self
+            .rival_animation
+            .map(|animation| animation.hidden_units(self.now))
+            .unwrap_or_default();
+
         // Tiles are shown at 1:1; `camera` is the top-left world tile. The map
         // wraps horizontally (east/west) but not vertically — tiles beyond the
         // north/south edge render as void.
@@ -158,6 +235,7 @@ impl<'a> GameScreen<'a> {
                     self.selected_unit,
                     flashing,
                     self.hover_target,
+                    &hidden_units,
                 ) {
                     city_labels.push((cx, cy + 1, name));
                 }
@@ -192,6 +270,32 @@ impl<'a> GameScreen<'a> {
                 && let Some(cell) = buf.cell_mut((cx + 1, cy))
             {
                 cell.set_symbol(" ");
+            }
+        }
+
+        // The rival-movement replay draws the actively moving unit on top of
+        // everything the map paints, anchored in the movement step's current
+        // tile (the two-cell tile's left column), in the owner's colour.
+        if let Some(animation) = self.rival_animation
+            && let Some((frame, in_from_phase)) = animation.active_frame(self.now)
+        {
+            let tile = if in_from_phase { frame.from } else { frame.to };
+            let screen_col = (tile.x as usize + map_w - self.camera.0) % map_w;
+            let screen_row = tile.y as isize - self.camera.1 as isize;
+            if screen_col < cell_cols
+                && (0..cell_rows as isize).contains(&screen_row)
+                && let Some(unit) = self.view.unit(frame.unit_id)
+            {
+                let cx = area.x + (screen_col * TILE_WIDTH) as u16;
+                let cy = area.y + screen_row as u16;
+                let style = Style::default()
+                    .fg(civilization_color(self.view.civilization_of(unit.owner())))
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::UNDERLINED);
+                if let Some(cell) = buf.cell_mut((cx, cy)) {
+                    cell.set_symbol(&first_letter(unit.unit_class).to_string());
+                    cell.set_style(style);
+                }
             }
         }
     }
@@ -544,8 +648,10 @@ impl<'a> Widget for GameScreen<'a> {
 }
 
 #[cfg(test)]
-pub(crate) use tiles::{CITY_LABEL_FG, civilization_color, tile_style};
-pub(crate) use tiles::{draw_city_label, fill_row, format_year, paint_tile, set_cell};
+pub(crate) use tiles::{CITY_LABEL_FG, tile_style};
+pub(crate) use tiles::{
+    civilization_color, draw_city_label, fill_row, first_letter, format_year, paint_tile, set_cell,
+};
 
 mod tiles;
 

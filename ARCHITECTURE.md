@@ -46,11 +46,21 @@ implementation (`movement.rs`, `combat.rs`, `cities.rs`, `diplomacy.rs`,
 to its internal log, and hands the batch back for the UI to display.
 
 The turn loop (`turns.rs`):
-1. `end_turn` advances to the next non-eliminated player.
-2. `begin_turn` restores moves (or advances in-progress terrain work and
-   applies finished improvements), then processes every current player's
-   cities and research.
-3. Wrapping back to player 0 increments the global `turn`.
+1. `end_turn` resolves the **whole round** back to the human: each rival
+   civilization takes its own turn in player order (`run_rival_turn` in
+   `rival_player_engine.rs` — research, production, settle, garrison), then control returns
+   to the human and the global `turn` increments once. The human's turn then
+   begins again fresh (`begin_turn` restores moves, or advances frenetic
+   terrain work and applies finished improvements, then processes the human's
+   cities and research).
+2. The rival AI is deterministic — it never draws from `self.rng`, so the
+   combat RNG stream is untouched — and every rival step goes out through the
+   ordinary `move_unit` path, so it respects the movement/reveal/transport/
+   combat invariants.
+3. Rival unit landings are recorded per step as `RivalMotion { unit, from,
+   to }` (the plain move tail and boarding only, gated `owner != human`). The
+   TUI drains the record after an EndTurn and replays it as animation; the
+   record is never persisted or saved.
 
 Eliminated civilizations are **skipped**, never swept; a player is eliminated
 only by an actual loss (last city captured, or last unit killed while owning
@@ -103,11 +113,23 @@ loop. `App` (`tui/app/`) owns the `Engine` plus UI-only selection state
 
 `game_screen/` paints the screen in passes, in z-order:
 1. Per-tile painting (`tiles.rs`) — the map pane, tile styles and terrain
-   colours, units, and city markers.
+   colours, units, city markers. While a rival-move replay runs, units whose
+   frames are still to play are lifted off their game-state squares
+   (`hidden_units` fed through `paint_tile`) so only the overlay paints them.
 2. City-name labels — collected during the tile pass, drawn afterwards so a
    label survives the rows below it.
-3. Final-pass overlays — transient effects (the battle explosion flash) sit
-   on top of everything the map drew.
+3. Final-pass overlays — transient effects (the battle explosion flash, the
+   rival-move replay) sit on top of everything the map drew.
+
+The rival-move replay (`game_screen/mod.rs`) plays each recorded step as two
+300ms sub-phases — on the starting tile, then the ending tile. Only steps the
+human can trace are played: the drained motion is filtered by the human's
+discovery map, so a step whose **every** endpoint is unexplored is dropped and
+a rival marching through the fog stays hidden; a step with at least one
+explored endpoint is shown, painting the moving unit in its owner's colour
+even over undiscovered fog (the glyph, never the terrain). While it plays,
+the `App` swallows game input (modals and dialogs still capture) and pans the
+camera when the active step leaves the central 70% of the viewport.
 
 Map panes other than the main map (minimap, player stats, focus, event log)
 and the whole map-render control flow live in `game_screen/mod.rs`.

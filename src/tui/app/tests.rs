@@ -1,13 +1,24 @@
 use super::*;
-use crate::game_engine::Command;
+use crate::game_engine::{Command, Player};
 use crate::model::cartography::Location;
-use crate::model::cities::ProductionTarget;
-use crate::model::geography::TerrainImprovement;
+use crate::model::cities::{City, ProductionTarget};
+use crate::model::geography::{Terrain, TerrainImprovement};
 use crate::model::units::UnitOrder;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::backend::TestBackend;
+use std::time::Duration;
 use strum::IntoEnumIterator;
+
+/// Fast-forward the app clock so transient animations (battle flash,
+/// rival-move replay) expire, allowing a test to press End Turn repeatedly
+/// without waiting for real wall-clock time.
+fn warp_app(app: &mut App, secs: u64) {
+    app.started_at -= Duration::from_secs(secs);
+    let now = app.started_at.elapsed();
+    app.clear_expired_battle_animation(now);
+    app.clear_expired_rival_animation(now);
+}
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -350,6 +361,7 @@ fn ending_turns_records_events_up_to_the_log_size() {
     // End the turn past all rivals until the log has overflowed several
     // times; it must stay bounded at EVENT_LOG_SIZE messages.
     for _ in 0..8 {
+        warp_app(&mut app, 60);
         app.handle_key(key(KeyCode::Char(' ')));
     }
     assert_eq!(app.event_log.len(), EVENT_LOG_SIZE);
@@ -1335,6 +1347,7 @@ fn app_with_research_dialog() -> App {
     let (mut app, _, _) = playing_app();
     let mut turns = 0;
     while app.research_dialog.is_none() && turns < 80 {
+        warp_app(&mut app, 60);
         app.handle_key(key(KeyCode::Char(' ')));
         turns += 1;
     }
@@ -1435,6 +1448,21 @@ fn app_with_settler() -> App {
             .iter()
             .any(|u| u.unit_class == UnitClass::Settler)
     );
+    // Park the rival's starting settler so its (now live) AI turn has nothing
+    // to build or march with. These scenarios stage a rival that stays put;
+    // without this the rival founds a city and its militia abandons its tile
+    // to garrison it, which the tests below rely on being a stable state.
+    // Commands are refused for a unit the engine does not currently steer, so
+    // set the order directly on the model like the tests otherwise do.
+    {
+        let engine = app.engine.as_mut().unwrap();
+        for unit in engine.game.units.iter_mut() {
+            if unit.owner() == PlayerId::new(1) && unit.unit_class == UnitClass::Settler {
+                unit.fortify();
+                unit.spend_turn();
+            }
+        }
+    }
     app
 }
 
@@ -2110,4 +2138,256 @@ fn a_saved_game_loads_back_into_play() {
     assert_eq!(engine.current_player(), Civilization::American);
     assert!(!engine.player_cities().is_empty());
     let _ = std::fs::remove_file(file);
+}
+
+/// A game on a small open grassland world where the rival has a city and a
+/// legion that must march to garrison it. The human keeps only a settler.
+/// `reveal` optionally marks some human-explored tiles; with a radius-8
+/// reveal over the march the whole 15x3 map counts as explored.
+fn app_with_marching_rival(reveal: Option<(Location, u8)>) -> App {
+    let mut app = App::new();
+    app.phase = Phase::Playing;
+    let mut engine = Engine::new(
+        15,
+        3,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..15 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(1, 0),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.game.cities.push(City::new(
+        "Ulundi",
+        Location::new(14, 1),
+        PlayerId::new(1),
+        CityId::new(1),
+    ));
+    engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(4, 1),
+        PlayerId::new(1),
+        CityId::new(0),
+    );
+    if let Some((origin, radius)) = reveal {
+        engine.game.players[0].reveal_tiles_at(origin, radius);
+    }
+    app.engine = Some(engine);
+    app
+}
+
+#[test]
+fn ending_the_turn_starts_the_rival_replay_from_the_rounds_motion() {
+    let mut app = app_with_marching_rival(Some((Location::new(7, 1), 8)));
+    let legion = {
+        let engine = app.engine.as_ref().unwrap();
+        engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.owner() == PlayerId::new(1))
+            .unwrap()
+            .id()
+    };
+    assert!(app.rival_animation.is_none());
+
+    app.handle_key(key(KeyCode::Char(' '))); // end the turn: the legion marches
+
+    let animation = app
+        .rival_animation
+        .as_ref()
+        .expect("a round that moved rival units fires the replay");
+    assert!(
+        !animation.frames.is_empty(),
+        "the garrison march is replayed step by step"
+    );
+    assert!(
+        animation.frames.iter().all(|frame| frame.unit_id == legion),
+        "every frame is the legion's"
+    );
+    let stationed = app
+        .engine
+        .as_ref()
+        .unwrap()
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == legion)
+        .unwrap();
+    assert_eq!(
+        animation.frames.last().unwrap().to,
+        stationed.location,
+        "the final frame ends where the legion now stands"
+    );
+    assert_eq!(
+        app.engine.as_ref().unwrap().current_player(),
+        Civilization::English
+    );
+}
+
+#[test]
+fn game_keys_are_idle_while_the_rival_replay_runs() {
+    let mut app = app_with_marching_rival(None);
+    let unit_id = app.engine.as_ref().unwrap().player_units()[0].id();
+    app.rival_animation = Some(RivalMoveAnimation {
+        start: Duration::ZERO,
+        frames: vec![RivalMoveFrame {
+            unit_id,
+            from: Location::new(1, 0),
+            to: Location::new(2, 0),
+        }],
+    });
+
+    // No game key is honoured while the replay runs.
+    app.handle_key(key(KeyCode::Char('?')));
+    assert!(!app.show_help, "the help toggle is idle during the replay");
+    app.handle_key(key(KeyCode::Char('l'))); // would move the settler east
+    let settler = app.engine.as_ref().unwrap().player_units()[0];
+    assert_eq!(settler.location, Location::new(1, 0));
+
+    // Once the replay has run its course the keys work again.
+    warp_app(&mut app, 60);
+    app.handle_key(key(KeyCode::Char('?')));
+    assert!(app.show_help, "the help toggle works after the replay");
+}
+
+#[test]
+fn the_rival_replay_pans_the_camera_to_the_moving_unit() {
+    let mut app = App::new();
+    at_start(&mut app);
+    app.handle_key(key(KeyCode::Char('s')));
+    app.camera.set((0, 0));
+    app.camera_follow.set(false); // the player has dragged the map by hand
+    let unit_id = app.engine.as_ref().unwrap().player_units()[0].id();
+    let width = app.engine.as_ref().unwrap().width();
+
+    // A step far to the east moves the camera even though the player is not
+    // in follow mode: the replay is the focus while it plays.
+    app.rival_animation = Some(RivalMoveAnimation {
+        start: Duration::ZERO,
+        frames: vec![RivalMoveFrame {
+            unit_id,
+            from: Location::new((width - 20) as u16, 5),
+            to: Location::new((width - 19) as u16, 5),
+        }],
+    });
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+    assert!(
+        app.camera.get().0 > 0,
+        "the replay pans east toward the unit"
+    );
+
+    // A step inside the central 70% leaves the camera alone.
+    app.camera.set((4, 4));
+    app.rival_animation = Some(RivalMoveAnimation {
+        start: Duration::ZERO,
+        frames: vec![RivalMoveFrame {
+            unit_id,
+            from: Location::new(24, 24),
+            to: Location::new(25, 24),
+        }],
+    });
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+    assert_eq!(app.camera.get(), (4, 4), "an in-band step does not pan");
+}
+
+#[test]
+fn a_rival_march_within_unexplored_territory_never_replays() {
+    let mut app = app_with_marching_rival(None);
+    assert!(app.rival_animation.is_none());
+
+    app.handle_key(key(KeyCode::Char(' '))); // the legion marches unseen
+
+    assert!(
+        app.rival_animation.is_none(),
+        "a march the human cannot trace stays in the fog"
+    );
+    // The round itself still resolved: the legion moved, the turn wrapped.
+    assert_eq!(
+        app.engine.as_ref().unwrap().current_player(),
+        Civilization::English
+    );
+}
+
+#[test]
+fn a_rival_step_arriving_in_sight_is_replayed() {
+    // The garrison legion marches a single deterministic step from (4,1) to
+    // (3,2). The human has spied only the destination (2..3 wrapped column
+    // patch around it), so the step is shown emerging from the fog.
+    let mut app = app_with_marching_rival(Some((Location::new(2, 2), 1)));
+
+    app.handle_key(key(KeyCode::Char(' ')));
+
+    let animation = app
+        .rival_animation
+        .as_ref()
+        .expect("a step whose destination is explored is replayed");
+    assert_eq!(animation.frames.len(), 1);
+    let frame = &animation.frames[0];
+    assert_eq!(frame.from, Location::new(4, 1));
+    assert_eq!(frame.to, Location::new(3, 2));
+    let explored = |loc: Location| {
+        app.engine
+            .as_ref()
+            .unwrap()
+            .explored(loc.x as usize, loc.y as usize)
+    };
+    assert!(
+        !explored(frame.from) && explored(frame.to),
+        "the march emerges from the fog into the explored tile"
+    );
+    assert_eq!(
+        frame.to,
+        app.engine
+            .as_ref()
+            .unwrap()
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.owner() == PlayerId::new(1))
+            .unwrap()
+            .location,
+        "the replayed arrival is where the legion now stands"
+    );
+}
+
+#[test]
+fn a_rival_step_leaving_sight_is_replayed() {
+    // The human has spied the starting tile (around (4,1)) but nothing the
+    // legion walks onto, so the single step is shown vanishing into the fog.
+    let mut app = app_with_marching_rival(Some((Location::new(5, 2), 1)));
+
+    app.handle_key(key(KeyCode::Char(' ')));
+
+    let animation = app
+        .rival_animation
+        .as_ref()
+        .expect("a step whose starting tile is explored is replayed");
+    assert_eq!(animation.frames.len(), 1);
+    let frame = &animation.frames[0];
+    assert_eq!(frame.from, Location::new(4, 1));
+    assert_eq!(frame.to, Location::new(3, 2));
+    let explored = |loc: Location| {
+        app.engine
+            .as_ref()
+            .unwrap()
+            .explored(loc.x as usize, loc.y as usize)
+    };
+    assert!(
+        explored(frame.from) && !explored(frame.to),
+        "the march leaves the explored tile and vanishes into the fog"
+    );
 }

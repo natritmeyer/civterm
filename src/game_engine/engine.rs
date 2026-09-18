@@ -1,4 +1,4 @@
-use crate::game_engine::{Command, Event, Player};
+use crate::game_engine::{Command, Event, Player, RivalMotion};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Location;
 use crate::model::cartography::generation::MapGenerator;
@@ -27,6 +27,10 @@ pub struct Engine {
     pub(crate) current_player_index: PlayerId,
     pub(crate) events: Vec<Event>,
     pub(crate) rng: Rng,
+    /// Every step a non-human unit took during the rival turns of the last
+    /// `EndTurn`, in order, for the TUI to replay as an animation. Drained by
+    /// `drain_rival_motion` once the round resolves; never persisted.
+    pub(crate) motion: Vec<RivalMotion>,
 }
 
 impl Default for Engine {
@@ -66,6 +70,7 @@ impl Engine {
             current_player_index: PlayerId::new(0),
             events: Vec::new(),
             rng: Rng::new(seed),
+            motion: Vec::new(),
         }
     }
 

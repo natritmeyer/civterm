@@ -5,11 +5,34 @@ use crate::model::civilizations::PlayerId;
 use crate::model::units::UnitOrder;
 
 impl Engine {
+    /// Resolve a whole round: every non-human player takes their turn in
+    /// order, then control returns to the human with the turn number advanced
+    /// by one. Each rival's turn begins with the same restore/process
+    /// preamble as any other, followed by the rival AI's decisions.
     pub(super) fn end_turn(&mut self) {
-        self.advance_to_next_player();
-        self.begin_turn();
-        if self.current_player_index == PlayerId::new(0) {
-            self.turn += 1;
+        let player_count = self.game.players.len();
+        let mut rivals_acted = 0;
+        loop {
+            self.advance_to_next_player();
+            self.begin_turn();
+            if self.current_player_index == PlayerId::new(0) {
+                self.turn += 1;
+                break;
+            }
+            self.events.push(Event::new(format!(
+                "{:?} begins turn {}",
+                self.current_player(),
+                self.turn
+            )));
+            self.run_rival_turn();
+            rivals_acted += 1;
+            // Only the human's turn ends a round. If the human has been
+            // eliminated, advancement skips straight back to the rivals, so a
+            // full lap without reaching the human must stop the loop rather
+            // than spin forever.
+            if rivals_acted >= player_count {
+                break;
+            }
         }
         self.events.push(Event::new(format!(
             "{:?} begins turn {}",

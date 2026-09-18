@@ -1,7 +1,8 @@
 use super::*;
 
-use crate::game_engine::{Event, MoveError};
+use crate::game_engine::{Event, MoveError, RivalMotion};
 use crate::model::cartography::{Direction, Location};
+use crate::model::civilizations::PlayerId;
 use crate::model::geography::TerrainImprovement;
 use crate::model::units::{Unit, UnitClass, UnitId};
 
@@ -59,6 +60,7 @@ impl Engine {
         }
 
         let mut_unit = self.owned_unit_mut(unit).unwrap();
+        let origin = mut_unit.location;
         mut_unit.location = destination;
         mut_unit.disembark();
         // Stepping off a carrier is free; an ordinary move pays the cost.
@@ -69,6 +71,15 @@ impl Engine {
         // Cargo aboard the mover (a ship) follows it onto the new tile; a
         // land unit stepping ashore brings nothing with it.
         self.game.sync_cargo(unit);
+        // A rival's step is recorded so the TUI can replay it; only the human
+        // is exempt.
+        if owner != PlayerId::new(0) {
+            self.motion.push(RivalMotion {
+                unit,
+                from: origin,
+                to: destination,
+            });
+        }
         self.events.push(Event::new(if was_transported {
             format!("Unit {} disembarks", unit.index())
         } else {
@@ -97,10 +108,18 @@ impl Engine {
         let (destination, carrier) = self.ensure_boardable(unit, direction)?;
         let owner = self.owned_unit(unit).unwrap().owner();
         self.meet_contacts_within(destination, owner);
+        let origin = self.owned_unit(unit).unwrap().location;
         let boarder = self.owned_unit_mut(unit).unwrap();
         boarder.location = destination;
         boarder.board(carrier);
         self.game.reveal_tiles_at(owner, destination);
+        if owner != PlayerId::new(0) {
+            self.motion.push(RivalMotion {
+                unit,
+                from: origin,
+                to: destination,
+            });
+        }
         self.events
             .push(Event::new(format!("Unit {} boards the ship", unit.index())));
         Ok(())

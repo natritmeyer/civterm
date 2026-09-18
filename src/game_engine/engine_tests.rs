@@ -4,7 +4,7 @@ use crate::game_engine::{Command, GameView, Player};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Direction;
 use crate::model::cartography::Location;
-use crate::model::cities::{CityId, CityImprovement, ProductionTarget};
+use crate::model::cities::{City, CityId, CityImprovement, ProductionTarget};
 use crate::model::civilizations::Civilization;
 use crate::model::civilizations::PlayerId;
 use crate::model::geography::Terrain;
@@ -570,12 +570,235 @@ fn end_turn_advances_the_turn_number() {
 }
 
 #[test]
-fn end_turn_moves_play_to_the_next_player_without_advancing_the_turn() {
+fn end_turn_resolves_the_whole_round_back_to_the_human() {
     let mut engine = two_player_engine();
     let events = engine.submit(Command::EndTurn);
-    assert_eq!(engine.current_player(), Civilization::Zulu);
-    assert_eq!(engine.turn(), 1);
+    assert_eq!(engine.current_player(), Civilization::English);
+    assert_eq!(engine.turn(), 2);
     assert_eq!(events[0].message(), "Zulu begins turn 1");
+    assert_eq!(events.last().unwrap().message(), "English begins turn 2");
+}
+
+#[test]
+fn a_rivals_garrison_march_is_recorded_for_the_replay_and_drains_once() {
+    // A wide grassland world where the rival's legion must close on its city
+    // to garrison it: that march is rival motion the TUI replays, and the
+    // human's own moves are never recorded.
+    let mut engine = Engine::new(
+        15,
+        3,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..15 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(1, 0),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    let legion = engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(4, 1),
+        PlayerId::new(1),
+        CityId::new(0),
+    );
+    engine.game.cities.push(City::new(
+        "Ulundi",
+        Location::new(14, 1),
+        PlayerId::new(1),
+        CityId::new(1),
+    ));
+    // The human's settler steps east of its own accord; its move must not be
+    // recorded as motion.
+    engine.submit(Command::Move {
+        unit: UnitId::new(0),
+        direction: Direction::E,
+    });
+
+    engine.submit(Command::EndTurn);
+    assert_eq!(engine.current_player(), Civilization::English);
+    assert_eq!(engine.turn(), 2);
+
+    let motion: Vec<RivalMotion> = engine.drain_rival_motion();
+    assert!(
+        !motion.is_empty(),
+        "the legion's march toward its city is replayed"
+    );
+    assert!(
+        motion.iter().all(|step| step.unit == legion),
+        "every recorded step belongs to the rival's legion, never the human's \
+         settler"
+    );
+    for pair in motion.windows(2) {
+        assert_eq!(pair[0].to, pair[1].from, "the steps chain tile to tile");
+    }
+    let stationed = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == legion)
+        .expect("the legion still exists");
+    assert_eq!(
+        motion.last().unwrap().to,
+        stationed.location,
+        "the final step ends where the unit now stands"
+    );
+    assert!(
+        engine.drain_rival_motion().is_empty(),
+        "draining the record empties it until the next round"
+    );
+}
+
+/// Zulu cities planted at `left` and `right`, their settler already standing
+/// on the terrain the AI will pick, and the whole map explored. Returns the
+/// engine with the human passed for the turn.
+fn rival_settlement_engine(left: Location, right: Location, settler: Location) -> Engine {
+    let mut engine = Engine::new(
+        15,
+        3,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..15 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(14, 0),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        settler,
+        PlayerId::new(1),
+        CityId::new(0),
+    );
+    engine
+        .game
+        .cities
+        .push(City::new("Angkor", left, PlayerId::new(1), CityId::new(1)));
+    engine
+        .game
+        .cities
+        .push(City::new("Annam", right, PlayerId::new(1), CityId::new(2)));
+    engine.game.players[1].reveal_tiles_at(Location::new(7, 1), 8);
+    engine
+}
+
+/// How many of `new_city`'s 21 working tiles sit inside the union of every
+/// other Zulu city's working grid.
+fn footprint_overlap(engine: &Engine, new_city: Location) -> usize {
+    let existing: Vec<Location> = engine
+        .game
+        .cities
+        .iter()
+        .filter(|city| city.owner() == PlayerId::new(1) && city.location != new_city)
+        .flat_map(|city| engine.game.city_footprint(city.location))
+        .collect();
+    engine
+        .game
+        .city_footprint(new_city)
+        .iter()
+        .filter(|tile| existing.contains(tile))
+        .count()
+}
+
+#[test]
+fn a_rival_settler_will_not_crowd_an_existing_city() {
+    // Cities at columns 2 and 12 leave columns 6-8 untouched; the settler
+    // stands on (6,0), the leftmost of those. Long-explored nearer tiles
+    // like (0,0) sit well inside Angkor's working grid and must lose out.
+    let mut engine = rival_settlement_engine(
+        Location::new(2, 1),
+        Location::new(12, 1),
+        Location::new(6, 0),
+    );
+
+    engine.submit(Command::EndTurn);
+
+    let zulu_cities: Vec<Location> = engine
+        .game
+        .cities
+        .iter()
+        .filter(|city| city.owner() == PlayerId::new(1))
+        .map(|city| city.location)
+        .collect();
+    assert_eq!(zulu_cities.len(), 3, "the settler founds its city");
+    assert_eq!(
+        zulu_cities
+            .iter()
+            .find(|location| **location != Location::new(2, 1)
+                && **location != Location::new(12, 1))
+            .copied(),
+        Some(Location::new(6, 0)),
+        "the open ground is chosen over the crowded tiles nearer Angkor"
+    );
+    let shared = footprint_overlap(&engine, Location::new(6, 0));
+    assert!(
+        shared <= 3,
+        "a new city shares at most 3 working tiles with its neighbours, \
+         shared {shared}"
+    );
+    assert!(
+        shared > 0,
+        "the chosen site sits up against the old grid's edge, not inside it"
+    );
+    assert_eq!(engine.current_player(), Civilization::English);
+}
+
+#[test]
+fn a_rival_settler_still_founds_when_only_crowded_sites_remain() {
+    // Cities at columns 3 and 10 put every column within Chebyshev 3 of one
+    // of them, so no explored land site can obey the working-grid law: the
+    // fallback must fire and the settler must still found, on the best
+    // crowded tile (0,0), rather than stall.
+    let mut engine = rival_settlement_engine(
+        Location::new(3, 1),
+        Location::new(10, 1),
+        Location::new(0, 0),
+    );
+    for y in 0..3 {
+        for x in 0..15 {
+            let location = Location::new(x as u16, y as u16);
+            if ![(3, 1), (10, 1)].contains(&(x, y)) {
+                assert!(
+                    footprint_overlap(&engine, location) > 3,
+                    "the scenario leaves no spacious site at {location:?}"
+                );
+            }
+        }
+    }
+
+    engine.submit(Command::EndTurn);
+
+    let zulu_cities: Vec<Location> = engine
+        .game
+        .cities
+        .iter()
+        .filter(|city| city.owner() == PlayerId::new(1))
+        .map(|city| city.location)
+        .collect();
+    assert_eq!(zulu_cities.len(), 3, "the rival founds even on a full map");
+    assert!(
+        zulu_cities.contains(&Location::new(0, 0)),
+        "the best crowded tile wins once no open one exists"
+    );
 }
 
 #[test]
@@ -680,8 +903,12 @@ fn each_players_units_reset_when_their_turn_begins() {
         direction: Direction::E,
     });
     assert_eq!(engine.game.units[0].moves_remaining(), 0);
+    // The round plays the rival's turn and then the human's is begun afresh,
+    // so every unit — the spent settler and the rival's standby legion — is
+    // back to full moves when control returns.
     engine.submit(Command::EndTurn);
-    assert_eq!(engine.current_player(), Civilization::Zulu);
+    assert_eq!(engine.current_player(), Civilization::English);
+    assert_eq!(engine.game.units[0].moves_remaining(), 1);
     assert_eq!(
         engine
             .game
@@ -692,7 +919,6 @@ fn each_players_units_reset_when_their_turn_begins() {
             .moves_remaining(),
         1
     );
-    assert_eq!(engine.game.units[0].moves_remaining(), 0);
 }
 
 #[test]
@@ -749,36 +975,26 @@ fn end_turn_after_the_last_player_wraps_and_advances_the_turn() {
     engine.submit(Command::EndTurn);
     let events = engine.submit(Command::EndTurn);
     assert_eq!(engine.current_player(), Civilization::English);
-    assert_eq!(engine.turn(), 2);
-    assert_eq!(events[0].message(), "English begins turn 2");
+    assert_eq!(engine.turn(), 3);
+    assert_eq!(events[0].message(), "Zulu begins turn 2");
+    assert_eq!(events.last().unwrap().message(), "English begins turn 3");
 }
 
 #[test]
 fn three_players_rotate_through_three_full_turns() {
     let mut engine = three_player_engine();
-    let mut messages = Vec::new();
-    for _ in 0..9 {
+    // Each EndTurn resolves the whole round: both rivals act, then the human
+    // starts the next turn.
+    for round in 1..=3 {
         let events = engine.submit(Command::EndTurn);
-        messages.push(events[0].message().to_string());
-        if messages.len() % 3 == 0 {
-            assert_eq!(engine.current_player(), Civilization::English);
-        }
+        assert_eq!(events[0].message(), format!("Zulu begins turn {}", round));
+        assert_eq!(
+            events.last().unwrap().message(),
+            format!("English begins turn {}", round + 1)
+        );
+        assert_eq!(engine.current_player(), Civilization::English);
     }
     assert_eq!(engine.turn(), 4);
-    assert_eq!(
-        messages,
-        vec![
-            "Zulu begins turn 1",
-            "Roman begins turn 1",
-            "English begins turn 2",
-            "Zulu begins turn 2",
-            "Roman begins turn 2",
-            "English begins turn 3",
-            "Zulu begins turn 3",
-            "Roman begins turn 3",
-            "English begins turn 4",
-        ]
-    );
 }
 
 #[test]
@@ -1283,24 +1499,23 @@ fn an_eliminated_civilization_is_skipped_when_the_turn_advances() {
         PlayerId::new(0),
         CityId::new(9),
     );
-    // Capture Zulu's only city; play moves from English to Roman, Zulu
-    // never taking another turn.
+    // Capture Zulu's only city; play moves on to the surviving rival, then
+    // the round returns to English with the turn advanced. Zulu never takes
+    // another turn.
     engine.submit(Command::Move {
         unit: legion,
         direction: Direction::E,
     });
     assert!(engine.game.players[1].eliminated());
     let events = engine.submit(Command::EndTurn);
-    assert_eq!(engine.current_player(), Civilization::Roman);
+    assert_eq!(engine.current_player(), Civilization::English);
+    assert_eq!(engine.turn(), 2);
     assert!(events.iter().any(|e| e.message() == "Roman begins turn 1"));
     assert!(
         !events
             .iter()
             .any(|e| e.message().starts_with("Zulu begins"))
     );
-    let events = engine.submit(Command::EndTurn);
-    assert_eq!(engine.current_player(), Civilization::English);
-    assert_eq!(engine.turn(), 2);
     assert!(
         events
             .iter()

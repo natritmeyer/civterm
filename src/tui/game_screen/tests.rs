@@ -4,6 +4,7 @@ use crate::model::civilizations::Civilization;
 use crate::model::geography::Terrain;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use std::collections::HashSet;
 
 struct FakeView {
     w: usize,
@@ -288,6 +289,17 @@ fn painted_cell(
     selected_unit: Option<crate::model::units::UnitId>,
     flashing: bool,
 ) -> (ratatui::buffer::Cell, Option<String>) {
+    painted_cell_with_animation(view, selected_unit, flashing, &HashSet::new())
+}
+
+/// Like `painted_cell`, but accepts the `hidden_units` set the rival-move
+/// animation feeds into `paint_tile`.
+fn painted_cell_with_animation(
+    view: &dyn GameView,
+    selected_unit: Option<crate::model::units::UnitId>,
+    flashing: bool,
+    hidden_units: &HashSet<crate::model::units::UnitId>,
+) -> (ratatui::buffer::Cell, Option<String>) {
     let mut buf = Buffer::empty(Rect::new(0, 0, 20, 8));
     let name = paint_tile(
         &mut buf,
@@ -302,6 +314,7 @@ fn painted_cell(
         selected_unit,
         flashing,
         None,
+        hidden_units,
     );
     (buf.cell((0, 0)).unwrap().clone(), name)
 }
@@ -328,6 +341,7 @@ fn painted_buffer(
         selected_unit,
         flashing,
         None,
+        &HashSet::new(),
     );
     buf
 }
@@ -1356,4 +1370,232 @@ fn camera_center(
 /// Viewport column of a tile, accounting for horizontal map wrapping.
 fn wrapped_col(fx: usize, camera_x: usize, map_w: usize) -> usize {
     (fx + map_w - camera_x) % map_w
+}
+
+// ── rival-move replay tests ──────────────────────────────────────────────
+
+#[test]
+fn rival_move_animation_active_frame_follows_phase_timing() {
+    use super::{RIVAL_MOVE_PHASE, RivalMoveAnimation, RivalMoveFrame};
+    use crate::model::cartography::Location;
+    use crate::model::units::UnitId;
+
+    let animation = RivalMoveAnimation {
+        start: Duration::ZERO,
+        frames: vec![
+            RivalMoveFrame {
+                unit_id: UnitId::new(1),
+                from: Location::new(2, 2),
+                to: Location::new(3, 2),
+            },
+            RivalMoveFrame {
+                unit_id: UnitId::new(2),
+                from: Location::new(5, 5),
+                to: Location::new(6, 5),
+            },
+        ],
+    };
+    let phase_ms = RIVAL_MOVE_PHASE.as_millis() as u32;
+    let frame_ms = phase_ms * 2;
+
+    // First frame, starting tile.
+    let (frame, in_from) = animation.active_frame(Duration::ZERO).unwrap();
+    assert_eq!(frame.unit_id, UnitId::new(1));
+    assert!(in_from);
+    // Still first frame, ending tile.
+    let (frame, in_from) = animation
+        .active_frame(Duration::from_millis((phase_ms + 1) as u64))
+        .unwrap();
+    assert_eq!(frame.unit_id, UnitId::new(1));
+    assert!(!in_from);
+    // Second frame, starting tile.
+    let (frame, in_from) = animation
+        .active_frame(Duration::from_millis((frame_ms + 1) as u64))
+        .unwrap();
+    assert_eq!(frame.unit_id, UnitId::new(2));
+    assert!(in_from);
+    // Last possible moment of the second frame.
+    assert!(
+        animation
+            .active_frame(Duration::from_millis((frame_ms * 2 - 1) as u64))
+            .is_some()
+    );
+    // Animation complete: no active frame.
+    assert!(!animation.is_complete(Duration::from_millis((frame_ms * 2 - 1) as u64)));
+    assert!(animation.is_complete(Duration::from_millis((frame_ms * 2) as u64)));
+    assert!(
+        animation
+            .active_frame(Duration::from_millis((frame_ms * 2) as u64))
+            .is_none()
+    );
+}
+
+#[test]
+fn rival_move_animation_hidden_units() {
+    use super::{RivalMoveAnimation, RivalMoveFrame};
+    use crate::model::cartography::Location;
+    use crate::model::units::UnitId;
+
+    let animation = RivalMoveAnimation {
+        start: Duration::ZERO,
+        frames: vec![
+            RivalMoveFrame {
+                unit_id: UnitId::new(1),
+                from: Location::new(2, 2),
+                to: Location::new(3, 2),
+            },
+            RivalMoveFrame {
+                unit_id: UnitId::new(2),
+                from: Location::new(5, 5),
+                to: Location::new(6, 5),
+            },
+        ],
+    };
+    let frame_ms = super::RIVAL_MOVE_PHASE.as_millis() as u32 * 2;
+    // Both units are in transit at the start.
+    let hidden = animation.hidden_units(Duration::ZERO);
+    assert!(hidden.contains(&UnitId::new(1)));
+    assert!(hidden.contains(&UnitId::new(2)));
+    // One frame in, only the second unit is hidden.
+    let hidden = animation.hidden_units(Duration::from_millis((frame_ms + 1) as u64));
+    assert!(!hidden.contains(&UnitId::new(1)));
+    assert!(hidden.contains(&UnitId::new(2)));
+    // Once complete, nothing is hidden.
+    assert!(
+        animation
+            .hidden_units(Duration::from_millis((frame_ms * 2) as u64))
+            .is_empty()
+    );
+}
+
+#[test]
+fn paint_tile_suppresses_a_hidden_unit() {
+    let mut view = fake_view();
+    view.unit = Some(crate::model::units::Unit::new(
+        crate::model::units::UnitClass::Militia,
+        crate::model::cartography::Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(1),
+        crate::model::cities::CityId::new(0),
+        crate::model::units::UnitId::new(9),
+    ));
+    // Unhidden: the unit's class letter is drawn.
+    let (cell, _) = painted_cell(&view, None, false);
+    assert_eq!(cell.symbol(), "M");
+    // Hidden: the unit is lifted and the terrain letter shows instead.
+    let (cell, _) = painted_cell_with_animation(
+        &view,
+        None,
+        false,
+        &HashSet::from([crate::model::units::UnitId::new(9)]),
+    );
+    assert_eq!(cell.symbol(), view.tile.terrain.as_char().to_string());
+}
+
+#[test]
+fn rival_replay_draws_the_moving_unit_over_the_map() {
+    use super::{RivalMoveAnimation, RivalMoveFrame};
+    use crate::model::cartography::Location;
+    use crate::model::units::UnitId;
+
+    let mut view = fake_view();
+    view.explored = false;
+    view.unit = Some(crate::model::units::Unit::new(
+        crate::model::units::UnitClass::Militia,
+        Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(1),
+        crate::model::cities::CityId::new(0),
+        UnitId::new(9),
+    ));
+    let animation = RivalMoveAnimation {
+        start: Duration::ZERO,
+        frames: vec![RivalMoveFrame {
+            unit_id: UnitId::new(9),
+            from: Location::new(2, 2),
+            to: Location::new(3, 2),
+        }],
+    };
+    let left = LEFT_COLUMN_WIDTH;
+    let (cx_tile0, cx_tile1) = (
+        left + (2 * TILE_WIDTH) as u16,
+        left + (3 * TILE_WIDTH) as u16,
+    );
+    let tile_left_col = |cx: u16| cx;
+    let tile_right_col = |cx: u16| cx + 1;
+
+    // Phase 0: unit glyph on the starting tile, destination blank.
+    {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::from_millis(100),
+                        false,
+                        &[],
+                        None,
+                    )
+                    .with_rival_animation(Some(&animation)),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        assert_eq!(
+            buf.cell((tile_left_col(cx_tile0), 2)).unwrap().symbol(),
+            "M"
+        );
+        assert_eq!(
+            buf.cell((tile_right_col(cx_tile0), 2)).unwrap().symbol(),
+            " "
+        );
+        assert_eq!(
+            buf.cell((tile_left_col(cx_tile1), 2)).unwrap().symbol(),
+            " "
+        );
+        assert_eq!(
+            buf.cell((tile_right_col(cx_tile1), 2)).unwrap().symbol(),
+            " "
+        );
+    }
+    // Phase 1: unit glyph on the ending tile, source blank.
+    {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(
+                        &view,
+                        None,
+                        (0, 0),
+                        None,
+                        None,
+                        Duration::from_millis(400),
+                        false,
+                        &[],
+                        None,
+                    )
+                    .with_rival_animation(Some(&animation)),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        assert_eq!(
+            buf.cell((tile_left_col(cx_tile0), 2)).unwrap().symbol(),
+            " "
+        );
+        assert_eq!(
+            buf.cell((tile_left_col(cx_tile1), 2)).unwrap().symbol(),
+            "M"
+        );
+        assert_eq!(
+            buf.cell((tile_right_col(cx_tile1), 2)).unwrap().symbol(),
+            " "
+        );
+    }
 }
