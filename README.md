@@ -27,9 +27,11 @@ Move your selected unit with the keys clustered around the <kbd>j</kbd> home
 key — laid out here as they appear on the keyboard (the arrow keys work too).
 <kbd>j</kbd> re-centres the camera on the selected unit.
 
-| <kbd>y</kbd><br/>↖ | <kbd>u</kbd><br/>N | <kbd>i</kbd><br/>↗ |
+|                    |                         |                    |
+| ------------------ | ----------------------- | ------------------ |
+| <kbd>y</kbd><br/>↖ | <kbd>u</kbd><br/>N      | <kbd>i</kbd><br/>↗ |
 | <kbd>h</kbd><br/>W | <kbd>j</kbd><br/>centre | <kbd>k</kbd><br/>E |
-| <kbd>n</kbd><br/>↙ | <kbd>m</kbd><br/>S | <kbd>,</kbd><br/>↘ |
+| <kbd>n</kbd><br/>↙ | <kbd>m</kbd><br/>S      | <kbd>,</kbd><br/>↘ |
 
 ## What this is about
 
