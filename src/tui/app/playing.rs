@@ -197,7 +197,7 @@ impl App {
 
     /// Whether the focused unit can still act this turn. `false` also when
     /// there is no focus or the focused unit no longer exists.
-    fn selected_unit_has_budget(&self) -> bool {
+    pub(super) fn selected_unit_has_budget(&self) -> bool {
         let Some(engine) = &self.engine else {
             return false;
         };
@@ -391,6 +391,11 @@ impl App {
         let screen = self.mouse_position.get()?;
         let camera = self.camera.get();
         let map = (engine.width(), engine.height());
+        // A unit with no budget left cannot be click-moved, so hovering it
+        // never hints at a move either; the tile is just a plain tile.
+        if !self.selected_unit_has_budget() {
+            return None;
+        }
         hovered_adjacent_tile(
             screen,
             camera,

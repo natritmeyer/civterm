@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 536 passing unit
+Run `make build` after any change. Current test baseline: 539 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -119,6 +119,19 @@ a hard boundary; keep it by convention.
   homed units), or its last unit killed while it owns no cities. Test
   fixtures with zero units must NOT be eliminated. Eliminated players are
   skipped when the turn advances.
+
+## Conquest
+
+- A city falls to the attacker the moment its guard breaks, in either path:
+  an at-war unit walking onto an undefended city tile, or winning combat on
+  a defended city tile. Ownership transfers immediately, so the conquered
+  city's tile wears the victor's colour the instant it falls — beneath the
+  conquering unit, before it ever moves off.
+- A conquered city of population one is destroyed outright: it is removed
+  from the game and the tile reverts to plain terrain. Only a city grown to
+  size two or more is captured and keeps producing for its new owner. Either
+  fate disbands units homed to the fallen city, and a civilization left with
+  no city at all is eliminated (its stragglers in the field disband with it).
 
 ## Rival AI and turn resolution
 

@@ -69,6 +69,19 @@ impl Engine {
                 attacker_id.index(),
                 defender_id.index()
             )));
+            // Winning the fight on a city tile conquers the now-undefended
+            // city for the attacker: the conqueror stands inside a city that
+            // has just fallen to them, so it flips colour the instant the
+            // defender falls rather than a round later.
+            if tile_is_clear
+                && let Some(city) = self.game.cities.iter().find(|c| {
+                    c.location == tile
+                        && c.owner() != attacker_owner
+                        && self.game.at_war(attacker_owner, c.owner())
+                })
+            {
+                self.take_captured_city(city.id());
+            }
             self.eliminate_if_annihilated(defender_owner);
         } else {
             self.game.remove_unit(attacker_id);
@@ -87,15 +100,21 @@ impl Engine {
             self.eliminate_if_annihilated(attacker_owner);
         }
     }
-    /// owner. Units homed to the captured city are disbanded. The attacking
-    /// unit advances onto the city tile.
-    pub(super) fn capture_city(&mut self, city_id: CityId, unit: UnitId, destination: Location) {
+    /// Deliver a conquered city to the current player after its guard has
+    /// fallen. A city of population one is doomed: it is overrun and destroyed
+    /// outright, removed from the game entirely — an empty ruin holds nothing
+    /// for the conqueror. Any larger city transfers ownership, flipping its
+    /// tile to the conqueror's colour then and there. Units homed to the
+    /// fallen city are disbanded under either fate, and a loser left without
+    /// a single city is eliminated. The conquering unit is already on the
+    /// city tile; the caller handles its placement and movement.
+    pub(super) fn take_captured_city(&mut self, city_id: CityId) {
         let city_name = self
             .game
             .cities
             .iter()
             .find(|c| c.id() == city_id)
-            .unwrap()
+            .expect("the conquered city exists")
             .name
             .clone();
         let old_owner = self
@@ -105,32 +124,53 @@ impl Engine {
             .find(|c| c.id() == city_id)
             .unwrap()
             .owner();
-        let disbanded = self.game.disband_units_homed_to(city_id);
-        self.game
+        let overrun = self
+            .game
             .cities
-            .iter_mut()
+            .iter()
             .find(|c| c.id() == city_id)
             .unwrap()
-            .change_owner(self.current_player_index);
+            .population()
+            == 1;
+        let disbanded = self.game.disband_units_homed_to(city_id);
+        let conqueror = self.game.players[self.current_player_index.index()].civilization;
+        let loser = self.game.players[old_owner.index()].civilization;
+        if overrun {
+            self.game.cities.retain(|c| c.id() != city_id);
+            self.events.push(Event::new(format!(
+                "{conqueror:?} destroy {city_name} (formerly {loser:?}'s)"
+            )));
+        } else {
+            self.game
+                .cities
+                .iter_mut()
+                .find(|c| c.id() == city_id)
+                .unwrap()
+                .change_owner(self.current_player_index);
+            self.events.push(Event::new(format!(
+                "{conqueror:?} capture {city_name} (formerly {loser:?}'s)"
+            )));
+        }
+        if disbanded > 0 {
+            self.events.push(Event::new(format!(
+                "{disbanded} units disband with the loss of {city_name}"
+            )));
+        }
+        self.eliminate_if_cityless(old_owner);
+    }
+    /// The attacker has advanced onto an undefended foreign city tile and
+    /// takes it for the current player — ownership transfers, or a
+    /// population-one city falls and is destroyed. Units homed to the
+    /// captured city are disbanded. The attacking unit advances onto the
+    /// city tile.
+    pub(super) fn capture_city(&mut self, city_id: CityId, unit: UnitId, destination: Location) {
+        self.take_captured_city(city_id);
         let mut_unit = self.owned_unit_mut(unit).unwrap();
         mut_unit.location = destination;
         mut_unit.disembark();
         mut_unit.spend_turn();
         self.game
             .reveal_tiles_at(self.current_player_index, destination);
-        self.events.push(Event::new(format!(
-            "{:?} capture {} (formerly {:?}'s)",
-            self.game.players[self.current_player_index.index()].civilization,
-            city_name,
-            self.game.players[old_owner.index()].civilization
-        )));
-        if disbanded > 0 {
-            self.events.push(Event::new(format!(
-                "{} units disband with the loss of {}",
-                disbanded, city_name
-            )));
-        }
-        self.eliminate_if_cityless(old_owner);
     }
     /// A civilization that loses its last city is removed from play, even if
     /// stragglers remain in the field.

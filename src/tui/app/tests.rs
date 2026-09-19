@@ -561,6 +561,76 @@ fn clicking_a_remote_tile_does_not_move_the_selected_unit() {
 }
 
 #[test]
+fn clicking_a_city_next_to_a_spent_unit_still_opens_the_city_window() {
+    let (mut app, cx, cy) = playing_app();
+    let city_id = app.engine.as_ref().unwrap().player_cities()[0].id();
+    // Park a spent settler on a passable tile beside the city and give it
+    // the focus.
+    let (nx, ny) = [
+        (0, -1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+        (0, 1),
+        (-1, 1),
+        (-1, 0),
+        (-1, -1),
+    ]
+    .into_iter()
+    .map(|(dx, dy)| {
+        let engine = app.engine.as_ref().unwrap();
+        let w = engine.width() as isize;
+        let h = engine.height() as isize;
+        let nx = (cx as isize + dx).rem_euclid(w) as usize;
+        let ny = (cy as isize + dy).clamp(0, h - 1) as usize;
+        (nx, ny)
+    })
+    .find(|&(x, y)| {
+        let engine = app.engine.as_ref().unwrap();
+        let tile = engine.tile(x, y);
+        tile.terrain.is_land() && tile.terrain.movement_cost() <= 1
+    })
+    .expect("some tile beside the city is passable");
+    let parked = {
+        let engine = app.engine.as_mut().unwrap();
+        let unit = engine.game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(nx as u16, ny as u16),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let index = engine
+            .game
+            .units
+            .iter()
+            .position(|u| u.id() == unit)
+            .unwrap();
+        engine.game.units[index].spend_turn();
+        unit
+    };
+    app.selected_unit = Some(parked);
+    assert_eq!(app.selected_city, None);
+
+    // The click on the city must not be swallowed as a move attempt by the
+    // spent neighbour: the window opens and the parked settler stays put.
+    app.left_click(
+        (LEFT_COLUMN_WIDTH as usize + cx * TILE_WIDTH) as u16,
+        cy as u16,
+    );
+    assert_eq!(app.selected_city, Some(city_id));
+    let engine = app.engine.as_ref().unwrap();
+    let parked = engine
+        .player_units()
+        .into_iter()
+        .find(|u| u.id() == parked)
+        .unwrap();
+    assert_eq!(
+        (parked.location.x as usize, parked.location.y as usize),
+        (nx, ny)
+    );
+}
+
+#[test]
 fn adjacent_direction_takes_the_horizontal_wrap_into_account() {
     assert_eq!(adjacent_direction((5, 5), (4, 5), 80), Some(Direction::W));
     assert_eq!(adjacent_direction((5, 5), (6, 5), 80), Some(Direction::E));

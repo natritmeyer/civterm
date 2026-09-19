@@ -202,9 +202,16 @@ impl App {
         let world_y = camera_y + row as usize;
         // A click on the tile one square away in any direction moves the
         // selected unit exactly as the arrow keys would, letting the engine
-        // enforce the movement rules.
-        let direction = focus_coordinate(engine, self.selected_unit)
-            .and_then(|from| adjacent_direction(from, (world_x, world_y), engine.width()));
+        // enforce the movement rules. A unit whose budget is spent cannot be
+        // moved, so its adjacency must not swallow the click: the click falls
+        // through to the selection handling, letting a spent unit standing
+        // beside a city still open that city's window.
+        let direction = if self.selected_unit_has_budget() {
+            focus_coordinate(engine, self.selected_unit)
+                .and_then(|from| adjacent_direction(from, (world_x, world_y), engine.width()))
+        } else {
+            None
+        };
         if let Some(direction) = direction {
             self.move_selected_unit(direction);
             return;

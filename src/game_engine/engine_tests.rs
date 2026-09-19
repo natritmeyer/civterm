@@ -1445,6 +1445,9 @@ fn an_at_war_unit_moving_onto_an_undefended_enemy_city_captures_it() {
     engine
         .game
         .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+    // A population-one city is razed rather than captured, so grow it to
+    // size two to exercise the capture itself.
+    engine.game.cities[0].grow();
     let legion = engine.game.spawn_unit(
         UnitClass::Legion,
         Location::new(2, 2),
@@ -1480,6 +1483,8 @@ fn capturing_a_city_reveals_the_tiles_around_it_for_the_conqueror() {
     engine
         .game
         .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+    // Grow it so the capture (not the pop-one raze) is what is tested.
+    engine.game.cities[0].grow();
     let legion = engine.game.spawn_unit(
         UnitClass::Legion,
         Location::new(2, 2),
@@ -1541,6 +1546,7 @@ fn capturing_a_city_disbands_units_homed_to_it() {
     engine
         .game
         .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+    engine.game.cities[0].grow();
     // A second Zulu city (id 1) survives, so the civilization is not
     // eliminated and only the units homed to the captured city disband.
     engine
@@ -1587,6 +1593,7 @@ fn capturing_a_civilizations_last_city_removes_it_from_play() {
     engine
         .game
         .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+    engine.game.cities[0].grow();
     let legion = engine.game.spawn_unit(
         UnitClass::Legion,
         Location::new(2, 2),
@@ -1627,6 +1634,7 @@ fn losing_a_city_but_keeping_another_leaves_the_civilization_in_play() {
     engine
         .game
         .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+    engine.game.cities[0].grow();
     engine
         .game
         .add_city(PlayerId::new(1), "Ulundi", Location::new(4, 2));
@@ -1736,6 +1744,7 @@ fn an_eliminated_civilization_is_skipped_when_the_turn_advances() {
     engine
         .game
         .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+    engine.game.cities[0].grow();
     let legion = engine.game.spawn_unit(
         UnitClass::Legion,
         Location::new(2, 2),
@@ -1767,7 +1776,61 @@ fn an_eliminated_civilization_is_skipped_when_the_turn_advances() {
 }
 
 #[test]
-fn a_city_tile_with_a_defending_unit_is_not_captured() {
+fn winning_a_fight_on_a_city_tile_captures_the_city() {
+    let mut engine = blank_war_map();
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+    engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+    engine.game.cities[0].grow();
+    let legion = engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(2, 2),
+        PlayerId::new(0),
+        CityId::new(9),
+    );
+    // A militia's meagre defence keeps the fight short; the win then advances
+    // the legion onto the city tile, where the city is now his.
+    let militia = engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(3, 2),
+        PlayerId::new(1),
+        CityId::new(1),
+    );
+    let events = engine.submit(Command::Move {
+        unit: legion,
+        direction: Direction::E,
+    });
+    assert!(events.iter().any(
+        |e| e.message() == format!("Unit {} defeats Unit {}", legion.index(), militia.index())
+    ));
+    assert!(!engine.game.units.iter().any(|unit| unit.id() == militia));
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message() == "English capture Umgungundlovu (formerly Zulu's)"),
+        "winning the fight takes the city on the spot: {:?}",
+        events.iter().map(|e| e.message()).collect::<Vec<_>>()
+    );
+    let city = engine
+        .game
+        .cities
+        .iter()
+        .find(|c| c.name == "Umgungundlovu")
+        .unwrap();
+    assert_eq!(city.owner(), PlayerId::new(0));
+    let legion_unit = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == legion)
+        .unwrap();
+    assert_eq!(legion_unit.location, Location::new(3, 2));
+}
+
+#[test]
+fn conquering_a_population_one_city_destroys_it() {
     let mut engine = blank_war_map();
     engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
     engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
@@ -1778,32 +1841,72 @@ fn a_city_tile_with_a_defending_unit_is_not_captured() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
-    );
-    let phalanx = engine.game.spawn_unit(
-        UnitClass::Phalanx,
-        Location::new(3, 2),
-        PlayerId::new(1),
-        CityId::new(1),
+        CityId::new(9),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
         direction: Direction::E,
     });
-    // The defender absorbs the attack; the city stays in Zulu hands.
     assert!(
-        !events
+        events
             .iter()
-            .any(|e| e.message().contains("capture Umgungundlovu"))
+            .any(|e| e.message() == "English destroy Umgungundlovu (formerly Zulu's)"),
+        "expected the razing event, got {:?}",
+        events.iter().map(|e| e.message()).collect::<Vec<_>>()
     );
-    let city = engine
+    assert!(
+        !engine.game.cities.iter().any(|c| c.name == "Umgungundlovu"),
+        "the destroyed city is removed from the game"
+    );
+    // Zulu holds no other city and no units: the razing ends the civilization.
+    assert!(engine.game.players[1].eliminated());
+    let legion_unit = engine
         .game
-        .cities
+        .units
         .iter()
-        .find(|c| c.name == "Umgungundlovu")
+        .find(|unit| unit.id() == legion)
         .unwrap();
-    assert_eq!(city.owner(), PlayerId::new(1));
-    assert!(engine.game.units.iter().any(|u| u.id() == phalanx));
+    assert_eq!(legion_unit.location, Location::new(3, 2));
+}
+
+#[test]
+fn razing_a_population_one_city_leaves_a_surviving_civilization_in_play() {
+    let mut engine = blank_war_map();
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+    engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+    engine
+        .game
+        .add_city(PlayerId::new(1), "Ulundi", Location::new(4, 2));
+    let legion = engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(2, 2),
+        PlayerId::new(0),
+        CityId::new(9),
+    );
+    let events = engine.submit(Command::Move {
+        unit: legion,
+        direction: Direction::E,
+    });
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message() == "English destroy Umgungundlovu (formerly Zulu's)")
+    );
+    assert!(!engine.game.cities.iter().any(|c| c.name == "Umgungundlovu"));
+    // Ulundi survives, so Zulu is not eliminated by the loss of one town.
+    assert!(!engine.game.players[1].eliminated());
+    assert_eq!(
+        engine
+            .game
+            .cities
+            .iter()
+            .filter(|c| c.owner() == PlayerId::new(1))
+            .count(),
+        1
+    );
 }
 
 #[test]
