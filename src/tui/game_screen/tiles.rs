@@ -86,7 +86,9 @@ pub(crate) fn tile_style(explored: bool, terrain: Terrain) -> Style {
 /// `▓` so the player can see where clicking would move the selected unit.
 /// `hidden_units` suppresses the unit glyphs of the rival-move animation so a
 /// "in transit" unit is not left painted at its game-state square; hidden
-/// units still count as present for the selected-city outline.
+/// units still count as present for the selected-city outline. A unit
+/// fortifying on a city tile is likewise not drawn: it has stowed itself as
+/// the city's garrison, so the tile keeps showing its population.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_tile(
     buf: &mut Buffer,
@@ -120,11 +122,18 @@ pub(crate) fn paint_tile(
         let mut style = tile_style(explored, terrain);
 
         let unit = view.units_at(map_x, world_y);
+        let city = view.city_at(map_x, world_y);
+
+        // A unit fortifying on a city tile is hidden on the map: it has settled
+        // into garrison, so the tile shows its population digit as if
+        // unoccupied. Any other unit still displays ahead of the population.
         let visible_unit = unit
             .iter()
-            .find(|u| !hidden_units.contains(&u.id()))
+            .find(|u| {
+                !hidden_units.contains(&u.id())
+                    && !(city.is_some() && u.order() == UnitOrder::Fortified)
+            })
             .copied();
-        let city = view.city_at(map_x, world_y);
 
         let (symbol, city_name) = if explored
             && visible_unit.is_none()

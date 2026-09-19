@@ -5,6 +5,12 @@ use crate::model::units::{Unit, UnitOrder};
 use crossterm::event::KeyCode;
 use strum::IntoEnumIterator;
 
+/// A unit is still worth commanding while it has movement left and is
+/// neither fortified, sentried, improving, nor riding in a ship.
+fn unit_commandable(unit: &Unit) -> bool {
+    unit.moves_remaining() > 0 && unit.order() == UnitOrder::Idle && !unit.is_transported()
+}
+
 impl App {
     pub(super) fn handle_playing_key(&mut self, key: KeyEvent) -> bool {
         // While the research dialog is open it captures the keyboard: the
@@ -154,31 +160,24 @@ impl App {
                 self.selected_unit = None;
                 return;
             }
-            // A unit is still worth commanding while it has movement left and
-            // is neither fortified, sentried, improving, nor riding in a ship.
-            let commandable: Vec<&Unit> = units
-                .iter()
-                .filter(|unit| {
-                    unit.moves_remaining() > 0
-                        && unit.order() == UnitOrder::Idle
-                        && !unit.is_transported()
-                })
-                .copied()
-                .collect();
-            if commandable.is_empty() {
+            if !units.iter().any(|unit| unit_commandable(unit)) {
                 None
             } else {
-                let next = match self.selected_unit {
-                    Some(current) => {
-                        let index = commandable
-                            .iter()
-                            .position(|unit| unit.id() == current)
-                            .unwrap_or(0);
-                        (index + 1) % commandable.len()
-                    }
+                // The next commandable unit in order after the current focus,
+                // wrapping around; with no focus, or a focus that no longer
+                // exists (killed, or transformed into a city), start from the
+                // list head.
+                let start = match self.selected_unit {
+                    Some(current) => units
+                        .iter()
+                        .position(|unit| unit.id() == current)
+                        .map_or(0, |index| index + 1),
                     None => 0,
                 };
-                Some(commandable[next].id())
+                (0..units.len())
+                    .map(|step| (start + step) % units.len())
+                    .find(|&index| unit_commandable(units[index]))
+                    .map(|index| units[index].id())
             }
         };
         match decision {
@@ -193,6 +192,68 @@ impl App {
                     "No more units left to command this turn",
                 )]);
             }
+        }
+    }
+
+    /// Whether the focused unit can still act this turn. `false` also when
+    /// there is no focus or the focused unit no longer exists.
+    fn selected_unit_has_budget(&self) -> bool {
+        let Some(engine) = &self.engine else {
+            return false;
+        };
+        let Some(selected) = self.selected_unit else {
+            return false;
+        };
+        engine
+            .player_units()
+            .iter()
+            .any(|unit| unit.id() == selected && unit_commandable(unit))
+    }
+
+    /// Whether a modal overlay or the rival replay currently captures the
+    /// keyboard, so a pending auto-advance must not move the selection
+    /// underneath it.
+    fn modal_open(&self) -> bool {
+        self.research_dialog.is_some()
+            || self.diplomacy.is_some()
+            || self.work_picker_open
+            || self.production_picker_open
+            || self.save_prompt.is_some()
+            || self.rival_animation.is_some()
+    }
+
+    /// After a command that may spend the focused unit, arm a pending
+    /// auto-advance when the focus has lost its budget and nothing captures
+    /// the keyboard; otherwise clear any arm that no longer applies (the
+    /// focus still acts, a modal covers the map, or play left its phase).
+    pub(super) fn schedule_unit_advance_if_spent(&mut self) {
+        self.unit_advance_deadline = None;
+        if self.phase != Phase::Playing || self.modal_open() || !self.selected_unit.is_some() {
+            return;
+        }
+        if !self.selected_unit_has_budget() {
+            self.unit_advance_deadline = Some(self.started_at.elapsed() + UNIT_ADVANCE_DELAY);
+        }
+    }
+
+    /// The half of the auto-advance that the run loop ticks: once the pending
+    /// deadline has passed and the focus is still spent, jump to the next
+    /// unit that has budget (or report that none are left). A focus that
+    /// regained agency in the meantime — the player cancelled an order or a
+    /// modal opened — skips the jump.
+    pub(super) fn maybe_finish_pending_unit_advance(&mut self, now: Duration) {
+        let Some(deadline) = self.unit_advance_deadline else {
+            return;
+        };
+        if now < deadline || self.modal_open() {
+            return;
+        }
+        self.unit_advance_deadline = None;
+        if self.phase != Phase::Playing || !self.selected_unit.is_some() {
+            return;
+        }
+        if !self.selected_unit_has_budget() {
+            self.cycle_unit_selection();
         }
     }
 
@@ -275,6 +336,9 @@ impl App {
             self.record_events(events);
         }
         self.camera_follow.set(true);
+        // A move may be the step that spends the focus: schedule the jump to
+        // the next unit with budget after a beat.
+        self.schedule_unit_advance_if_spent();
     }
 
     /// The rival just met in `message` ("{Civ} and {Civ} meet for the first
@@ -343,10 +407,14 @@ impl App {
             let name = city_name_for(engine, unit);
             let events = engine.submit(Command::FoundCity { unit, name });
             self.record_events(events);
+            // The settler became a city: its selection is gone, so move the
+            // focus on to the next unit that still has budget.
+            self.schedule_unit_advance_if_spent();
         }
     }
 
     pub(super) fn end_turn(&mut self) {
+        self.unit_advance_deadline = None;
         let human = PlayerId::new(0);
         let (events, discovered, wrapped) = if let Some(engine) = &mut self.engine {
             let advances_before = engine.player_advances(human);
@@ -435,6 +503,9 @@ impl App {
         if let Some(engine) = &mut self.engine {
             let events = engine.submit(Command::CancelOrder { unit });
             self.record_events(events);
+            // Cancelling restores the unit's budget (if the order spent its
+            // turn), wiping any pending auto-advance.
+            self.schedule_unit_advance_if_spent();
         }
     }
 }

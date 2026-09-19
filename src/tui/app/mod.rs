@@ -41,6 +41,9 @@ pub const EVENT_LOG_SIZE: usize = 5;
 /// How many screen cells a left-button press may travel before it becomes a
 /// map drag rather than a click.
 const CLICK_SLOP: i32 = 2;
+/// How long after the focused unit spends its movement budget before the
+/// selection auto-advances to the next unit that still has budget.
+const UNIT_ADVANCE_DELAY: Duration = Duration::from_millis(300);
 
 #[derive(PartialEq)]
 enum Phase {
@@ -116,6 +119,11 @@ pub struct App {
     start_choice: StartChoice,
     engine: Option<Engine>,
     selected_unit: Option<UnitId>,
+    /// The clock time at which the unit selection auto-advances to the next
+    /// unit with unspent movement budget, if the focused unit has spent this
+    /// turn's. Armed after a command spends the focused unit and cleared when
+    /// the advance fires or the focus regains agency.
+    unit_advance_deadline: Option<Duration>,
     selected_city: Option<CityId>,
     /// Scroll offset of the open city window's improvement list.
     city_window_scroll: usize,
@@ -207,6 +215,7 @@ impl App {
             start_choice: StartChoice::Start,
             engine: None,
             selected_unit: None,
+            unit_advance_deadline: None,
             selected_city: None,
             city_window_scroll: 0,
             moused_window: Cell::new(None),
@@ -251,6 +260,7 @@ impl App {
             terminal.draw(|frame| Self::draw(frame, self))?;
             self.clear_expired_battle_animation(self.started_at.elapsed());
             self.clear_expired_rival_animation(self.started_at.elapsed());
+            self.maybe_finish_pending_unit_advance(self.started_at.elapsed());
             if !event::poll(POLL_INTERVAL)? {
                 continue;
             }

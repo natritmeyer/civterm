@@ -216,6 +216,9 @@ impl App {
         if let Some(engine) = &mut self.engine {
             let events = engine.submit(Command::Work { unit, improvement });
             self.record_events(events);
+            // The settler is now building, not commanding: let the focus
+            // move on to the next unit with budget.
+            self.schedule_unit_advance_if_spent();
         }
     }
 

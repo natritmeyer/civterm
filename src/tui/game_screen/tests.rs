@@ -412,6 +412,30 @@ fn a_unit_in_a_city_stands_on_the_citys_owner_colour() {
 }
 
 #[test]
+fn a_fortified_unit_in_a_city_is_hidden_on_the_map() {
+    // Fortifying in a city stows the unit as its garrison: the tile shows the
+    // city's population digit, not the unit letter, and the name label stays.
+    let mut view = city_and_unit_view();
+    view.unit.as_mut().unwrap().fortify();
+    let (cell, name) = painted_cell(&view, None, false);
+    assert_eq!(
+        cell.symbol(),
+        "1",
+        "the population digit replaces the garrison"
+    );
+    assert!(!cell.style().add_modifier.contains(Modifier::BOLD));
+    assert!(!cell.style().add_modifier.contains(Modifier::UNDERLINED));
+    assert_eq!(name.as_deref(), Some("London"));
+
+    // Fortifying on open ground keeps the unit on the map.
+    let mut open = fake_view();
+    open.unit = view.unit.clone();
+    let (open_cell, open_name) = painted_cell(&open, None, false);
+    assert_eq!(open_cell.symbol(), "M");
+    assert_eq!(open_name, None);
+}
+
+#[test]
 fn a_captured_city_changes_colour_beneath_the_conquering_unit() {
     // A Zulu city (player 1) occupied by the attacking English militia
     // still shows Zulu's colour while it remains foreign.

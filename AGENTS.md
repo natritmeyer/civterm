@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 532 passing unit
+Run `make build` after any change. Current test baseline: 536 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -205,6 +205,10 @@ New features are judged for their save impact before they are built:
 - A city tile always wears its owning civilization's colour, even beneath an
   occupying unit, so a captured city flips colour the instant it falls
   rather than waiting for the victor to move off.
+- A unit fortifying on a city tile is hidden on the map: it has stowed itself
+  as the city's garrison, so the tile keeps showing its population digit (and
+  the city's name label) as if unoccupied. Any other unit still paints its
+  letter ahead of the population.
 - Transient overlays (the battle flash, the rival-move replay) are painted in
   a final pass after tiles, markers and city-name labels, so they sit at the
   top of the z-order over everything the map draws.

@@ -20,6 +20,14 @@ fn warp_app(app: &mut App, secs: u64) {
     app.clear_expired_rival_animation(now);
 }
 
+/// Wind the app clock past any pending unit auto-advance deadline and run
+/// the loop tick that fires it.
+fn fire_pending_unit_advance(app: &mut App) {
+    app.started_at -= Duration::from_millis(400);
+    let now = app.started_at.elapsed();
+    app.maybe_finish_pending_unit_advance(now);
+}
+
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
@@ -1363,6 +1371,96 @@ fn tab_skips_fortified_sentried_and_loaded_units() {
     app.handle_key(key(KeyCode::Tab));
     assert_eq!(app.selected_unit, Some(extra));
     assert_eq!(app.event_log.len(), 1);
+}
+
+#[test]
+fn a_spent_unit_advances_to_the_next_unit_with_movement_after_a_beat() {
+    let (mut app, ids) = app_with_settlers_at(&[(1, 1), (3, 1), (5, 1)]);
+    app.handle_key(key(KeyCode::Tab)); // ids[0]
+    assert_eq!(app.selected_unit, Some(ids[0]));
+    // One grassland step spends a settler's single move; a deadline is armed
+    // but the focus stays on the spent unit until the deadline arrives.
+    app.handle_key(key(KeyCode::Right));
+    assert_eq!(
+        app.engine.as_ref().unwrap().player_units()[0].moves_remaining(),
+        0
+    );
+    assert!(app.unit_advance_deadline.is_some());
+    assert_eq!(app.selected_unit, Some(ids[0]));
+    fire_pending_unit_advance(&mut app);
+    assert_eq!(app.selected_unit, Some(ids[1]));
+    assert!(app.unit_advance_deadline.is_none());
+
+    // The next spent unit advances the focus again...
+    app.handle_key(key(KeyCode::Right));
+    assert_eq!(
+        app.engine.as_ref().unwrap().player_units()[1].moves_remaining(),
+        0
+    );
+    fire_pending_unit_advance(&mut app);
+    assert_eq!(app.selected_unit, Some(ids[2]));
+
+    // ...until the last unit spends itself: then the wait just reports that
+    // the turn is done instead of landing anywhere.
+    app.handle_key(key(KeyCode::Right));
+    fire_pending_unit_advance(&mut app);
+    assert_eq!(app.selected_unit, Some(ids[2]));
+    assert_eq!(
+        app.event_log.last().map(|event| event.message()),
+        Some("No more units left to command this turn")
+    );
+    assert!(app.unit_advance_deadline.is_none());
+}
+
+#[test]
+fn a_unit_with_movement_left_keeps_the_focus() {
+    let (mut app, _ids) = app_with_settlers_at(&[(1, 1), (3, 1), (5, 1)]);
+    // A fast rider keeps budget after a single step, so nothing arms at all.
+    let cavalry = app.engine.as_mut().unwrap().game.spawn_unit(
+        UnitClass::Cavalry,
+        Location::new(7, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    for _ in 0..4 {
+        app.handle_key(key(KeyCode::Tab));
+    }
+    assert_eq!(app.selected_unit, Some(cavalry));
+    app.handle_key(key(KeyCode::Right));
+    let rider = app
+        .engine
+        .as_ref()
+        .unwrap()
+        .player_units()
+        .into_iter()
+        .find(|unit| unit.id() == cavalry)
+        .unwrap();
+    assert_eq!(rider.moves_remaining(), 2);
+    assert!(app.unit_advance_deadline.is_none());
+    // Waiting out the delay changes nothing while the focus still has budget.
+    fire_pending_unit_advance(&mut app);
+    assert_eq!(app.selected_unit, Some(cavalry));
+}
+
+#[test]
+fn founding_a_city_with_the_selected_settler_advances_the_focus() {
+    let (mut app, ids) = app_with_settlers_at(&[(1, 1), (3, 1), (5, 1)]);
+    app.handle_key(key(KeyCode::Tab)); // ids[0]
+    assert_eq!(app.selected_unit, Some(ids[0]));
+    app.handle_key(key(KeyCode::Char('v'))); // found a city with the settler
+    assert_eq!(
+        app.engine.as_ref().unwrap().player_units().len(),
+        2,
+        "the founding settler leaves the field"
+    );
+    assert!(app.unit_advance_deadline.is_some());
+    fire_pending_unit_advance(&mut app);
+    // The focus moved off the vanished settler onto one of the surviving
+    // settlers that still has budget (list order is engine-internal, so only
+    // membership, not which one, is guaranteed).
+    let landed = app.selected_unit.expect("a survivor is focused");
+    assert!(ids.contains(&landed) && landed != ids[0]);
+    assert!(app.unit_advance_deadline.is_none());
 }
 
 #[test]
