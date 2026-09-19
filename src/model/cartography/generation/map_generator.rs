@@ -205,10 +205,11 @@ impl MapGenerator {
     }
 
     /// Pick a land terrain, favouring plains/grassland. Near the equator
-    /// the chance of desert is higher.
+    /// the chance of desert is higher (though halved by design, so maps are
+    /// greener than not).
     fn random_land(&mut self, latitude: f32, equator: f32) -> Terrain {
         let distance_from_equator = (latitude - equator).abs() / equator.max(1.0);
-        let desert_chance = ((1.0 - distance_from_equator) * 20.0).clamp(2.0, 20.0) as u32;
+        let desert_chance = ((1.0 - distance_from_equator) * 10.0).clamp(1.0, 10.0) as u32;
 
         let roll = self.rng.in_range(100) + 1;
         if roll <= desert_chance {
@@ -217,7 +218,7 @@ impl MapGenerator {
         if roll <= desert_chance + 10 {
             return Terrain::Mountain;
         }
-        if roll <= desert_chance + 25 {
+        if roll <= desert_chance + 22 {
             return Terrain::Hills;
         }
         if roll <= desert_chance + 40 {
