@@ -1256,6 +1256,115 @@ fn tab_cycles_between_the_players_units() {
     assert_eq!(app.selected_unit, Some(ids[0]));
 }
 
+/// A small open grassland world with a single civilian human player (no
+/// rivals), staging a settler on each of the given tiles. Returns the app
+/// with its engine installed and the spawned unit ids in order.
+fn app_with_settlers_at(tiles: &[(u16, u16)]) -> (App, Vec<UnitId>) {
+    let mut app = App::new();
+    app.phase = Phase::Playing;
+    let mut engine = Engine::new(12, 3, Player::new(Civilization::English), vec![]);
+    for y in 0..3 {
+        for x in 0..12 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    let ids: Vec<UnitId> = tiles
+        .iter()
+        .map(|(x, y)| {
+            engine.game.spawn_unit(
+                UnitClass::Settler,
+                Location::new(*x, *y),
+                PlayerId::new(0),
+                CityId::new(0),
+            )
+        })
+        .collect();
+    app.engine = Some(engine);
+    (app, ids)
+}
+
+#[test]
+fn tab_jumps_to_the_next_unit_that_still_has_movement() {
+    let (mut app, ids) = app_with_settlers_at(&[(1, 1), (3, 1), (5, 1)]);
+    // The first settler has already spent this turn's movement.
+    app.engine.as_mut().unwrap().game.units[0].spend_turn();
+
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.selected_unit, Some(ids[1]));
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.selected_unit, Some(ids[2]));
+    // Wrapping back lands on the first movable unit, never the spent one.
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.selected_unit, Some(ids[1]));
+    assert!(app.event_log.is_empty());
+
+    // Exhausting the second settler leaves the third as the only moveable.
+    app.engine.as_mut().unwrap().game.units[1].spend_turn();
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.selected_unit, Some(ids[2]));
+
+    // With every active unit spent, tab reports the turn is done rather than
+    // silently re-selecting a spent unit.
+    app.engine.as_mut().unwrap().game.units[2].spend_turn();
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.selected_unit, Some(ids[2]));
+    assert_eq!(
+        app.event_log.last().map(|event| event.message()),
+        Some("No more units left to command this turn")
+    );
+}
+
+#[test]
+fn tab_skips_fortified_sentried_and_loaded_units() {
+    let (mut app, _ids) = app_with_settlers_at(&[(1, 1), (3, 1), (5, 1)]);
+    {
+        let engine = app.engine.as_mut().unwrap();
+        engine.game.units[0].fortify();
+        engine.game.units[1].sentry();
+        let ship = engine.game.spawn_unit(
+            UnitClass::Trireme,
+            Location::new(7, 1),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        // The settler at (5,1) rides the ship: no field agency of its own,
+        // and the ship itself has already sailed this turn.
+        engine.game.units[2].board(ship);
+        let ship_index = engine
+            .game
+            .units
+            .iter()
+            .position(|unit| unit.id() == ship)
+            .unwrap();
+        engine.game.units[ship_index].spend_turn();
+    }
+
+    // Every unit is fortified, sentried, aboard the spent ship, or a spent
+    // ship itself: none still holds map agency this turn.
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.selected_unit, None);
+    assert_eq!(
+        app.event_log.last().map(|event| event.message()),
+        Some("No more units left to command this turn")
+    );
+
+    // A freshly idle unit makes tab work again instead of repeating the note —
+    // the single message already logged stays put, nothing new is added.
+    let extra = app.engine.as_mut().unwrap().game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(9, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.selected_unit, Some(extra));
+    assert_eq!(app.event_log.len(), 1);
+}
+
 #[test]
 fn help_bar_overwrites_the_bottom_two_rows_without_shifting_the_game() {
     let render = |app: &App| {

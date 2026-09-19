@@ -1,6 +1,7 @@
 use super::*;
 use crate::game_engine::Command;
 use crate::model::cartography::Location;
+use crate::model::units::{Unit, UnitOrder};
 use crossterm::event::KeyCode;
 use strum::IntoEnumIterator;
 
@@ -144,26 +145,55 @@ impl App {
     }
 
     pub(super) fn cycle_unit_selection(&mut self) {
-        let Some(engine) = &self.engine else {
-            return;
-        };
-        let units = engine.player_units();
-        if units.is_empty() {
-            self.selected_unit = None;
-            return;
-        }
-        let next = match self.selected_unit {
-            Some(current) => {
-                let index = units
-                    .iter()
-                    .position(|unit| unit.id() == current)
-                    .unwrap_or(0);
-                (index + 1) % units.len()
+        let decision = {
+            let Some(engine) = &self.engine else {
+                return;
+            };
+            let units = engine.player_units();
+            if units.is_empty() {
+                self.selected_unit = None;
+                return;
             }
-            None => 0,
+            // A unit is still worth commanding while it has movement left and
+            // is neither fortified, sentried, improving, nor riding in a ship.
+            let commandable: Vec<&Unit> = units
+                .iter()
+                .filter(|unit| {
+                    unit.moves_remaining() > 0
+                        && unit.order() == UnitOrder::Idle
+                        && !unit.is_transported()
+                })
+                .copied()
+                .collect();
+            if commandable.is_empty() {
+                None
+            } else {
+                let next = match self.selected_unit {
+                    Some(current) => {
+                        let index = commandable
+                            .iter()
+                            .position(|unit| unit.id() == current)
+                            .unwrap_or(0);
+                        (index + 1) % commandable.len()
+                    }
+                    None => 0,
+                };
+                Some(commandable[next].id())
+            }
         };
-        self.selected_unit = Some(units[next].id());
-        self.camera_follow.set(true);
+        match decision {
+            Some(next) => {
+                self.selected_unit = Some(next);
+                self.camera_follow.set(true);
+            }
+            None => {
+                // Every active unit has moved, fortified, or stood sentry:
+                // say so instead of silently landing back on a spent unit.
+                self.record_events(vec![GameEvent::new(
+                    "No more units left to command this turn",
+                )]);
+            }
+        }
     }
 
     pub(super) fn move_selected_unit(&mut self, direction: Direction) {

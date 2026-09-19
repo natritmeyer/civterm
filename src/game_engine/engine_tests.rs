@@ -801,6 +801,249 @@ fn a_rival_settler_still_founds_when_only_crowded_sites_remain() {
     );
 }
 
+/// A 15x3 grassland world holding nothing but the Zulu capital at `capital`
+/// and its settler at `settler`, with nothing revealed beyond the capital's own
+/// footprint — the exact state right after a city is founded and its first
+/// settler is produced, when every visible tile still counts as crowded.
+fn frontier_settlement_engine(capital: Location, settler: Location) -> Engine {
+    let mut engine = Engine::new(
+        15,
+        3,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..15 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(14, 0),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.game.cities.push(City::new(
+        "Angkor",
+        capital,
+        PlayerId::new(1),
+        CityId::new(1),
+    ));
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        settler,
+        PlayerId::new(1),
+        CityId::new(1),
+    );
+    engine.game.players[1].reveal_tiles_surrounding_city_at(capital);
+    engine
+}
+
+/// How many of `new_city`'s 21 working tiles sit inside `other` city's working
+/// grid, whatever their owners.
+fn footprint_overlap_with(engine: &Engine, new_city: Location, other: Location) -> usize {
+    engine
+        .game
+        .city_footprint(other)
+        .iter()
+        .filter(|tile| engine.game.city_footprint(new_city).contains(tile))
+        .count()
+}
+
+#[test]
+fn a_rival_settler_seeks_open_ground_before_founding_in_the_crowd() {
+    // The capital's footprint is all the settler can see: every visible tile
+    // sits within Chebyshev 2 of the capital, so found-in-place is living in
+    // the crowd. The settler must instead push the frontier and only found
+    // once its marches open up genuinely open ground.
+    let mut engine = frontier_settlement_engine(Location::new(10, 1), Location::new(10, 1));
+
+    engine.submit(Command::EndTurn);
+    let zulu_cities: Vec<Location> = engine
+        .game
+        .cities
+        .iter()
+        .filter(|city| city.owner() == PlayerId::new(1))
+        .map(|city| city.location)
+        .collect();
+    assert_eq!(
+        zulu_cities.len(),
+        1,
+        "no cramped founding on the first turn"
+    );
+
+    for _ in 0..8 {
+        engine.submit(Command::EndTurn);
+        if engine
+            .game
+            .cities
+            .iter()
+            .filter(|city| city.owner() == PlayerId::new(1))
+            .count()
+            >= 2
+        {
+            break;
+        }
+    }
+    let zulu_cities: Vec<Location> = engine
+        .game
+        .cities
+        .iter()
+        .filter(|city| city.owner() == PlayerId::new(1))
+        .map(|city| city.location)
+        .collect();
+    assert_eq!(zulu_cities.len(), 2, "the settler finds a second city");
+    let new_city = zulu_cities
+        .iter()
+        .copied()
+        .find(|location| *location != Location::new(10, 1))
+        .expect("the new city is not the capital");
+    let shared = footprint_overlap(&engine, new_city);
+    assert!(
+        shared <= 3,
+        "the new city lands on open ground (shared {shared}), not in the \
+         capital's lap"
+    );
+    assert_eq!(engine.current_player(), Civilization::English);
+}
+
+#[test]
+fn a_rival_settler_will_not_crowd_a_human_city() {
+    // Two English cities flank the Zulu settler exactly as the rival's own
+    // cities did in `a_rival_settler_will_not_crowd_an_existing_city`. The
+    // working-grid law now holds against every civilization, so the capital
+    // still lands clear at (6,0) rather than inside a foreign grid.
+    let mut engine = Engine::new(
+        15,
+        3,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..15 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(14, 0),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(6, 0),
+        PlayerId::new(1),
+        CityId::new(0),
+    );
+    engine.game.cities.push(City::new(
+        "Londinium",
+        Location::new(2, 1),
+        PlayerId::new(0),
+        CityId::new(1),
+    ));
+    engine.game.cities.push(City::new(
+        "Eboracum",
+        Location::new(12, 1),
+        PlayerId::new(0),
+        CityId::new(2),
+    ));
+    engine.game.players[1].reveal_tiles_at(Location::new(7, 1), 8);
+
+    engine.submit(Command::EndTurn);
+
+    let zulu_cities: Vec<Location> = engine
+        .game
+        .cities
+        .iter()
+        .filter(|city| city.owner() == PlayerId::new(1))
+        .map(|city| city.location)
+        .collect();
+    assert_eq!(zulu_cities.len(), 1, "the settler founds its capital");
+    assert_eq!(
+        zulu_cities[0],
+        Location::new(6, 0),
+        "the open ground is chosen over the tiles overlapping an English grid"
+    );
+    for occupied in [Location::new(2, 1), Location::new(12, 1)] {
+        let shared = footprint_overlap_with(&engine, Location::new(6, 0), occupied);
+        assert!(
+            shared <= 3,
+            "the rival keeps clear of the English grid (shared {shared})"
+        );
+    }
+    assert_eq!(engine.current_player(), Civilization::English);
+}
+
+#[test]
+fn a_rival_settler_will_not_crowd_another_rivals_city() {
+    // Same geometry, but the guarding city belongs to a second rival (the
+    // Aztecs): one rival's planning must respect another rival's grid too.
+    let mut engine = Engine::new(
+        15,
+        3,
+        Player::new(Civilization::English),
+        vec![
+            Player::new(Civilization::Zulu),
+            Player::new(Civilization::Aztec),
+        ],
+    );
+    for y in 0..3 {
+        for x in 0..15 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(14, 0),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(6, 0),
+        PlayerId::new(1),
+        CityId::new(0),
+    );
+    engine.game.cities.push(City::new(
+        "Tenochtitlan",
+        Location::new(2, 1),
+        PlayerId::new(2),
+        CityId::new(1),
+    ));
+    engine.game.players[1].reveal_tiles_at(Location::new(7, 1), 8);
+
+    engine.submit(Command::EndTurn);
+
+    let zulu_cities: Vec<Location> = engine
+        .game
+        .cities
+        .iter()
+        .filter(|city| city.owner() == PlayerId::new(1))
+        .map(|city| city.location)
+        .collect();
+    assert_eq!(zulu_cities.len(), 1, "the settler founds its capital");
+    assert_eq!(zulu_cities[0], Location::new(6, 0));
+    let shared = footprint_overlap_with(&engine, Location::new(6, 0), Location::new(2, 1));
+    assert!(
+        shared <= 3,
+        "one rival keeps clear of another's grid (shared {shared})"
+    );
+    assert_eq!(engine.current_player(), Civilization::English);
+}
+
 #[test]
 fn a_unit_can_move_only_once_per_turn() {
     let mut engine = test_engine();

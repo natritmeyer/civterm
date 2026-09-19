@@ -366,7 +366,7 @@ mod tests {
             Terrain::Jungle,
         ]
         .iter()
-        .map(|geography| geography.as_char())
+        .map(|terrain| terrain.as_char())
         .collect();
         assert_eq!(chars.len(), 10);
         let mut unique = chars.clone();

@@ -14,12 +14,22 @@ use strum::IntoEnumIterator;
 /// of blanketing the map.
 const RIVAL_EXPANSION_TARGET_CITIES: usize = 4;
 
-/// How many working-grid tiles a rival may let a new city share with the
-/// union of its existing cities' 21-tile grids before the site counts as too
-/// crowded. Two cities sharing more tiles than this also sit within Chebyshev
-/// 3 of each other and poach each other's harvest, so the AI keeps its cities
-/// a full 21-grid apart wherever the map still has room.
+/// How many working-grid tiles a rival may let a new city share with the union
+/// of every civilization's 21-tile working grids before the site counts as
+/// genuinely open. Two cities sharing no more tiles than this sit at least
+/// Chebyshev 4 apart and never poach each other's harvest, so the AI keeps its
+/// cities a full grid apart wherever such a site is visible.
 const CITY_FOOTPRINT_MAX_OVERLAP: usize = 3;
+
+/// How many working-grid tiles a site may share with the union before it stops
+/// counting as decent at all. A site sharing no more than this sits at least
+/// Chebyshev 3 from every existing city — close enough to exploit the same
+/// neighbourhood, never jammed against a grid. This tier exists because a
+/// founding's own footprint is about all it can see: right after a city is
+/// founded, no visible land is "open", only decent, so without this tier the
+/// settler would either kneel over and found inside the crowd or march forever.
+/// The best decent site is chosen before any frontier-push.
+const CITY_FOOTPRINT_ACCEPTABLE_OVERLAP: usize = 6;
 
 /// The rival's preferred research ladder, cheapest useful goals first so a
 /// rival fields Bronze-gated troops early and then pursues its economy. When
@@ -223,7 +233,7 @@ impl Engine {
 
     fn rival_settle(&mut self, unit_id: UnitId) {
         let ai = self.current_player_index;
-        let Some(goal) = self.best_settlement_site(ai) else {
+        let Some(goal) = self.best_settlement_site(ai, unit_id) else {
             return;
         };
         if self
@@ -239,24 +249,41 @@ impl Engine {
 
     /// The most attractive explored land site for a new city, or `None` when
     /// nothing is reachable. Scores by resource yield, prefers food, and never
-    /// founds on a tile another city occupies. A site whose 21-tile working
-    /// grid shares no more than `CITY_FOOTPRINT_MAX_OVERLAP` tiles with the
-    /// union of the rival's existing grids is always chosen in preference to
-    /// any crowded one, so a rival spreads its cities out and does not build
-    /// into its own harvest; only when no such site exists does it fall back
-    /// to the best crowded tile rather than stall. A target only ever comes
-    /// from explored tiles: the rival never plots a course into unexplored
-    /// ground.
-    fn best_settlement_site(&self, ai: PlayerId) -> Option<Location> {
+    /// founds on a tile another city occupies. Sites are picked in tiers, all
+    /// measured against the union of *every* civilization's 21-tile working
+    /// grid — the rival's own, its fellow rivals' and the human's — so one
+    /// rival never crowds another and nobody plops a city inside a foreign
+    /// city's harvest:
+    ///
+    /// 1. open — shares no more than `CITY_FOOTPRINT_MAX_OVERLAP` tiles with
+    ///    the union (sits at least Chebyshev 4 from every city). Always wins.
+    /// 2. acceptable — shares no more than `CITY_FOOTPRINT_ACCEPTABLE_OVERLAP`
+    ///    tiles (at least Chebyshev 3 out).
+    /// 3. frontier — the nearest explored land tile touching unexplored ground,
+    ///    marched to so the settler's reveals open up new country.
+    /// 4. crowded — the best-scored tile, kept only for a fully explored map
+    ///    where the tiers above found nothing, so a rival still fills its
+    ///    continent rather than stall.
+    ///
+    /// A target only ever comes from explored tiles: the rival never plots a
+    /// course into unexplored ground (the frontier goal is itself explored;
+    /// only the march's final step reveals into the fog). Within the tiers the
+    /// pick is deterministic: best score first, then the site nearest to the
+    /// settler, then the smallest tile — so a settler arriving in open country
+    /// founds at the first good land it reaches rather than chase across the
+    /// map.
+    fn best_settlement_site(&self, ai: PlayerId, unit_id: UnitId) -> Option<Location> {
+        let unit = self.owned_unit(unit_id)?;
+        let map_w = self.game.map.width;
         let occupied: Vec<Location> = self.game.cities.iter().map(|city| city.location).collect();
-        let own_footprints: Vec<Location> = self
+        let all_footprints: Vec<Location> = self
             .game
             .cities
             .iter()
-            .filter(|city| city.owner() == ai)
             .flat_map(|city| self.game.city_footprint(city.location))
             .collect();
         let mut open: Vec<(Location, i32)> = Vec::new();
+        let mut acceptable: Vec<(Location, i32)> = Vec::new();
         let mut crowded: Vec<(Location, i32)> = Vec::new();
         for y in 0..self.game.map.height {
             for x in 0..self.game.map.width {
@@ -276,29 +303,80 @@ impl Engine {
                     .game
                     .city_footprint(location)
                     .into_iter()
-                    .filter(|tile| own_footprints.contains(tile))
+                    .filter(|tile| all_footprints.contains(tile))
                     .count();
                 if shared <= CITY_FOOTPRINT_MAX_OVERLAP {
                     open.push((location, score));
+                } else if shared <= CITY_FOOTPRINT_ACCEPTABLE_OVERLAP {
+                    acceptable.push((location, score));
                 } else {
                     crowded.push((location, score));
                 }
             }
         }
-        // Deterministic: best score first, ties broken by the smallest tile.
+        // Deterministic: best score first; among equals the site nearest to the
+        // settler, so an arriving settler stops at the first good land it meets
+        // instead of chasing a marginal better-tile clear across the map; ties
+        // then broken by the smallest tile.
         let rank = |sites: &mut Vec<(Location, i32)>| {
             sites.sort_by(|(a, score_a), (b, score_b)| {
                 score_b
                     .cmp(score_a)
+                    .then_with(|| {
+                        Self::chebyshev(*a, unit.location, map_w).cmp(&Self::chebyshev(
+                            *b,
+                            unit.location,
+                            map_w,
+                        ))
+                    })
                     .then_with(|| a.x.cmp(&b.x))
                     .then_with(|| a.y.cmp(&b.y))
             });
         };
         rank(&mut open);
+        rank(&mut acceptable);
         rank(&mut crowded);
-        open.first()
-            .or_else(|| crowded.first())
-            .map(|(location, _)| *location)
+        if let Some((location, _)) = open.first() {
+            return Some(*location);
+        }
+        if let Some((location, _)) = acceptable.first() {
+            return Some(*location);
+        }
+        if let Some(location) = self.nearest_frontier_edge(ai, unit_id) {
+            return Some(location);
+        }
+        crowded.first().map(|(location, _)| *location)
+    }
+
+    /// The nearest explored land tile that touches unexplored ground, if any.
+    /// The early game's only field of view is the founding city's own footprint,
+    /// where every visible tile counts as crowded: rather than found in its own
+    /// lap, the settler marches to the edge and lets its reveals open up new
+    /// country. `None` when the map is fully explored or no such edge exists.
+    /// Deterministic: nearest to the unit by wrapped Chebyshev distance, ties
+    /// broken by the first tile in scan order (smallest `y`, then `x`).
+    fn nearest_frontier_edge(&self, ai: PlayerId, unit_id: UnitId) -> Option<Location> {
+        let unit = self.owned_unit(unit_id)?;
+        let map_w = self.game.map.width;
+        let player = &self.game.players[ai.index()];
+        (0..self.game.map.height)
+            .flat_map(|y| (0..self.game.map.width).map(move |x| Location::new(x as u16, y as u16)))
+            .filter(|location| player.explored_at(location.x as usize, location.y as usize))
+            .filter(|location| {
+                let tile = self.game.map.tile_at(*location);
+                tile.terrain.is_land() && tile.terrain != Terrain::Tundra
+            })
+            .filter(|location| {
+                Direction::iter().any(|direction| {
+                    self.game
+                        .map
+                        .destination(*location, direction)
+                        .is_some_and(|neighbour| {
+                            !player.explored_at(neighbour.x as usize, neighbour.y as usize)
+                        })
+                })
+            })
+            .min_by_key(|location| Self::chebyshev(unit.location, *location, map_w))
     }
 
     /// The name for a rival's next city: its civilization's names in order of

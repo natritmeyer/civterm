@@ -151,7 +151,7 @@ mod tests {
         let commands = [
             ("arrows", "move"),
             ("y/u/b/n", "diag"),
-            ("tab", "next unit"),
+            ("tab", "next movable unit"),
             ("space", "end turn"),
         ];
         terminal

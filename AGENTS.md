@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 527 passing unit
+Run `make build` after any change. Current test baseline: 532 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -127,11 +127,22 @@ a hard boundary; keep it by convention.
   settle, garrison), then control returns to the human and the turn number
   increments once. Rivals act in player order and eliminated players are
   skipped; the human's own turn begins again fresh (units' moves restored).
-- A rival's settler founds a new city without crowding its own: any site whose
-  21-tile working grid shares more than `CITY_FOOTPRINT_MAX_OVERLAP` (3) tiles
-  with the union of the rival's existing grids counts as crowded and is only
-  chosen when no open site remains anywhere (so the rival still expands on a
-  full map rather than stall).
+- A rival's settler picks its site (`best_settlement_site`) in tiers, every one
+  measured against the union of **all** civilizations' 21-tile working grids —
+  its own, its fellow rivals' and the human's — so no rival crowds itself,
+  another rival, or the player: (1) open, sharing at most `CITY_FOOTPRINT_MAX_OVERLAP`
+  (3) tiles (≥ Chebyshev 4 off every city); (2) acceptable, sharing at most
+  `CITY_FOOTPRINT_ACCEPTABLE_OVERLAP` (6) tiles (≥ Chebyshev 3 out); (3)
+  frontier — with only crowded sites visible the settler marches to the nearest
+  explored land tile bordering unexplored ground (`nearest_frontier_edge`) so
+  its reveals open up new country instead of founding in its own lap; (4)
+  crowded — best-scored tile, kept only for a fully explored map (so the rival
+  still fills a quiet continent rather than stall). Within every tier the pick
+  is deterministic: best score first, then the site nearest the settler, then
+  the smallest tile.
+- A settler never enters the crowd unless the map gives no alternative: a
+  site is only ever chosen from explored tiles, so the frontier push keeps the
+  rival's cities spreading outward while respecting every working grid.
 - Rival movement is recorded per step as `RivalMotion { unit, from, to }`
   whenever a rival unit lands on a new tile — the plain move tail and
   boarding only, gated `owner != human` so the player's own moves are never
