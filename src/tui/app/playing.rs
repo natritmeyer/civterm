@@ -87,11 +87,14 @@ impl App {
                 self.cycle_unit_selection();
                 false
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            // Movement keys cluster around the J home key: the orthogonals on the
+            // u/m vertical and h/k horizontal through J (J itself spare),
+            // and the diagonals on y/i above and n/, below.
+            KeyCode::Up | KeyCode::Char('u') => {
                 self.move_selected_unit(Direction::N);
                 false
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down | KeyCode::Char('m') => {
                 self.move_selected_unit(Direction::S);
                 false
             }
@@ -99,7 +102,7 @@ impl App {
                 self.move_selected_unit(Direction::W);
                 false
             }
-            KeyCode::Right | KeyCode::Char('l') => {
+            KeyCode::Right | KeyCode::Char('k') => {
                 self.move_selected_unit(Direction::E);
                 false
             }
@@ -107,16 +110,20 @@ impl App {
                 self.move_selected_unit(Direction::NW);
                 false
             }
-            KeyCode::Char('u') => {
+            KeyCode::Char('i') => {
                 self.move_selected_unit(Direction::NE);
                 false
             }
-            KeyCode::Char('b') => {
+            KeyCode::Char('n') => {
                 self.move_selected_unit(Direction::SW);
                 false
             }
-            KeyCode::Char('n') => {
+            KeyCode::Char(',') => {
                 self.move_selected_unit(Direction::SE);
+                false
+            }
+            KeyCode::Char('j') => {
+                self.center_camera_on_selected_unit();
                 false
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
@@ -152,6 +159,28 @@ impl App {
             self.selected_unit = engine.player_units().first().map(|unit| unit.id());
         } else {
             self.selected_unit = None;
+        }
+        self.camera_follow.set(true);
+    }
+
+    /// Re-centre the camera on the selected unit and resume following it as
+    /// it moves, undoing a hand-dragged camera. The pane size from the last
+    /// draw bounds the centring exactly as the follow path does (`camera_for`'s
+    /// margin and map-edge clamping); with no pane drawn yet, merely re-arming
+    /// follow centres the camera on the next draw.
+    pub(super) fn center_camera_on_selected_unit(&mut self) {
+        if let Some(engine) = &self.engine {
+            let focus = focus_coordinate(engine, self.selected_unit);
+            if let Some(pane) = self.map_pane.get() {
+                let pane_dims = (pane.width as usize / TILE_WIDTH, pane.height as usize);
+                let camera = camera_for(
+                    focus,
+                    (engine.width(), engine.height()),
+                    pane_dims,
+                    self.camera.get(),
+                );
+                self.camera.set(camera);
+            }
         }
         self.camera_follow.set(true);
     }

@@ -1473,12 +1473,12 @@ fn names_fall_back_to_a_number_once_the_city_list_runs_out() {
 
 #[test]
 fn diagonal_commands_move_the_selected_unit_diagonally() {
-    // y/u/b/n map to NW/NE/SW/SE.
+    // y/i/n/, map to NW/NE/SW/SE around the J home key.
     for (code, tile_dx, tile_dy) in [
         (KeyCode::Char('y'), -1, -1),
-        (KeyCode::Char('u'), 1, -1),
-        (KeyCode::Char('b'), -1, 1),
-        (KeyCode::Char('n'), 1, 1),
+        (KeyCode::Char('i'), 1, -1),
+        (KeyCode::Char('n'), -1, 1),
+        (KeyCode::Char(','), 1, 1),
     ] {
         let mut app = App::new();
         at_start(&mut app);
@@ -1515,6 +1515,111 @@ fn diagonal_commands_move_the_selected_unit_diagonally() {
             );
         }
     }
+}
+
+#[test]
+fn the_home_row_keys_move_the_selected_unit_orthogonally() {
+    // u/m/h/k map to N/S/W/E around the J home key; the arrow keys stay.
+    for (code, tile_dx, tile_dy) in [
+        (KeyCode::Char('u'), 0, -1),
+        (KeyCode::Char('k'), 1, 0),
+        (KeyCode::Char('m'), 0, 1),
+        (KeyCode::Char('h'), -1, 0),
+    ] {
+        let mut app = App::new();
+        at_start(&mut app);
+        app.handle_key(key(KeyCode::Char('s'))); // begin the game
+
+        let engine = app.engine.as_ref().unwrap();
+        let unit = engine
+            .player_units()
+            .into_iter()
+            .find(|u| u.id() == app.selected_unit.unwrap())
+            .unwrap();
+        let before = unit.location;
+        let w = engine.width() as isize;
+
+        let nx = (before.x as isize + tile_dx).rem_euclid(w);
+        let ny = before.y as isize + tile_dy;
+        let in_bounds = ny >= 0 && ny < engine.height() as isize;
+        let terrain = engine
+            .tile(
+                nx as usize,
+                ny.clamp(0, engine.height() as isize - 1) as usize,
+            )
+            .terrain;
+        if in_bounds && terrain.is_land() && terrain.movement_cost() <= 1 {
+            app.handle_key(key(code));
+            let engine = app.engine.as_ref().unwrap();
+            let after = engine
+                .player_units()
+                .into_iter()
+                .find(|u| u.id() == app.selected_unit.unwrap())
+                .unwrap()
+                .location;
+            let dx = (after.x as isize - before.x as isize + w) % w;
+            let dx = if dx > w / 2 { dx - w } else { dx };
+            let dy = after.y as isize - before.y as isize;
+            assert_eq!(
+                (dx, dy),
+                (tile_dx, tile_dy),
+                "home-row key did not move the unit as expected: {before:?} -> {after:?}"
+            );
+        }
+    }
+}
+
+/// An app on an 80x50 all-grassland map whose human settler sits one step
+/// off the west edge tile, far from the bottom-right camera it starts at.
+fn app_with_distant_settler() -> App {
+    let mut app = App::new();
+    app.phase = Phase::Playing;
+    let mut engine = Engine::new(80, 50, Player::new(Civilization::English), vec![]);
+    for y in 0..50 {
+        for x in 0..80 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(5, 25),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    app.engine = Some(engine);
+    let settler = app.engine.as_ref().unwrap().player_units()[0].id();
+    app.selected_unit = Some(settler);
+    app.map_pane
+        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
+    app.camera.set((70, 40));
+    app.camera_follow.set(false);
+    app
+}
+
+#[test]
+fn j_centres_the_camera_on_the_selected_unit() {
+    let mut app = app_with_distant_settler();
+    app.handle_key(key(KeyCode::Char('j')));
+    let expected = {
+        let engine = app.engine.as_ref().unwrap();
+        let unit = engine.player_units()[0];
+        camera_for(
+            Some((unit.location.x as usize, unit.location.y as usize)),
+            (engine.width(), engine.height()),
+            (200 / TILE_WIDTH, 40),
+            (70, 40),
+        )
+    };
+    assert_eq!(
+        app.camera.get(),
+        expected,
+        "j re-centres the camera on the selected unit"
+    );
+    assert!(app.camera_follow.get(), "j resumes following the unit");
 }
 
 #[test]
@@ -1775,7 +1880,8 @@ fn help_bar_overwrites_the_bottom_two_rows_without_shifting_the_game() {
 fn play_commands_include_unit_actions_when_a_unit_is_focused() {
     let commands = playing_commands(true, false);
     assert!(commands.iter().any(|(k, _)| *k == "f"));
-    assert!(commands.iter().any(|(k, _)| *k == "arrows"));
+    assert!(commands.iter().any(|(k, _)| *k == "u/k/h/m"));
+    assert!(commands.iter().any(|(k, _)| *k == "y/i/n/,"));
     assert!(commands.iter().any(|(k, _)| *k == "?"));
     assert!(commands.iter().any(|(k, _)| *k == "tab"));
 }
@@ -2470,7 +2576,7 @@ fn the_work_picker_swallows_game_keys() {
     let mut app = app_with_settler();
     app.handle_key(key(KeyCode::Char('w')));
     let turn = app.engine.as_ref().unwrap().turn();
-    for code in [KeyCode::Char('q'), KeyCode::Char('l'), KeyCode::Char(' ')] {
+    for code in [KeyCode::Char('q'), KeyCode::Char('m'), KeyCode::Char(' ')] {
         let was_quit = app.handle_key(key(code));
         assert!(!was_quit, "work picker must capture {code:?}");
     }
@@ -2730,7 +2836,7 @@ fn game_keys_are_idle_while_the_rival_replay_runs() {
     // No game key is honoured while the replay runs.
     app.handle_key(key(KeyCode::Char('?')));
     assert!(!app.show_help, "the help toggle is idle during the replay");
-    app.handle_key(key(KeyCode::Char('l'))); // would move the settler east
+    app.handle_key(key(KeyCode::Char('k'))); // would move the settler east
     let settler = app.engine.as_ref().unwrap().player_units()[0];
     assert_eq!(settler.location, Location::new(1, 0));
 

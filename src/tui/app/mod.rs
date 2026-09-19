@@ -597,8 +597,9 @@ fn next_city_name(civ: Civilization, existing_cities: usize) -> String {
 fn playing_commands(selected: bool, can_found: bool) -> Vec<(&'static str, &'static str)> {
     let mut commands: Vec<(&'static str, &'static str)> = Vec::new();
     if selected {
-        commands.push(("arrows", "move"));
-        commands.push(("y/u/b/n", "diag"));
+        commands.push(("u/k/h/m", "move"));
+        commands.push(("y/i/n/,", "diag"));
+        commands.push(("j", "centre"));
         commands.push(("f", "fortify"));
         commands.push(("s", "sentry"));
         commands.push(("w", "work"));
