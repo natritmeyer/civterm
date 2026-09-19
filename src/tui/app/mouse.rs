@@ -23,6 +23,12 @@ impl App {
         if mouse.column != u16::MAX && mouse.row != u16::MAX {
             self.mouse_position.set(Some((mouse.column, mouse.row)));
         }
+        // The quit dialog floats above everything and captures all mouse
+        // input while it is open.
+        if self.quit_dialog_rect.get().is_some() {
+            self.handle_quit_dialog_mouse(mouse);
+            return;
+        }
         // The diplomacy window floats above everything and captures all mouse
         // input while it is open.
         if self.diplomacy_rect.get().is_some() {

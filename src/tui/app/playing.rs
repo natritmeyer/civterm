@@ -13,6 +13,12 @@ fn unit_commandable(unit: &Unit) -> bool {
 
 impl App {
     pub(super) fn handle_playing_key(&mut self, key: KeyEvent) -> bool {
+        // While the quit dialog is open it captures the keyboard: the player
+        // may only choose continue, save, or quit. Confirming quit ends the
+        // process, which the returned flag carries out of the run loop.
+        if self.quit_dialog.is_some() {
+            return self.handle_quit_dialog_key(key);
+        }
         // While the research dialog is open it captures the keyboard: the
         // player may only pick a research target and confirm it.
         if self.research_dialog.is_some() {
@@ -59,7 +65,7 @@ impl App {
         }
         match key.code {
             KeyCode::Char(c) if c.eq_ignore_ascii_case(&'q') => {
-                self.phase = Phase::Menu;
+                self.quit_dialog = Some(QuitChoice::Continue);
                 false
             }
             KeyCode::Char('?') | KeyCode::F(1) => {
@@ -219,6 +225,7 @@ impl App {
             || self.work_picker_open
             || self.production_picker_open
             || self.save_prompt.is_some()
+            || self.quit_dialog.is_some()
             || self.rival_animation.is_some()
     }
 
@@ -374,18 +381,25 @@ impl App {
             })
     }
 
-    /// The world tile the pointer currently hovers, when it lies one square
-    /// away from the selected unit (so a click would move there); `None`
-    /// otherwise, including while a modal panel floats over the map.
-    pub(super) fn hovered_move_target(&self, engine: &Engine) -> Option<(usize, usize)> {
-        if self.research_dialog_rect.get().is_some()
+    /// Whether the pointer is not free to hover the map right now: a modal
+    /// panel (dialog, picker, city window, save prompt) floats over it, or a
+    /// map drag is in progress.
+    fn hover_blocked(&self) -> bool {
+        self.research_dialog_rect.get().is_some()
             || self.diplomacy_rect.get().is_some()
             || self.work_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
             || self.moused_window.get().is_some()
             || self.save_prompt_rect.get().is_some()
+            || self.quit_dialog_rect.get().is_some()
             || self.drag_origin.get().is_some()
-        {
+    }
+
+    /// The world tile the pointer currently hovers, when it lies one square
+    /// away from the selected unit (so a click would move there); `None`
+    /// otherwise, including while a modal panel floats over the map.
+    pub(super) fn hovered_move_target(&self, engine: &Engine) -> Option<(usize, usize)> {
+        if self.hover_blocked() {
             return None;
         }
         let screen = self.mouse_position.get()?;
@@ -402,6 +416,20 @@ impl App {
             map,
             focus_coordinate(engine, self.selected_unit),
         )
+    }
+
+    /// The world tile currently under the pointer over the map pane; `None`
+    /// while a modal floats over the map, a drag is in progress, or the
+    /// pointer sits over the left column or the void below the map. Unlike
+    /// `hovered_move_target` no selected unit is needed: the focus panel lists
+    /// this tile's terrain, improvements and units for any discovered tile the
+    /// player cares to inspect.
+    pub(super) fn hovered_tile(&self, engine: &Engine) -> Option<(usize, usize)> {
+        if self.hover_blocked() {
+            return None;
+        }
+        let screen = self.mouse_position.get()?;
+        tile_under_pointer(screen, self.camera.get(), (engine.width(), engine.height()))
     }
 
     pub(super) fn found_selected_city(&mut self) {

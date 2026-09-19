@@ -163,9 +163,151 @@ fn the_middle_stats_panel_background_is_gray() {
     let buf = render();
     let height: u16 = 40;
     let mini_height = height / 3;
-    let stats_height = (height - mini_height) / 2;
+    let stats_height = (height - mini_height) / 2 - 5;
     let y = mini_height + stats_height / 2;
     assert_eq!(buf.cell((5, y)).unwrap().style().bg, Some(Color::Gray));
+}
+
+/// The text painted across one left-column row: the symbols of every cell
+/// from the panel's left margin to the column's right edge.
+fn left_row(buf: &Buffer, y: u16) -> String {
+    (1..LEFT_COLUMN_WIDTH)
+        .filter_map(|x| buf.cell((x, y)).map(|cell| cell.symbol().to_string()))
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
+fn hover_view() -> FakeView {
+    use crate::model::cartography::Location;
+    use crate::model::cities::CityId;
+    use crate::model::civilizations::PlayerId;
+    use crate::model::geography::Terrain;
+    use crate::model::units::{Unit, UnitClass, UnitId};
+    let mut tile = crate::model::cartography::Tile::new(Terrain::Grassland);
+    tile.irrigate().unwrap();
+    tile.build_road().unwrap();
+    FakeView {
+        w: 80,
+        h: 50,
+        tile,
+        city: None,
+        unit: Some(Unit::new(
+            UnitClass::Settler,
+            Location::new(10, 4),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(7),
+        )),
+        explored: true,
+    }
+}
+
+fn hover_focus_y() -> u16 {
+    let height: u16 = 40;
+    let mini_height = height / 3;
+    let stats_height = (height - mini_height) / 2 - 5;
+    mini_height + stats_height
+}
+
+#[test]
+fn the_hovered_tile_is_listed_with_terrain_yields_and_any_work() {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let view = hover_view();
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                GameScreen::new(
+                    &view,
+                    None,
+                    (0, 0),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    false,
+                    &[],
+                    None,
+                )
+                .with_hovered_tile(Some((10, 4))),
+                frame.area(),
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+    let top = hover_focus_y();
+    // The hover block sits below the focus block ("In turn:" + the
+    // no-unit helper), one blank row apart.
+    assert_eq!(left_row(&buf, top + 4), "Hovering: Grassland (10, 4)");
+    assert_eq!(left_row(&buf, top + 5), "Move 1   Food 3  Prod 0  Trade 2");
+    assert_eq!(left_row(&buf, top + 6), "≈ irrigation, + road");
+    assert_eq!(left_row(&buf, top + 7), "Settler (English)");
+}
+
+#[test]
+fn a_hovered_tile_without_content_still_reports_its_terrain_yields_and_lack_of_units() {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut view = fake_view();
+    view.unit = None;
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                GameScreen::new(
+                    &view,
+                    None,
+                    (0, 0),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    false,
+                    &[],
+                    None,
+                )
+                .with_hovered_tile(Some((2, 8))),
+                frame.area(),
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+    let top = hover_focus_y();
+    // A bare ocean tile lists its terrain, movement cost and yields, then
+    // notes that nobody stands on it.
+    assert_eq!(left_row(&buf, top + 4), "Hovering: Ocean (2, 8)");
+    assert_eq!(left_row(&buf, top + 5), "Move 1   Food 2  Prod 0  Trade 2");
+    assert_eq!(left_row(&buf, top + 6), "No units here");
+}
+
+#[test]
+fn a_hovered_tile_in_the_fog_draws_no_hover_block() {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut view = hover_view();
+    view.explored = false;
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                GameScreen::new(
+                    &view,
+                    None,
+                    (0, 0),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    false,
+                    &[],
+                    None,
+                )
+                .with_hovered_tile(Some((10, 4))),
+                frame.area(),
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+    let top = hover_focus_y();
+    for y in top..40 {
+        assert!(
+            !left_row(&buf, y).contains("Hovering:"),
+            "fog must keep the hovered tile a secret at row {y}"
+        );
+    }
 }
 
 #[test]

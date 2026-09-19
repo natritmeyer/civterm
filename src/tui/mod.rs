@@ -7,6 +7,7 @@ pub mod diplomacy_dialog;
 pub mod game_screen;
 pub mod playing_help;
 pub mod production_picker;
+pub mod quit_dialog;
 pub mod research_dialog;
 pub mod save_load_prompt;
 pub mod splash;

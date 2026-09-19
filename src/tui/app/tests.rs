@@ -324,15 +324,24 @@ fn s_from_start_prompt_creates_the_engine_and_clears_setup() {
 }
 
 #[test]
-fn q_or_esc_from_the_game_returns_to_the_menu() {
-    for code in [KeyCode::Char('q'), KeyCode::Esc] {
-        let mut app = App::new();
-        at_start(&mut app);
-        app.handle_key(key(KeyCode::Char('s')));
-        assert!(matches!(app.phase, Phase::Playing));
-        app.handle_key(key(code));
-        assert!(matches!(app.phase, Phase::Menu));
-    }
+fn esc_from_the_game_returns_to_the_menu() {
+    let mut app = App::new();
+    at_start(&mut app);
+    app.handle_key(key(KeyCode::Char('s')));
+    assert!(matches!(app.phase, Phase::Playing));
+    app.handle_key(key(KeyCode::Esc));
+    assert!(matches!(app.phase, Phase::Menu));
+}
+
+#[test]
+fn q_from_the_game_keeps_the_game_and_asks_what_to_do() {
+    let mut app = App::new();
+    at_start(&mut app);
+    app.handle_key(key(KeyCode::Char('s')));
+    assert!(matches!(app.phase, Phase::Playing));
+    app.handle_key(key(KeyCode::Char('q')));
+    assert_eq!(app.quit_dialog, Some(QuitChoice::Continue));
+    assert!(matches!(app.phase, Phase::Playing));
 }
 
 #[test]
@@ -711,9 +720,201 @@ fn hovering_an_adjacent_tile_reports_the_move_target() {
 }
 
 #[test]
+fn tile_under_pointer_maps_the_pointer_to_the_world() {
+    // Pointer on the camera's own top-left tile.
+    assert_eq!(
+        tile_under_pointer((LEFT_COLUMN_WIDTH, 0), (4, 2), (80, 50)),
+        Some((4, 2))
+    );
+    // Three tiles east and five south of the camera's top-left corner.
+    assert_eq!(
+        tile_under_pointer(
+            (LEFT_COLUMN_WIDTH + 3 * TILE_WIDTH as u16, 5),
+            (4, 2),
+            (80, 50),
+        ),
+        Some((7, 7))
+    );
+    // Eastward wrap at the map's right edge.
+    assert_eq!(
+        tile_under_pointer(
+            (LEFT_COLUMN_WIDTH + 78 * TILE_WIDTH as u16, 0),
+            (0, 0),
+            (80, 50)
+        ),
+        Some((78, 0))
+    );
+    assert_eq!(
+        tile_under_pointer(
+            (LEFT_COLUMN_WIDTH + 79 * TILE_WIDTH as u16, 0),
+            (1, 0),
+            (80, 50)
+        ),
+        Some((0, 0))
+    );
+    // The left column and the void below the map's south edge hold no tile.
+    assert_eq!(tile_under_pointer((4, 2), (0, 0), (80, 50)), None);
+    assert_eq!(
+        tile_under_pointer(
+            (LEFT_COLUMN_WIDTH + TILE_WIDTH as u16, 60),
+            (0, 0),
+            (80, 50),
+        ),
+        None
+    );
+}
+
+#[test]
+fn the_hovered_tile_follows_the_pointer_over_the_map() {
+    let (mut app, cx, cy) = playing_app();
+    // Camera at the origin, pointer a few tiles east and south of it.
+    app.camera.set((0, 0));
+    app.handle_mouse(mouse_event(
+        MouseEventKind::Moved,
+        LEFT_COLUMN_WIDTH + 3 * TILE_WIDTH as u16,
+        7,
+    ));
+    assert_eq!(app.hovered_tile(app.engine.as_ref().unwrap()), Some((3, 7)));
+    // The player's own city tile is a discovered tile like any other.
+    app.handle_mouse(mouse_event(
+        MouseEventKind::Moved,
+        LEFT_COLUMN_WIDTH + cx as u16 * 2,
+        cy as u16,
+    ));
+    assert_eq!(
+        app.hovered_tile(app.engine.as_ref().unwrap()),
+        Some((cx, cy))
+    );
+    // Over the left column there is no map tile to inspect.
+    app.handle_mouse(mouse_event(MouseEventKind::Moved, 4, 7));
+    assert_eq!(app.hovered_tile(app.engine.as_ref().unwrap()), None);
+}
+
+#[test]
+fn a_modal_hides_the_hovered_tile() {
+    let (mut app, _, _, _) = with_city_window_open();
+    app.handle_mouse(mouse_event(
+        MouseEventKind::Moved,
+        LEFT_COLUMN_WIDTH + 3 * TILE_WIDTH as u16,
+        7,
+    ));
+    // While the city window floats over the map the pointer belongs to the
+    // window, so no tile is hovered for the focus panel.
+    assert_eq!(app.hovered_tile(app.engine.as_ref().unwrap()), None);
+    app.moused_window.set(None);
+    assert_eq!(app.hovered_tile(app.engine.as_ref().unwrap()), Some((3, 7)));
+}
+
+#[test]
 fn a_new_game_starts_with_no_city_selected() {
     let (app, _, _) = playing_app();
     assert_eq!(app.selected_city, None);
+}
+
+/// Opens the quit dialog over a fresh playing app, exactly as pressing q
+/// would.
+fn with_quit_dialog_open() -> (App, Rect) {
+    let (mut app, _, _) = playing_app();
+    app.handle_key(key(KeyCode::Char('q')));
+    assert_eq!(app.quit_dialog, Some(QuitChoice::Continue));
+    let panel = quit_dialog::dialog_rect(Rect {
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 40,
+    });
+    app.quit_dialog_rect.set(Some(panel));
+    (app, panel)
+}
+
+#[test]
+fn q_in_play_opens_the_quit_dialog_instead_of_leaving_the_game() {
+    let (mut app, _, _) = playing_app();
+    assert!(!app.handle_key(key(KeyCode::Char('q'))));
+    assert_eq!(app.quit_dialog, Some(QuitChoice::Continue));
+    assert!(matches!(app.phase, Phase::Playing));
+}
+
+#[test]
+fn quit_dialog_cursors_cycle_continue_save_quit() {
+    let (mut app, _) = with_quit_dialog_open();
+    app.handle_key(key(KeyCode::Right));
+    assert_eq!(app.quit_dialog, Some(QuitChoice::Save));
+    app.handle_key(key(KeyCode::Right));
+    assert_eq!(app.quit_dialog, Some(QuitChoice::Quit));
+    app.handle_key(key(KeyCode::Right));
+    assert_eq!(app.quit_dialog, Some(QuitChoice::Continue));
+    app.handle_key(key(KeyCode::Left));
+    assert_eq!(app.quit_dialog, Some(QuitChoice::Quit));
+    app.handle_key(key(KeyCode::Char('l')));
+    assert_eq!(app.quit_dialog, Some(QuitChoice::Continue));
+    app.handle_key(key(KeyCode::Char('k')));
+    assert_eq!(app.quit_dialog, Some(QuitChoice::Quit));
+}
+
+#[test]
+fn esc_closes_the_quit_dialog_and_play_continues() {
+    let (mut app, _) = with_quit_dialog_open();
+    assert!(!app.handle_key(key(KeyCode::Esc)));
+    assert_eq!(app.quit_dialog, None);
+    assert!(matches!(app.phase, Phase::Playing));
+}
+
+#[test]
+fn continue_confirms_and_stays_in_the_game() {
+    let (mut app, _) = with_quit_dialog_open();
+    assert!(!app.handle_key(key(KeyCode::Enter)));
+    assert_eq!(app.quit_dialog, None);
+    assert!(matches!(app.phase, Phase::Playing));
+}
+
+#[test]
+fn choosing_save_from_the_quit_dialog_opens_the_save_prompt() {
+    let (mut app, _) = with_quit_dialog_open();
+    app.handle_key(key(KeyCode::Right));
+    assert!(!app.handle_key(key(KeyCode::Enter)));
+    assert_eq!(app.quit_dialog, None);
+    let prompt = app.save_prompt.as_ref().expect("save prompt is open");
+    assert_eq!(prompt.kind, SaveLoadKind::Save);
+    assert!(matches!(app.phase, Phase::Playing));
+}
+
+#[test]
+fn choosing_quit_from_the_quit_dialog_ends_the_process() {
+    let (mut app, _) = with_quit_dialog_open();
+    app.handle_key(key(KeyCode::Right));
+    app.handle_key(key(KeyCode::Right));
+    assert!(app.handle_key(key(KeyCode::Enter)));
+}
+
+/// The quit dialog's buttons are clickable: a click acts as if that answer
+/// had been confirmed with the keyboard.
+#[test]
+fn clicking_a_quit_dialog_button_confirms_that_answer() {
+    let (mut app, panel) = with_quit_dialog_open();
+    app.left_click(
+        quit_dialog::continue_button_rect(panel).x + 1,
+        quit_dialog::continue_button_rect(panel).y,
+    );
+    assert_eq!(app.quit_dialog, None);
+    assert!(matches!(app.phase, Phase::Playing));
+    assert!(!app.exit_requested);
+
+    let (mut app, panel) = with_quit_dialog_open();
+    app.left_click(
+        quit_dialog::save_button_rect(panel).x + 1,
+        quit_dialog::save_button_rect(panel).y,
+    );
+    assert_eq!(app.quit_dialog, None);
+    assert_eq!(app.save_prompt.as_ref().unwrap().kind, SaveLoadKind::Save);
+
+    let (mut app, panel) = with_quit_dialog_open();
+    app.left_click(
+        quit_dialog::quit_button_rect(panel).x + 1,
+        quit_dialog::quit_button_rect(panel).y,
+    );
+    assert_eq!(app.quit_dialog, None);
+    assert!(app.exit_requested);
 }
 
 /// Selects the player's city and pretends the city window was drawn, so
@@ -2402,7 +2603,7 @@ fn a_saved_game_loads_back_into_play() {
     assert!(file.exists());
 
     // Quit to the menu and load the saved game back in.
-    app.handle_key(key(KeyCode::Char('q')));
+    app.handle_key(key(KeyCode::Esc));
     assert!(matches!(app.phase, Phase::Menu));
     app.handle_key(key(KeyCode::Char('l')));
     for ch in path.chars() {

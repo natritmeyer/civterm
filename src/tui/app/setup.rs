@@ -231,6 +231,9 @@ impl App {
         self.work_picker_rect = Cell::new(None);
         self.save_prompt = None;
         self.save_prompt_rect = Cell::new(None);
+        self.quit_dialog = None;
+        self.quit_dialog_rect = Cell::new(None);
+        self.exit_requested = false;
         self.battle_animation = None;
     }
 

@@ -256,6 +256,99 @@ impl App {
         self.save_prompt_rect.set(None);
     }
 
+    /// Handle a keystroke while the quit dialog is open: cycle between
+    /// continue, save and quit, confirm with Enter, back out with Esc.
+    /// Confirming quit returns `true`, ending the run loop.
+    pub(super) fn handle_quit_dialog_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Left | KeyCode::Up | KeyCode::Char('h') | KeyCode::Char('k') => {
+                self.quit_choice_rotate(-1)
+            }
+            KeyCode::Right | KeyCode::Down | KeyCode::Char('l') | KeyCode::Char('j') => {
+                self.quit_choice_rotate(1)
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => return self.quit_dialog_confirm(),
+            KeyCode::Esc => self.close_quit_dialog(),
+            _ => {}
+        }
+        false
+    }
+
+    /// Steer the quit dialog's cursor one step through continue → save →
+    /// quit, wrapping both ways.
+    pub(super) fn quit_choice_rotate(&mut self, delta: isize) {
+        let Some(choice) = &mut self.quit_dialog else {
+            return;
+        };
+        *choice = if delta > 0 {
+            choice.next()
+        } else {
+            choice.prev()
+        };
+    }
+
+    /// Confirm the answer currently on the quit-dialog cursor.
+    pub(super) fn quit_dialog_confirm(&mut self) -> bool {
+        let Some(choice) = self.quit_dialog else {
+            return false;
+        };
+        self.quit_dialog_confirm_choice(choice)
+    }
+
+    /// Close the quit dialog and act on the given answer: continue leaves the
+    /// game untouched, save opens the save prompt, and quit ends the process.
+    /// Returns `true` when the process should end.
+    pub(super) fn quit_dialog_confirm_choice(&mut self, choice: QuitChoice) -> bool {
+        if self.quit_dialog.is_none() {
+            return false;
+        }
+        self.quit_dialog = None;
+        self.quit_dialog_rect.set(None);
+        match choice {
+            QuitChoice::Continue => {}
+            QuitChoice::Save => self.open_save_prompt(),
+            QuitChoice::Quit => return true,
+        }
+        false
+    }
+
+    /// Close the quit dialog without acting on it; play resumes underneath.
+    pub(super) fn close_quit_dialog(&mut self) {
+        self.quit_dialog = None;
+        self.quit_dialog_rect.set(None);
+    }
+
+    /// A click on one of the quit dialog's buttons acts as if that answer had
+    /// been confirmed with the keyboard. A clicked QUIT sets the exit flag:
+    /// mouse input has no return channel, so the run loop leaves on its next
+    /// tick.
+    pub(super) fn handle_quit_dialog_mouse(&mut self, mouse: MouseEvent) {
+        let Some(panel) = self.quit_dialog_rect.get() else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        let position = (mouse.column, mouse.row).into();
+        let choice = if quit_dialog::continue_button_rect(panel).contains(position) {
+            Some(QuitChoice::Continue)
+        } else if quit_dialog::save_button_rect(panel).contains(position) {
+            Some(QuitChoice::Save)
+        } else if quit_dialog::quit_button_rect(panel).contains(position) {
+            Some(QuitChoice::Quit)
+        } else {
+            None
+        };
+        if let Some(choice) = choice
+            && self.quit_dialog_confirm_choice(choice)
+        {
+            self.exit_requested = true;
+        }
+    }
+
     /// Act on the typed path: save or load as the prompt kind demands. An
     /// empty path or a failed operation keeps the prompt open showing why.
     pub(super) fn save_prompt_confirm(&mut self) {

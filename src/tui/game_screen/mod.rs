@@ -121,6 +121,11 @@ pub struct GameScreen<'a> {
     /// The world tile (wrapped horizontally) hatched with `▓` to show where a
     /// click would move the selected unit; `None` while nothing is hovered.
     hover_target: Option<(usize, usize)>,
+    /// The world tile currently under the pointer (wrapped horizontally),
+    /// whose terrain, improvements and units the focus panel lists; `None`
+    /// while nothing is hovered. The panel only draws the block for tiles the
+    /// player has discovered.
+    hovered_tile: Option<(usize, usize)>,
     /// The in-flight battle explosion on the defender's tile, if any.
     battle_animation: Option<BattleAnimation>,
     /// The rival-movement replay for the round just resolved, if any.
@@ -155,6 +160,7 @@ impl<'a> GameScreen<'a> {
             show_events,
             events,
             hover_target,
+            hovered_tile: None,
             battle_animation: None,
             rival_animation: None,
         }
@@ -164,6 +170,13 @@ impl<'a> GameScreen<'a> {
     /// running.
     pub(crate) fn with_battle_animation(mut self, animation: Option<BattleAnimation>) -> Self {
         self.battle_animation = animation;
+        self
+    }
+
+    /// The world tile whose details the focus panel lists beneath the focus
+    /// block: whatever the pointer currently hovers over.
+    pub(crate) fn with_hovered_tile(mut self, tile: Option<(usize, usize)>) -> Self {
+        self.hovered_tile = tile;
         self
     }
 
@@ -414,16 +427,18 @@ impl<'a> GameScreen<'a> {
             area.right(),
             x,
             area.y,
-            civ.display_name(),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            &format!("Civilization: {}", civ.display_name()),
+            Style::default()
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
         );
         draw_text(
             buf,
             area.right(),
             x,
             area.y + 1,
-            &format!("Year  {}", format_year(year)),
-            Style::default().fg(DIM),
+            &format!("Year: {}", format_year(year)),
+            Style::default().fg(Color::Black),
         );
         draw_text(
             buf,
@@ -431,7 +446,7 @@ impl<'a> GameScreen<'a> {
             x,
             area.y + 2,
             &format!("Gold  {}", gold),
-            Style::default().fg(Color::Rgb(230, 190, 80)),
+            Style::default().fg(Color::Black),
         );
 
         let target = self.view.advancement_in_progress();
@@ -440,9 +455,9 @@ impl<'a> GameScreen<'a> {
         let income = self.view.research_income();
         let header_y = area.y + 4;
         let label = if let Some(t) = target {
-            format!("Researching {:?}", t)
+            format!("Researching: {:?}", t)
         } else {
-            "Researching  --".to_string()
+            "Researching: --".to_string()
         };
         draw_text(
             buf,
@@ -465,7 +480,7 @@ impl<'a> GameScreen<'a> {
                 x,
                 header_y + 1,
                 &bar,
-                Style::default().fg(Color::Rgb(180, 140, 255)),
+                Style::default().fg(Color::Rgb(80, 160, 255)),
             );
             draw_text(
                 buf,
@@ -586,6 +601,110 @@ impl<'a> GameScreen<'a> {
                 );
             }
         }
+
+        // The hovered-tile block: everything the pointer is over, drawn only
+        // for tiles the player has already discovered — the fog keeps terrain,
+        // improvements and units alike out of sight.
+        if let Some((hx, hy)) = self.hovered_tile
+            && self.view.explored(hx, hy)
+        {
+            row += 2;
+            let tile = self.view.tile(hx, hy);
+            draw_text(
+                buf,
+                area.right(),
+                x,
+                row,
+                &format!("Hovering: {:?} ({}, {})", tile.terrain, hx, hy),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            );
+            row += 1;
+            draw_text(
+                buf,
+                area.right(),
+                x,
+                row,
+                &format!(
+                    "Move {}   Food {}  Prod {}  Trade {}",
+                    tile.terrain.movement_cost(),
+                    tile.yields_food(),
+                    tile.yields_resources(),
+                    tile.yields_trade()
+                ),
+                Style::default().fg(DIM),
+            );
+            row += 1;
+            if tile.has_road() || tile.is_mined() || tile.is_irrigated() {
+                let improvements = [
+                    tile.is_irrigated().then_some("≈ irrigation"),
+                    tile.is_mined().then_some("⛏ mine"),
+                    tile.has_road().then_some("+ road"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(", ");
+                draw_text(
+                    buf,
+                    area.right(),
+                    x,
+                    row,
+                    &improvements,
+                    Style::default().fg(Color::Rgb(150, 220, 160)),
+                );
+                row += 1;
+            }
+            if let Some(resource) = tile.resource() {
+                draw_text(
+                    buf,
+                    area.right(),
+                    x,
+                    row,
+                    &format!("Resource: {:?}", resource),
+                    Style::default().fg(DIM),
+                );
+                row += 1;
+            }
+            if let Some(city) = self.view.city_at(hx, hy) {
+                draw_text(
+                    buf,
+                    area.right(),
+                    x,
+                    row,
+                    &format!("City: {} (pop {})", city.name, city.population()),
+                    Style::default().fg(DIM),
+                );
+                row += 1;
+            }
+            let units = self.view.units_at(hx, hy);
+            if units.is_empty() {
+                draw_text(
+                    buf,
+                    area.right(),
+                    x,
+                    row,
+                    "No units here",
+                    Style::default().fg(DIM),
+                );
+            } else {
+                let listing = units
+                    .iter()
+                    .map(|unit| {
+                        let owner = self.view.civilization_of(unit.owner()).display_name();
+                        format!("{:?} ({owner})", unit.unit_class)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                draw_text(
+                    buf,
+                    area.right(),
+                    x,
+                    row,
+                    &listing,
+                    Style::default().fg(Color::Rgb(230, 200, 120)),
+                );
+            }
+        }
     }
 }
 
@@ -617,7 +736,7 @@ impl<'a> Widget for GameScreen<'a> {
 
         let left_mid = left.height / 3;
         let left_remaining = left.height - left_mid;
-        let stats_height = left_remaining / 2;
+        let stats_height = (left_remaining / 2).saturating_sub(5);
         let mini_height = left_mid;
         let focus_height = left_remaining - stats_height;
 

@@ -17,6 +17,7 @@ use super::game_screen::{
 };
 use super::playing_help::PlayingHelp;
 use super::production_picker::{self, ProductionPicker};
+use super::quit_dialog::{self, QuitChoice};
 use super::research_dialog::{self, ResearchDialog};
 use super::save_load_prompt::{self, SaveLoadKind, SaveLoadPrompt};
 use super::splash::SplashScreen;
@@ -173,6 +174,14 @@ pub struct App {
     save_prompt: Option<SaveLoadState>,
     /// The last-drawn save-prompt rectangle, for mouse hit-testing.
     save_prompt_rect: Cell<Option<Rect>>,
+    /// The open quit dialog's cursor answer, if one is showing.
+    quit_dialog: Option<QuitChoice>,
+    /// The last-drawn quit-dialog rectangle, for mouse hit-testing.
+    quit_dialog_rect: Cell<Option<Rect>>,
+    /// Raised when the quit dialog's QUIT button is clicked. Mouse input has
+    /// no return channel to the run loop, so the flag ends the process on the
+    /// next tick instead of after the current draw.
+    exit_requested: bool,
     /// The competition and difficulty the current game was started or loaded
     /// with. The setup fields are cleared when the game starts, so the save
     /// path keeps its own copy for the file header.
@@ -241,6 +250,9 @@ impl App {
             diplomacy_rect: Cell::new(None),
             save_prompt: None,
             save_prompt_rect: Cell::new(None),
+            quit_dialog: None,
+            quit_dialog_rect: Cell::new(None),
+            exit_requested: false,
             game_competition: None,
             game_difficulty: None,
             work_picker_open: false,
@@ -257,6 +269,11 @@ impl App {
         terminal: &mut Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     ) -> io::Result<()> {
         loop {
+            // The quit dialog's QUIT button is a mouse click, which has no
+            // return channel from the event dispatch; leave on the next tick.
+            if self.exit_requested {
+                return Ok(());
+            }
             terminal.draw(|frame| Self::draw(frame, self))?;
             self.clear_expired_battle_animation(self.started_at.elapsed());
             self.clear_expired_rival_animation(self.started_at.elapsed());
@@ -382,6 +399,7 @@ impl App {
                     };
                     app.map_pane.set(Some(map_pane));
                     let hover_target = app.hovered_move_target(engine);
+                    let hovered_tile = app.hovered_tile(engine);
                     frame.render_widget(
                         GameScreen::new(
                             engine,
@@ -394,6 +412,7 @@ impl App {
                             &app.event_log[app.event_log.len().saturating_sub(EVENT_LOG_SIZE)..],
                             hover_target,
                         )
+                        .with_hovered_tile(hovered_tile)
                         .with_battle_animation(app.battle_animation)
                         .with_rival_animation(app.rival_animation.as_ref()),
                         area,
@@ -506,6 +525,15 @@ impl App {
                         }
                     } else {
                         app.work_picker_rect.set(None);
+                    }
+                    // The quit dialog floats above the map, asking what to do
+                    // with the game: continue, save, or quit the process.
+                    if let Some(choice) = app.quit_dialog {
+                        let rect = quit_dialog::dialog_rect(area);
+                        frame.render_widget(quit_dialog::QuitDialog::new(choice), rect);
+                        app.quit_dialog_rect.set(Some(rect));
+                    } else {
+                        app.quit_dialog_rect.set(None);
                     }
                 }
             }
@@ -635,14 +663,12 @@ fn adjacent_direction(from: (usize, usize), to: (usize, usize), map_w: usize) ->
     };
     Some(direction)
 }
-/// The world tile under the pointer, when it lies one square away from the
-/// `selected` tile in any direction; `None` otherwise (including over the
-/// left column or beyond the bottom map edge).
-fn hovered_adjacent_tile(
+/// The world tile under the pointer, wrapping east and west as the map does;
+/// `None` over the left column or below the map's south edge (the void).
+fn tile_under_pointer(
     screen: (u16, u16),
     camera: (usize, usize),
     map: (usize, usize),
-    selected: Option<(usize, usize)>,
 ) -> Option<(usize, usize)> {
     let (column, row) = screen;
     if column < LEFT_COLUMN_WIDTH {
@@ -652,11 +678,20 @@ fn hovered_adjacent_tile(
     let tile_col = (column - LEFT_COLUMN_WIDTH) as usize / TILE_WIDTH;
     let world_x = (camera.0 + tile_col) % map_w;
     let world_y = camera.1 + row as usize;
-    if world_y >= map_h {
-        return None;
-    }
-    adjacent_direction(selected?, (world_x, world_y), map_w)?;
-    Some((world_x, world_y))
+    (world_y < map_h).then_some((world_x, world_y))
+}
+/// The world tile under the pointer, when it lies one square away from the
+/// `selected` tile in any direction; `None` otherwise (including over the
+/// left column or beyond the bottom map edge).
+fn hovered_adjacent_tile(
+    screen: (u16, u16),
+    camera: (usize, usize),
+    map: (usize, usize),
+    selected: Option<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    let world = tile_under_pointer(screen, camera, map)?;
+    adjacent_direction(selected?, world, map.0)?;
+    Some(world)
 }
 /// The world-tile coordinate for the top-left of the map pane. Centres on
 /// `focus` when there is one, clamped so the camera never shows tiles beyond a
