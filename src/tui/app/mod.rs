@@ -440,9 +440,14 @@ impl App {
                                 .is_some_and(|city| city.owner() == engine.current_player_id()) =>
                         {
                             let window = city_window::window_rect(area);
+                            // Hand the widget the whole frame area — it centres
+                            // itself (via `window_rect`) — so what it paints is
+                            // exactly the `window` the overlays and hit rects
+                            // are computed from. Passing `window` here instead
+                            // would make it re-shift the box a cell in.
                             frame.render_widget(
                                 CityWindow::new(engine, city_id, app.city_window_scroll),
-                                window,
+                                area,
                             );
                             app.moused_window
                                 .set(Some((window, city_window::close_button_rect(window))));

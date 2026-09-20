@@ -3223,3 +3223,67 @@ fn a_rival_step_leaving_sight_is_replayed() {
         "the march leaves the explored tile and vanishes into the fog"
     );
 }
+
+#[test]
+fn clicking_close_while_the_picker_is_open_closes_the_window() {
+    // The production picker floats over the window's middle, never covering
+    // the top-right "✕ Close", and swallows most clicks while up — but the
+    // close button must stay live: clicking it dismisses the window and the
+    // picker with it instead of doing nothing.
+    let (mut app, panel, _) = with_production_picker_open();
+    let Some((win, close)) = app.moused_window.get() else {
+        panic!("no moused window");
+    };
+    assert!(
+        !panel.contains((close.x, close.y).into()),
+        "the picker must not cover the close button"
+    );
+
+    app.left_click(close.x + 3, close.y);
+
+    assert_eq!(
+        app.selected_city, None,
+        "close must dismiss the city window while the picker is open"
+    );
+    assert!(
+        !app.production_picker_open,
+        "closing the window takes its picker down too"
+    );
+    let _ = win;
+}
+
+#[test]
+fn clicking_the_painted_close_button_closes_the_window() {
+    // The close button's painted position must match its hit rect: the city
+    // window widget centres itself over the area it is given, so if the app
+    // hands it the clamped window rect the box lands a cell off from where
+    // `close_button_rect` (and every overlay) is computed. This test draws
+    // the real frame, clicks the painted ✕ exactly where it appears on
+    // screen, and expects the window to close.
+    let (mut app, _, _) = playing_app();
+    let (cx, cy) = {
+        let engine = app.engine.as_ref().unwrap();
+        let city = engine.player_cities()[0];
+        (city.location.x as usize, city.location.y as usize)
+    };
+    app.left_click((LEFT_COLUMN_WIDTH as usize + cx * 2) as u16, cy as u16);
+    assert!(app.selected_city.is_some());
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let (window, close) = app.moused_window.get().expect("moused_window");
+    let painted = (0..40u16)
+        .flat_map(|y| (0..120u16).map(move |x| (x, y)))
+        .find(|(x, y)| buffer.cell((*x, *y)).is_some_and(|c| c.symbol() == "✕"))
+        .expect("close button is painted");
+    assert!(
+        close.contains(painted.into()),
+        "painted ✕ at {painted:?} must be inside the hit rect {close:?} (window {window:?})"
+    );
+
+    app.left_click(painted.0, painted.1);
+    assert_eq!(
+        app.selected_city, None,
+        "clicking the painted ✕ must close the window"
+    );
+}

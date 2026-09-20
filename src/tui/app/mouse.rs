@@ -51,6 +51,21 @@ impl App {
         // The production picker floats above the city window and captures all
         // mouse input while it is open.
         if let Some(panel) = self.picker_rect.get() {
+            // The city window's "✕ Close" stays live above the picker: the
+            // picker floats over the window's middle and never covers the
+            // top-right button, so a click there still dismisses the window
+            // (and with it the picker) instead of being swallowed as an
+            // out-of-picker click.
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                && self.moused_window.get().is_some_and(|(_, close)| {
+                    mouse.column != u16::MAX
+                        && mouse.row != u16::MAX
+                        && close.contains((mouse.column, mouse.row).into())
+                })
+            {
+                self.close_city_window();
+                return;
+            }
             self.handle_picker_mouse(panel, mouse);
             return;
         }
@@ -114,6 +129,17 @@ impl App {
         true
     }
 
+    /// Dismiss the open city window and anything floating over it: clears the
+    /// selection and the improvement-list scroll, and closes the production
+    /// picker if it was up.
+    fn close_city_window(&mut self) {
+        self.selected_city = None;
+        self.city_window_scroll = 0;
+        if self.production_picker_open {
+            self.close_production_picker();
+        }
+    }
+
     /// A left press over the map pane begins a click-or-drag gesture. Presses
     /// over the city window or its buttons act immediately, and presses over
     /// the left column just clear the city selection.
@@ -138,8 +164,7 @@ impl App {
                 return;
             }
             if close.contains((column, row).into()) {
-                self.selected_city = None;
-                self.city_window_scroll = 0;
+                self.close_city_window();
                 return;
             }
             if window.contains((column, row).into()) {
