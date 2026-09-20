@@ -2519,25 +2519,25 @@ fn an_expired_battle_flash_is_dropped_from_the_app_state() {
 }
 
 #[test]
-fn pressing_w_opens_the_work_picker_for_the_selected_settler() {
+fn pressing_w_opens_the_command_picker_for_the_selected_settler() {
     let mut app = app_with_settler();
     app.handle_key(key(KeyCode::Char('w')));
-    assert!(app.work_picker_open);
-    assert_eq!(app.work_picker_cursor, 0);
+    assert!(app.command_picker_open);
+    assert_eq!(app.command_picker_cursor, 0);
     app.handle_key(key(KeyCode::Esc));
-    assert!(!app.work_picker_open);
-    assert_eq!(app.work_picker_rect.get(), None);
+    assert!(!app.command_picker_open);
+    assert_eq!(app.command_picker_rect.get(), None);
 }
 
 #[test]
-fn a_game_that_has_founded_its_first_city_has_no_settler_left_to_work() {
+fn a_game_that_has_founded_its_first_city_has_no_unit_left_to_command() {
     let (mut app, _, _) = playing_app();
     app.handle_key(key(KeyCode::Char('w')));
-    assert!(!app.work_picker_open);
+    assert!(!app.command_picker_open);
 }
 
 #[test]
-fn the_work_picker_only_offers_buildable_improvements() {
+fn the_command_picker_lists_orders_and_the_buildable_improvements() {
     let mut app = app_with_settler();
     app.handle_key(key(KeyCode::Char('w')));
     let unit = app.engine.as_ref().unwrap().player_units()[0];
@@ -2546,28 +2546,46 @@ fn the_work_picker_only_offers_buildable_improvements() {
         .as_ref()
         .unwrap()
         .tile(unit.location.x as usize, unit.location.y as usize);
-    assert_eq!(app.work_rows(), work_picker::buildable_improvements(tile));
+    let rows = app.command_rows();
+    assert_eq!(rows[0], command_picker::CommandChoice::Fortify);
+    assert_eq!(rows[1], command_picker::CommandChoice::Sentry);
+    let improvements: Vec<TerrainImprovement> = rows
+        .iter()
+        .filter_map(|command| match command {
+            command_picker::CommandChoice::Work(improvement) => Some(*improvement),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        improvements,
+        command_picker::buildable_improvements(tile),
+        "the work rows are exactly what the settler can build"
+    );
     assert!(
-        app.work_rows().contains(&TerrainImprovement::Road),
-        "a settler on land can always build a road: {:?}",
-        app.work_rows()
+        improvements.contains(&TerrainImprovement::Road),
+        "a settler on land can always build a road: {improvements:?}"
     );
 }
 
 #[test]
-fn saving_the_work_picker_orders_the_settler_and_the_road_lands_next_turn() {
+fn saving_the_command_picker_orders_the_settler_and_the_road_lands_next_turn() {
     let mut app = app_with_settler();
     app.handle_key(key(KeyCode::Char('w')));
     let road = app
-        .work_rows()
+        .command_rows()
         .iter()
-        .position(|&improvement| improvement == TerrainImprovement::Road)
+        .position(|command| {
+            matches!(
+                command,
+                command_picker::CommandChoice::Work(TerrainImprovement::Road)
+            )
+        })
         .expect("a settler on land can always build a road");
     for _ in 0..road {
         app.handle_key(key(KeyCode::Char('j')));
     }
     app.handle_key(key(KeyCode::Enter));
-    assert!(!app.work_picker_open);
+    assert!(!app.command_picker_open);
     let engine = app.engine.as_ref().unwrap();
     let unit = engine.player_units()[0];
     assert_eq!(unit.order(), UnitOrder::Improving(TerrainImprovement::Road));
@@ -2601,26 +2619,25 @@ fn saving_the_work_picker_orders_the_settler_and_the_road_lands_next_turn() {
 }
 
 #[test]
-fn esc_closes_the_work_picker_without_an_order() {
+fn esc_closes_the_command_picker_without_an_order() {
     let mut app = app_with_settler();
     app.handle_key(key(KeyCode::Char('w')));
     app.handle_key(key(KeyCode::Esc));
-    assert!(!app.work_picker_open);
+    assert!(!app.command_picker_open);
     let engine = app.engine.as_ref().unwrap();
     assert_eq!(engine.player_units()[0].order(), UnitOrder::Idle);
 }
 
 #[test]
-fn the_work_picker_requires_a_real_selected_settler() {
+fn the_command_picker_requires_a_real_selected_unit() {
     let mut app = app_with_settler();
     app.selected_unit = None;
     app.handle_key(key(KeyCode::Char('w')));
-    assert!(!app.work_picker_open);
-    // A selection that picks out no living unit must not open either: the
-    // engine itself rejects non-settler work orders.
+    assert!(!app.command_picker_open);
+    // A selection that picks out no living unit must not open either.
     app.selected_unit = Some(crate::model::units::UnitId::new(999));
     app.handle_key(key(KeyCode::Char('w')));
-    assert!(!app.work_picker_open);
+    assert!(!app.command_picker_open);
 }
 
 #[test]
@@ -2653,7 +2670,21 @@ fn pressing_f_fortifies_the_selected_unit() {
 fn pressing_c_cancels_the_selected_units_work_order() {
     let mut app = app_with_settler();
     app.handle_key(key(KeyCode::Char('w')));
-    let first = app.work_rows()[0];
+    let (work, first) = {
+        let rows = app.command_rows();
+        let index = rows
+            .iter()
+            .position(|command| matches!(command, command_picker::CommandChoice::Work(_)))
+            .expect("a settler on land can build something");
+        let first = match rows[index] {
+            command_picker::CommandChoice::Work(improvement) => improvement,
+            _ => unreachable!("position filtered for a work row"),
+        };
+        (index, first)
+    };
+    for _ in 0..work {
+        app.handle_key(key(KeyCode::Char('j')));
+    }
     app.handle_key(key(KeyCode::Enter));
     let engine = app.engine.as_ref().unwrap();
     assert_eq!(
@@ -2666,15 +2697,15 @@ fn pressing_c_cancels_the_selected_units_work_order() {
 }
 
 #[test]
-fn the_work_picker_swallows_game_keys() {
+fn the_command_picker_swallows_game_keys() {
     let mut app = app_with_settler();
     app.handle_key(key(KeyCode::Char('w')));
     let turn = app.engine.as_ref().unwrap().turn();
     for code in [KeyCode::Char('q'), KeyCode::Char('m'), KeyCode::Char(' ')] {
         let was_quit = app.handle_key(key(code));
-        assert!(!was_quit, "work picker must capture {code:?}");
+        assert!(!was_quit, "command picker must capture {code:?}");
     }
-    assert!(app.work_picker_open);
+    assert!(app.command_picker_open);
     assert!(matches!(app.phase, Phase::Playing));
     assert_eq!(
         app.engine.as_ref().unwrap().turn(),
@@ -2684,32 +2715,65 @@ fn the_work_picker_swallows_game_keys() {
 }
 
 #[test]
-fn clicking_a_row_then_save_issues_the_work_order() {
+fn clicking_a_row_then_save_issues_the_command() {
     let mut app = app_with_settler();
     app.handle_key(key(KeyCode::Char('w')));
-    let expected = app.work_rows()[0];
     let area = {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal.draw(|frame| App::draw(frame, &app)).unwrap();
-        assert!(app.work_picker_rect.get().is_some());
+        assert!(app.command_picker_rect.get().is_some());
         terminal.size().unwrap()
     };
-    let panel = work_picker::work_picker_rect(area.into());
-    let rows = work_picker::rows_rect(panel);
+    let panel = command_picker::command_picker_rect(area.into());
+    let rows = command_picker::rows_rect(panel);
     app.left_click(rows.x + 1, rows.y);
-    assert_eq!(app.work_picker_cursor, 0);
-    let save = work_picker::save_button_rect(panel);
+    assert_eq!(app.command_picker_cursor, 0);
+    let save = command_picker::save_button_rect(panel);
     app.left_click(save.x + save.width / 2, save.y.max(1));
-    assert!(!app.work_picker_open);
+    assert!(!app.command_picker_open);
     let engine = app.engine.as_ref().unwrap();
     assert_eq!(
         engine.player_units()[0].order(),
-        UnitOrder::Improving(expected)
+        UnitOrder::Fortified,
+        "the first command row fortifies the selected unit"
     );
 }
 
 #[test]
-fn clicking_cancel_closes_the_work_picker_without_an_order() {
+fn clicking_a_row_then_save_issues_the_chosen_work_order() {
+    let mut app = app_with_settler();
+    app.handle_key(key(KeyCode::Char('w')));
+    let road = app
+        .command_rows()
+        .iter()
+        .position(|command| {
+            matches!(
+                command,
+                command_picker::CommandChoice::Work(TerrainImprovement::Road)
+            )
+        })
+        .expect("a settler on land can always build a road");
+    let area = {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+        terminal.size().unwrap()
+    };
+    let panel = command_picker::command_picker_rect(area.into());
+    let rows = command_picker::rows_rect(panel);
+    app.left_click(rows.x + 1, rows.y + road as u16);
+    assert_eq!(app.command_picker_cursor, road);
+    let save = command_picker::save_button_rect(panel);
+    app.left_click(save.x + save.width / 2, save.y.max(1));
+    assert!(!app.command_picker_open);
+    let engine = app.engine.as_ref().unwrap();
+    assert_eq!(
+        engine.player_units()[0].order(),
+        UnitOrder::Improving(TerrainImprovement::Road)
+    );
+}
+
+#[test]
+fn clicking_cancel_closes_the_command_picker_without_an_order() {
     let mut app = app_with_settler();
     app.handle_key(key(KeyCode::Char('w')));
     let area = {
@@ -2717,12 +2781,102 @@ fn clicking_cancel_closes_the_work_picker_without_an_order() {
         terminal.draw(|frame| App::draw(frame, &app)).unwrap();
         terminal.size().unwrap()
     };
-    let panel = work_picker::work_picker_rect(area.into());
-    let cancel = work_picker::cancel_button_rect(panel);
+    let panel = command_picker::command_picker_rect(area.into());
+    let cancel = command_picker::cancel_button_rect(panel);
     app.left_click(cancel.x + cancel.width / 2, cancel.y.max(1));
-    assert!(!app.work_picker_open);
+    assert!(!app.command_picker_open);
     let engine = app.engine.as_ref().unwrap();
     assert_eq!(engine.player_units()[0].order(), UnitOrder::Idle);
+}
+
+#[test]
+fn clicking_a_player_unit_selects_it_and_opens_its_command_picker() {
+    let mut app = app_with_settler();
+    app.map_pane
+        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
+    let (wx, wy) = {
+        let engine = app.engine.as_ref().unwrap();
+        let unit = engine
+            .player_units()
+            .into_iter()
+            .find(|u| u.unit_class == UnitClass::Settler)
+            .unwrap();
+        (unit.location.x as usize, unit.location.y as usize)
+    };
+    app.left_click((LEFT_COLUMN_WIDTH as usize + wx * 2) as u16, wy as u16);
+    assert!(
+        app.command_picker_open,
+        "clicking an own unit opens its command window"
+    );
+    let engine = app.engine.as_ref().unwrap();
+    let unit = engine
+        .player_units()
+        .into_iter()
+        .find(|u| u.unit_class == UnitClass::Settler)
+        .unwrap();
+    assert_eq!(app.selected_unit, Some(unit.id()));
+    assert_eq!(app.selected_city, None);
+    assert!(app.camera_follow.get());
+}
+
+#[test]
+fn clicking_a_city_tile_prefers_the_city_window_over_a_unit_on_it() {
+    let (mut app, cx, cy) = playing_app();
+    let (city_id, city_location) = {
+        let engine = app.engine.as_ref().unwrap();
+        let city = engine.player_cities()[0];
+        (city.id(), city.location)
+    };
+    let garrison = app.engine.as_mut().unwrap().game.spawn_unit(
+        UnitClass::Militia,
+        city_location,
+        PlayerId::new(0),
+        city_id,
+    );
+    app.selected_unit = Some(garrison);
+    app.open_command_picker();
+    assert!(app.command_picker_open);
+    app.left_click((LEFT_COLUMN_WIDTH as usize + cx * 2) as u16, cy as u16);
+    assert_eq!(app.selected_city, Some(city_id));
+    assert!(
+        !app.command_picker_open,
+        "the city window wins over an occupying unit"
+    );
+}
+
+#[test]
+fn the_command_picker_offers_unfortify_for_a_fortified_garrison() {
+    let (mut app, _, _) = playing_app();
+    let (city_id, city_location) = {
+        let engine = app.engine.as_ref().unwrap();
+        let city = engine.player_cities()[0];
+        (city.id(), city.location)
+    };
+    // A rested garrison: it fortified a previous turn, so its moves were
+    // restored but the fortify order keeps it out of the available-units loop.
+    let garrison = app.engine.as_mut().unwrap().game.spawn_unit(
+        UnitClass::Militia,
+        city_location,
+        PlayerId::new(0),
+        city_id,
+    );
+    {
+        let engine = app.engine.as_mut().unwrap();
+        let unit = engine
+            .game
+            .units
+            .iter_mut()
+            .find(|u| u.id() == garrison)
+            .unwrap();
+        unit.fortify();
+        unit.restore_moves();
+    }
+    app.selected_unit = Some(garrison);
+    assert_eq!(
+        app.command_rows(),
+        vec![command_picker::CommandChoice::Unfortify],
+        "a fortified garrison can only be roused"
+    );
 }
 
 #[test]

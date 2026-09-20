@@ -2,7 +2,6 @@ use super::production_picker::PickRow;
 use super::*;
 use crate::game_engine::Command;
 use crate::model::cities::ProductionTarget;
-use crate::model::geography::TerrainImprovement;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 impl App {
@@ -155,102 +154,109 @@ impl App {
         self.picker_scroll = self.picker_scroll.clamp(lo, hi);
     }
 
-    /// The improvements the selected settler can build on its tile right now.
-    pub(super) fn work_rows(&self) -> Vec<TerrainImprovement> {
+    /// The commands the selected unit can take on its tile right now.
+    pub(super) fn command_rows(&self) -> Vec<command_picker::CommandChoice> {
         let Some(unit) = self.selected_unit else {
             return Vec::new();
         };
         let Some(engine) = &self.engine else {
             return Vec::new();
         };
-        engine
-            .player_units()
-            .into_iter()
-            .find(|u| u.id() == unit)
-            .map(|u| engine.tile(u.location.x as usize, u.location.y as usize))
-            .map(work_picker::buildable_improvements)
-            .unwrap_or_default()
+        command_picker::available_commands(engine, unit)
     }
 
-    /// The number of work picker rows visible on screen right now.
-    pub(super) fn work_visible_rows(&self) -> usize {
-        self.work_picker_rect
+    /// The number of command picker rows visible on screen right now.
+    pub(super) fn command_visible_rows(&self) -> usize {
+        self.command_picker_rect
             .get()
-            .map(|panel| work_picker::rows_rect(panel).height as usize)
-            .unwrap_or(work_picker::MAX_VISIBLE_ROWS as usize)
+            .map(|panel| command_picker::rows_rect(panel).height as usize)
+            .unwrap_or(command_picker::MAX_VISIBLE_ROWS as usize)
     }
 
-    /// Open the work picker over the map, but only when the selected unit is
-    /// a settler (the only unit class that builds improvements).
-    pub(super) fn open_work_picker(&mut self) {
-        let is_settler = self
+    /// Open the command picker over the map for the selected unit. Any unit
+    /// on the map can be commanded; a selection that no longer resolves to a
+    /// living unit opens nothing.
+    pub(super) fn open_command_picker(&mut self) {
+        let is_living = self
             .engine
             .as_ref()
             .and_then(|engine| {
                 self.selected_unit
                     .and_then(|unit| engine.player_units().into_iter().find(|u| u.id() == unit))
             })
-            .is_some_and(|u| u.unit_class == UnitClass::Settler);
-        if !is_settler {
+            .is_some();
+        if !is_living {
             return;
         }
-        self.work_picker_open = true;
-        self.work_picker_cursor = 0;
-        self.work_picker_scroll = 0;
+        self.command_picker_open = true;
+        self.command_picker_cursor = 0;
+        self.command_picker_scroll = 0;
     }
 
-    pub(super) fn close_work_picker(&mut self) {
-        self.work_picker_open = false;
-        self.work_picker_scroll = 0;
-        self.work_picker_rect.set(None);
+    pub(super) fn close_command_picker(&mut self) {
+        self.command_picker_open = false;
+        self.command_picker_scroll = 0;
+        self.command_picker_rect.set(None);
     }
 
-    /// Issue the selected settler's chosen improvement order, then close.
-    pub(super) fn save_work_picker(&mut self) {
+    /// Issue the selected unit's chosen command, then close. Fortify, sentry,
+    /// work and their cancellations spend the turn; unfortify and unsentry
+    /// are free and step the unit straight back into the command loop.
+    pub(super) fn save_command_picker(&mut self) {
         let unit = self.selected_unit;
-        let improvement = self.work_rows().get(self.work_picker_cursor).copied();
-        self.close_work_picker();
-        let (Some(unit), Some(improvement)) = (unit, improvement) else {
+        let command = self.command_rows().get(self.command_picker_cursor).copied();
+        self.close_command_picker();
+        let (Some(unit), Some(command)) = (unit, command) else {
             return;
         };
         if let Some(engine) = &mut self.engine {
-            let events = engine.submit(Command::Work { unit, improvement });
+            let command = match command {
+                command_picker::CommandChoice::Fortify => Command::Fortify { unit },
+                command_picker::CommandChoice::Sentry => Command::Sentry { unit },
+                command_picker::CommandChoice::Unfortify => Command::Unfortify { unit },
+                command_picker::CommandChoice::Unsentry => Command::Unsentry { unit },
+                command_picker::CommandChoice::Work(improvement) => {
+                    Command::Work { unit, improvement }
+                }
+                command_picker::CommandChoice::CancelOrder(_) => Command::CancelOrder { unit },
+            };
+            let events = engine.submit(command);
             self.record_events(events);
-            // The settler is now building, not commanding: let the focus
-            // move on to the next unit with budget.
+            // A spending command leaves the focus spent: let it move on; a
+            // free one restores the focus's agency and clears any arm.
             self.schedule_unit_advance_if_spent();
         }
     }
 
-    /// Move the work picker's cursor by `delta` rows, keeping it in view.
-    pub(super) fn move_work_cursor(&mut self, delta: isize) {
-        let len = self.work_rows().len();
+    /// Move the command picker's cursor by `delta` rows, keeping it in view.
+    pub(super) fn move_command_cursor(&mut self, delta: isize) {
+        let len = self.command_rows().len();
         if len == 0 {
             return;
         }
-        self.work_picker_cursor = if delta > 0 {
-            advance(self.work_picker_cursor, len)
+        self.command_picker_cursor = if delta > 0 {
+            advance(self.command_picker_cursor, len)
         } else {
-            retreat(self.work_picker_cursor, len)
+            retreat(self.command_picker_cursor, len)
         };
-        let visible = self.work_visible_rows();
+        let visible = self.command_visible_rows();
         let max_offset = len.saturating_sub(visible);
-        let row = self.work_picker_cursor;
+        let row = self.command_picker_cursor;
         let lo = (row as isize + 1 - visible as isize).max(0) as usize;
         let hi = row.min(max_offset);
-        self.work_picker_scroll = self.work_picker_scroll.clamp(lo, hi);
+        self.command_picker_scroll = self.command_picker_scroll.clamp(lo, hi);
     }
 
-    pub(super) fn handle_work_picker_mouse(&mut self, panel: Rect, mouse: MouseEvent) {
+    pub(super) fn handle_command_picker_mouse(&mut self, panel: Rect, mouse: MouseEvent) {
         match mouse.kind {
             MouseEventKind::ScrollUp => {
-                self.work_picker_scroll = self.work_picker_scroll.saturating_sub(1);
+                self.command_picker_scroll = self.command_picker_scroll.saturating_sub(1);
                 return;
             }
             MouseEventKind::ScrollDown => {
-                let rows = self.work_rows();
-                let max_offset = rows.len().saturating_sub(self.work_visible_rows());
-                self.work_picker_scroll = (self.work_picker_scroll + 1).min(max_offset);
+                let rows = self.command_rows();
+                let max_offset = rows.len().saturating_sub(self.command_visible_rows());
+                self.command_picker_scroll = (self.command_picker_scroll + 1).min(max_offset);
                 return;
             }
             MouseEventKind::Down(MouseButton::Left) => {}
@@ -264,20 +270,20 @@ impl App {
             // Clicks outside the picker are swallowed while it is open.
             return;
         }
-        if work_picker::cancel_button_rect(panel).contains(position) {
-            self.close_work_picker();
+        if command_picker::cancel_button_rect(panel).contains(position) {
+            self.close_command_picker();
             return;
         }
-        if work_picker::save_button_rect(panel).contains(position) {
-            self.save_work_picker();
+        if command_picker::save_button_rect(panel).contains(position) {
+            self.save_command_picker();
             return;
         }
-        let rows = work_picker::rows_rect(panel);
+        let rows = command_picker::rows_rect(panel);
         if rows.contains(position) {
             let row_in_view = (mouse.row as usize).saturating_sub(rows.y as usize);
-            let global_row = row_in_view + self.work_picker_scroll;
-            if global_row < self.work_rows().len() {
-                self.work_picker_cursor = global_row;
+            let global_row = row_in_view + self.command_picker_scroll;
+            if global_row < self.command_rows().len() {
+                self.command_picker_cursor = global_row;
             }
         }
     }

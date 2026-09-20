@@ -42,10 +42,10 @@ impl App {
             self.handle_research_dialog_mouse(mouse);
             return;
         }
-        // The work picker floats over the map and captures all mouse input
-        // while it is open.
-        if let Some(panel) = self.work_picker_rect.get() {
-            self.handle_work_picker_mouse(panel, mouse);
+        // The command picker floats over the map and captures all mouse
+        // input while it is open.
+        if let Some(panel) = self.command_picker_rect.get() {
+            self.handle_command_picker_mouse(panel, mouse);
             return;
         }
         // The production picker floats above the city window and captures all
@@ -256,15 +256,38 @@ impl App {
             self.move_selected_unit(direction);
             return;
         }
-        let map_h = engine.height();
-        let clicked = if world_y < map_h {
-            engine
-                .city_at(world_x, world_y)
-                .filter(|city| city.owner() == engine.current_player_id())
-                .map(|city| city.id())
-        } else {
-            None
+        let (clicked_city, clicked_unit) = {
+            let Some(engine) = &self.engine else {
+                return;
+            };
+            if world_y >= engine.height() {
+                (None, None)
+            } else {
+                let city = engine
+                    .city_at(world_x, world_y)
+                    .filter(|city| city.owner() == engine.current_player_id())
+                    .map(|city| city.id());
+                let unit = engine
+                    .player_units()
+                    .into_iter()
+                    .find(|u| u.location.x as usize == world_x && u.location.y as usize == world_y)
+                    .map(|u| u.id());
+                (city, unit)
+            }
         };
-        self.selected_city = clicked;
+        // A city tile opens the city window whatever else stands on it; an
+        // own unit tile selects that unit and opens its command window; any
+        // other tile just clears the city selection.
+        if let Some(city) = clicked_city {
+            self.selected_city = Some(city);
+            self.close_command_picker();
+        } else if let Some(unit) = clicked_unit {
+            self.selected_city = None;
+            self.selected_unit = Some(unit);
+            self.camera_follow.set(true);
+            self.open_command_picker();
+        } else {
+            self.selected_city = None;
+        }
     }
 }

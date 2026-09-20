@@ -358,6 +358,34 @@ impl Engine {
             None => self.events.push(Event::new("No such unit")),
         }
     }
+    /// Rouse a unit standing sentry: like `unfortify` this is turn-free, so a
+    /// rested sentry that had moves restored steps straight back into the
+    /// available-units loop. It only ever clears a sentry order; any other
+    /// order (and every transported unit) is left untouched.
+    pub(super) fn unsentry(&mut self, unit: UnitId) {
+        match self.owned_unit_mut(unit) {
+            Some(u) if u.is_transported() => {
+                self.events.push(Event::new(format!(
+                    "Unit {} is aboard a ship",
+                    unit.index()
+                )));
+            }
+            Some(u) if u.order() != UnitOrder::Sentried => {
+                self.events.push(Event::new(format!(
+                    "Unit {} is not on sentry",
+                    unit.index()
+                )));
+            }
+            Some(u) => {
+                u.cancel_order();
+                self.events.push(Event::new(format!(
+                    "Unit {} is no longer on sentry",
+                    unit.index()
+                )));
+            }
+            None => self.events.push(Event::new("No such unit")),
+        }
+    }
     pub(super) fn owned_unit(&self, unit: UnitId) -> Option<&Unit> {
         self.game
             .units

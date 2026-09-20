@@ -556,6 +556,48 @@ fn unfortify_leaves_any_other_order_alone() {
 }
 
 #[test]
+fn unsentry_rouses_a_rested_sentry_without_spending_its_turn() {
+    let mut engine = test_engine();
+    engine.submit(Command::Sentry {
+        unit: UnitId::new(0),
+    });
+    assert_eq!(engine.game.units[0].moves_remaining(), 0);
+    // The next turn restores the sentry's moves but keeps it standing guard.
+    engine.begin_turn();
+    let moves = engine.game.units[0].moves_remaining();
+    assert!(moves > 0);
+    assert_eq!(engine.game.units[0].order(), UnitOrder::Sentried);
+    // Unsentry clears the order without spending any of that budget, so the
+    // unit is back in the available-units loop exactly as it stands.
+    let events = engine.submit(Command::Unsentry {
+        unit: UnitId::new(0),
+    });
+    assert_eq!(engine.game.units[0].order(), UnitOrder::Idle);
+    assert_eq!(engine.game.units[0].moves_remaining(), moves);
+    assert_eq!(events[0].message(), "Unit 0 is no longer on sentry");
+}
+
+#[test]
+fn unsentry_leaves_any_other_order_alone() {
+    let mut engine = test_engine();
+    let cavalry = engine.game.spawn_unit(
+        UnitClass::Cavalry,
+        Location::new(0, 0),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.submit(Command::Fortify { unit: cavalry });
+    assert_eq!(engine.game.units[1].order(), UnitOrder::Fortified);
+    let events = engine.submit(Command::Unsentry { unit: cavalry });
+    assert_eq!(
+        events[0].message(),
+        "Unit 1 is not on sentry",
+        "unsentry must not cancel a fortify order"
+    );
+    assert_eq!(engine.game.units[1].order(), UnitOrder::Fortified);
+}
+
+#[test]
 fn submitting_to_an_unknown_unit_reports_an_event_without_changing_state() {
     let mut engine = test_engine();
     let events = engine.submit(Command::Fortify {

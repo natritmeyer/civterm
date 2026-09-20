@@ -31,14 +31,14 @@ impl App {
             self.handle_diplomacy_key(key);
             return false;
         }
-        // While the work picker is open it captures the keyboard: the player
-        // may only pick an improvement and confirm it.
-        if self.work_picker_open {
+        // While the command picker is open it captures the keyboard: the
+        // player may only pick a command and confirm it.
+        if self.command_picker_open {
             match key.code {
-                KeyCode::Esc => self.close_work_picker(),
-                KeyCode::Enter => self.save_work_picker(),
-                KeyCode::Down | KeyCode::Char('j') => self.move_work_cursor(1),
-                KeyCode::Up | KeyCode::Char('k') => self.move_work_cursor(-1),
+                KeyCode::Esc => self.close_command_picker(),
+                KeyCode::Enter => self.save_command_picker(),
+                KeyCode::Down | KeyCode::Char('j') => self.move_command_cursor(1),
+                KeyCode::Up | KeyCode::Char('k') => self.move_command_cursor(-1),
                 _ => {}
             }
             return false;
@@ -135,7 +135,7 @@ impl App {
                 false
             }
             KeyCode::Char('w') => {
-                self.open_work_picker();
+                self.open_command_picker();
                 false
             }
             KeyCode::Char('f') => {
@@ -255,7 +255,7 @@ impl App {
     fn modal_open(&self) -> bool {
         self.research_dialog.is_some()
             || self.diplomacy.is_some()
-            || self.work_picker_open
+            || self.command_picker_open
             || self.production_picker_open
             || self.save_prompt.is_some()
             || self.quit_dialog.is_some()
@@ -420,7 +420,7 @@ impl App {
     fn hover_blocked(&self) -> bool {
         self.research_dialog_rect.get().is_some()
             || self.diplomacy_rect.get().is_some()
-            || self.work_picker_rect.get().is_some()
+            || self.command_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
             || self.moused_window.get().is_some()
             || self.save_prompt_rect.get().is_some()
@@ -542,9 +542,9 @@ impl App {
             self.moused_window = Cell::new(None);
             self.production_picker_open = false;
             self.picker_rect = Cell::new(None);
-            self.work_picker_open = false;
-            self.work_picker_scroll = 0;
-            self.work_picker_rect = Cell::new(None);
+            self.command_picker_open = false;
+            self.command_picker_scroll = 0;
+            self.command_picker_rect = Cell::new(None);
         }
         self.select_first_unit();
     }

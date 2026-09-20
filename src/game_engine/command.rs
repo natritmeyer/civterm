@@ -27,6 +27,9 @@ pub enum Command {
     Unfortify {
         unit: UnitId,
     },
+    Unsentry {
+        unit: UnitId,
+    },
     FoundCity {
         unit: UnitId,
         name: String,

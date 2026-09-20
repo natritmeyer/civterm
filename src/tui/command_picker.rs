@@ -6,7 +6,7 @@ use ratatui::widgets::Widget;
 use crate::game_engine::GameView;
 use crate::model::cartography::Tile;
 use crate::model::geography::TerrainImprovement;
-use crate::model::units::UnitId;
+use crate::model::units::{Unit, UnitClass, UnitId, UnitOrder};
 
 /// The vanilla-yellow backdrop shared with the city window.
 const VANILLA_BG: Color = Color::Rgb(216, 182, 78);
@@ -44,18 +44,80 @@ pub fn buildable_improvements(tile: &Tile) -> Vec<TerrainImprovement> {
     .collect()
 }
 
-pub struct WorkPicker<'a> {
+/// One row of the command window: an order the focused unit can take right
+/// now. A unit's order state decides which rows it offers — an idle unit may
+/// fortify, stand sentry, or (as a settler) begin building; a fortified,
+/// sentried or improving unit offers only the way back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandChoice {
+    Fortify,
+    Sentry,
+    Unfortify,
+    Unsentry,
+    Work(TerrainImprovement),
+    CancelOrder(TerrainImprovement),
+}
+
+impl CommandChoice {
+    /// The row the player sees, e.g. "Fortify", "Work (Irrigation)",
+    /// "Cancel order (Irrigation)".
+    pub fn label(self) -> String {
+        match self {
+            CommandChoice::Fortify => "Fortify".to_string(),
+            CommandChoice::Sentry => "Sentry".to_string(),
+            CommandChoice::Unfortify => "Unfortify".to_string(),
+            CommandChoice::Unsentry => "Unsentry".to_string(),
+            CommandChoice::Work(improvement) => {
+                format!("{} ({})", improvement.name(), improvement.work_turns())
+            }
+            CommandChoice::CancelOrder(improvement) => {
+                format!("Cancel order ({})", improvement.name())
+            }
+        }
+    }
+}
+
+/// The commands `unit` can take right now, in a stable order. A transported
+/// unit has no field agency and an unknown unit no presence, so both offer
+/// nothing.
+pub fn available_commands(view: &dyn GameView, unit: UnitId) -> Vec<CommandChoice> {
+    let Some(unit) = view.player_units().into_iter().find(|u| u.id() == unit) else {
+        return Vec::new();
+    };
+    if unit.is_transported() {
+        return Vec::new();
+    }
+    match unit.order() {
+        UnitOrder::Idle => {
+            let mut commands = vec![CommandChoice::Fortify, CommandChoice::Sentry];
+            if unit.unit_class == UnitClass::Settler {
+                let tile = view.tile(unit.location.x as usize, unit.location.y as usize);
+                commands.extend(
+                    buildable_improvements(tile)
+                        .into_iter()
+                        .map(CommandChoice::Work),
+                );
+            }
+            commands
+        }
+        UnitOrder::Fortified => vec![CommandChoice::Unfortify],
+        UnitOrder::Sentried => vec![CommandChoice::Unsentry],
+        UnitOrder::Improving(improvement) => vec![CommandChoice::CancelOrder(improvement)],
+    }
+}
+
+pub struct CommandPicker<'a> {
     view: &'a dyn GameView,
     unit: UnitId,
     cursor: usize,
     scroll: usize,
 }
 
-impl<'a> WorkPicker<'a> {
-    /// A floating panel over the map listing the improvements the selected
-    /// settler can build on the tile it stands on.
+impl<'a> CommandPicker<'a> {
+    /// A floating panel over the map listing the commands the focused unit
+    /// can take right now.
     pub fn new(view: &'a dyn GameView, unit: UnitId, cursor: usize, scroll: usize) -> Self {
-        WorkPicker {
+        CommandPicker {
             view,
             unit,
             cursor,
@@ -63,16 +125,12 @@ impl<'a> WorkPicker<'a> {
         }
     }
 
-    /// The tile beneath the unit, if the unit still exists.
-    fn tile(&self) -> Option<&Tile> {
+    /// The unit itself, if it still exists.
+    fn unit(&self) -> Option<&Unit> {
         self.view
             .player_units()
             .into_iter()
             .find(|unit| unit.id() == self.unit)
-            .map(|unit| {
-                self.view
-                    .tile(unit.location.x as usize, unit.location.y as usize)
-            })
     }
 
     fn draw_buttons(buf: &mut Buffer, panel: Rect) {
@@ -156,7 +214,7 @@ fn draw_border(buf: &mut Buffer, rect: Rect) {
 }
 
 /// The rectangle the picker panel occupies over `area`, centred across it.
-pub fn work_picker_rect(area: Rect) -> Rect {
+pub fn command_picker_rect(area: Rect) -> Rect {
     let width = (PICKER_WIDTH.min(area.width.saturating_sub(2)).max(24)) & !1;
     let height = (PICKER_HEIGHT.min(area.height.saturating_sub(2)).max(8)) & !1;
     Rect {
@@ -177,8 +235,8 @@ fn inner(panel: Rect) -> Rect {
     }
 }
 
-/// The rows rectangle: the title and terrain subtitle sit above it, the
-/// Cancel/Save buttons below it.
+/// The rows rectangle: the title and subtitle sit above it, the Cancel/Save
+/// buttons below it.
 pub fn rows_rect(panel: Rect) -> Rect {
     let inner = inner(panel);
     let height = inner.height.saturating_sub(4);
@@ -215,45 +273,44 @@ pub fn save_button_rect(panel: Rect) -> Rect {
     }
 }
 
-impl<'a> Widget for WorkPicker<'a> {
+impl<'a> Widget for CommandPicker<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width < 16 || area.height < 8 {
             return;
         }
-        let Some(tile) = self.tile() else {
+        let Some(unit) = self.unit() else {
             return;
         };
-        if tile.terrain.is_water() {
-            return;
-        }
         fill_rect(buf, inner(area));
         draw_border(buf, area);
 
-        let header = "Settler — work";
+        let header = "Command";
         draw_text(buf, inner(area).x + 1, inner(area).y, header, BOLD);
-        draw_text(
-            buf,
-            inner(area).x + 1,
-            inner(area).y + 1,
-            tile.terrain.name(),
-            LINK,
+        let subtitle = format!(
+            "{:?} on {}",
+            unit.unit_class,
+            self.view
+                .tile(unit.location.x as usize, unit.location.y as usize)
+                .terrain
+                .name(),
         );
+        draw_text(buf, inner(area).x + 1, inner(area).y + 1, &subtitle, LINK);
 
         let rows = rows_rect(area);
-        let improvements = buildable_improvements(tile);
-        if improvements.is_empty() {
-            draw_text(buf, rows.x + 1, rows.y, "(nothing to build here)", BOLD);
+        let commands = available_commands(self.view, self.unit);
+        if commands.is_empty() {
+            draw_text(buf, rows.x + 1, rows.y, "(no orders available)", BOLD);
             Self::draw_buttons(buf, area);
             return;
         }
         let visible = rows.height as usize;
-        let offset = self.scroll.min(improvements.len().saturating_sub(visible));
+        let offset = self.scroll.min(commands.len().saturating_sub(visible));
         for i in 0..visible {
             let row = rows.y + i as u16;
             if row >= rows.bottom() {
                 break;
             }
-            let Some(improvement) = improvements.get(i + offset) else {
+            let Some(command) = commands.get(i + offset) else {
                 break;
             };
             let is_selected = self.cursor == i + offset;
@@ -269,7 +326,7 @@ impl<'a> Widget for WorkPicker<'a> {
                     SELECTED,
                 );
             }
-            let text = format!("{} ({})", improvement.name(), improvement.work_turns());
+            let text = command.label();
             draw_text(
                 buf,
                 rows.x + 2,
@@ -306,15 +363,31 @@ mod tests {
         fn with_tile(tile: Tile) -> Self {
             FakeView {
                 tile,
-                unit: Unit::new(
-                    UnitClass::Settler,
-                    Location::new(3, 3),
-                    PlayerId::new(0),
-                    CityId::new(0),
-                    UnitId::new(0),
-                ),
+                unit: make_unit(UnitClass::Settler, UnitOrder::Idle),
             }
         }
+
+        fn with_unit(mut self, unit: Unit) -> Self {
+            self.unit = unit;
+            self
+        }
+    }
+
+    fn make_unit(class: UnitClass, order: UnitOrder) -> Unit {
+        let mut unit = Unit::new(
+            class,
+            Location::new(3, 3),
+            PlayerId::new(0),
+            CityId::new(0),
+            UnitId::new(0),
+        );
+        match order {
+            UnitOrder::Idle => {}
+            UnitOrder::Fortified => unit.fortify(),
+            UnitOrder::Sentried => unit.sentry(),
+            UnitOrder::Improving(improvement) => unit.work(improvement),
+        }
+        unit
     }
 
     impl GameView for FakeView {
@@ -397,7 +470,7 @@ mod tests {
     }
 
     fn picker_panel() -> Rect {
-        work_picker_rect(Rect {
+        command_picker_rect(Rect {
             x: 0,
             y: 0,
             width: 120,
@@ -405,27 +478,12 @@ mod tests {
         })
     }
 
-    fn render(terrain: Terrain, cursor: usize, scroll: usize) -> Buffer {
-        let view = FakeView::new(terrain);
+    fn render(view: &FakeView, cursor: usize, scroll: usize) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal
             .draw(|frame| {
                 frame.render_widget(
-                    WorkPicker::new(&view, UnitId::new(0), cursor, scroll),
-                    picker_panel(),
-                )
-            })
-            .unwrap();
-        terminal.backend().buffer().clone()
-    }
-
-    fn render_tile(tile: Tile, cursor: usize, scroll: usize) -> Buffer {
-        let view = FakeView::with_tile(tile);
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        terminal
-            .draw(|frame| {
-                frame.render_widget(
-                    WorkPicker::new(&view, UnitId::new(0), cursor, scroll),
+                    CommandPicker::new(&*view, UnitId::new(0), cursor, scroll),
                     picker_panel(),
                 )
             })
@@ -476,27 +534,40 @@ mod tests {
     }
 
     #[test]
-    fn panel_shows_the_title_subtitle_and_buildable_rows() {
-        let buf = render(Terrain::Grassland, 0, 0);
+    fn panel_shows_the_title_subtitle_and_command_rows() {
+        let view = FakeView::new(Terrain::Grassland);
+        let buf = render(&view, 0, 0);
         let panel = picker_panel();
         let title = row_text(&buf, panel.x + 2, panel.y + 1, 30);
-        assert!(title.contains("Settler — work"), "title: {title:?}");
+        assert!(title.contains("Command"), "title: {title:?}");
         let subtitle = row_text(&buf, panel.x + 2, panel.y + 2, 30);
-        assert!(subtitle.contains("Grassland"), "subtitle: {subtitle:?}");
+        assert!(
+            subtitle.contains("Settler on Grassland"),
+            "subtitle: {subtitle:?}"
+        );
         let rows = rows_rect(panel);
         let first_row: String = (0..20)
             .map(|i| buf.cell((rows.x + i, rows.y)).unwrap().symbol())
             .collect();
-        assert_eq!(first_row.trim(), "Irrigation (2)", "row was {first_row:?}");
+        assert_eq!(first_row.trim(), "Fortify", "row was {first_row:?}");
         let second_row: String = (0..20)
             .map(|i| buf.cell((rows.x + i, rows.y + 1)).unwrap().symbol())
             .collect();
-        assert_eq!(second_row.trim(), "Road (2)", "row was {second_row:?}");
+        assert_eq!(second_row.trim(), "Sentry", "row was {second_row:?}");
+        let third_row: String = (0..20)
+            .map(|i| buf.cell((rows.x + i, rows.y + 2)).unwrap().symbol())
+            .collect();
+        assert_eq!(third_row.trim(), "Irrigation (2)", "row was {third_row:?}");
+        let fourth_row: String = (0..20)
+            .map(|i| buf.cell((rows.x + i, rows.y + 3)).unwrap().symbol())
+            .collect();
+        assert_eq!(fourth_row.trim(), "Road (2)", "row was {fourth_row:?}");
     }
 
     #[test]
     fn selected_row_is_highlighted_white() {
-        let buf = render(Terrain::Grassland, 1, 0);
+        let view = FakeView::new(Terrain::Grassland);
+        let buf = render(&view, 1, 0);
         let panel = picker_panel();
         let rows = rows_rect(panel);
         let selected = buf.cell((rows.x + 1, rows.y + 1)).unwrap();
@@ -506,38 +577,102 @@ mod tests {
     }
 
     #[test]
-    fn a_fully_improved_tile_offers_no_rows() {
+    fn a_fortified_unit_offers_only_unfortify() {
+        let view = FakeView::new(Terrain::Grassland)
+            .with_unit(make_unit(UnitClass::Settler, UnitOrder::Fortified));
+        assert_eq!(
+            available_commands(&view, UnitId::new(0)),
+            vec![CommandChoice::Unfortify]
+        );
+        let buf = render(&view, 0, 0);
+        let rows = rows_rect(picker_panel());
+        let first_row: String = (0..20)
+            .map(|i| buf.cell((rows.x + i, rows.y)).unwrap().symbol())
+            .collect();
+        assert_eq!(first_row.trim(), "Unfortify", "row was {first_row:?}");
+    }
+
+    #[test]
+    fn a_sentried_unit_offers_only_unsentry() {
+        let view = FakeView::new(Terrain::Grassland)
+            .with_unit(make_unit(UnitClass::Settler, UnitOrder::Sentried));
+        assert_eq!(
+            available_commands(&view, UnitId::new(0)),
+            vec![CommandChoice::Unsentry]
+        );
+        let buf = render(&view, 0, 0);
+        let rows = rows_rect(picker_panel());
+        let first_row: String = (0..20)
+            .map(|i| buf.cell((rows.x + i, rows.y)).unwrap().symbol())
+            .collect();
+        assert_eq!(first_row.trim(), "Unsentry", "row was {first_row:?}");
+    }
+
+    #[test]
+    fn a_working_settler_offers_a_named_cancel_order() {
+        let view = FakeView::new(Terrain::Grassland).with_unit(make_unit(
+            UnitClass::Settler,
+            UnitOrder::Improving(TerrainImprovement::Irrigation),
+        ));
+        assert_eq!(
+            available_commands(&view, UnitId::new(0)),
+            vec![CommandChoice::CancelOrder(TerrainImprovement::Irrigation)]
+        );
+        let buf = render(&view, 0, 0);
+        let rows = rows_rect(picker_panel());
+        let first_row: String = (0..28)
+            .map(|i| buf.cell((rows.x + i, rows.y)).unwrap().symbol())
+            .collect();
+        assert_eq!(
+            first_row.trim(),
+            "Cancel order (Irrigation)",
+            "row was {first_row:?}"
+        );
+    }
+
+    #[test]
+    fn a_working_militia_offers_a_named_cancel_order() {
+        let view = FakeView::new(Terrain::Grassland).with_unit(make_unit(
+            UnitClass::Militia,
+            UnitOrder::Improving(TerrainImprovement::Mine),
+        ));
+        assert_eq!(
+            available_commands(&view, UnitId::new(0)),
+            vec![CommandChoice::CancelOrder(TerrainImprovement::Mine)]
+        );
+    }
+
+    #[test]
+    fn an_idle_settler_on_a_fully_improved_tile_offers_plain_orders() {
         let mut grassland = Tile::new(Terrain::Grassland);
         grassland.irrigate().unwrap();
         grassland.build_road().unwrap();
-        let buf = render_tile(grassland, 0, 0);
-        let panel = picker_panel();
-        let rows = rows_rect(panel);
-        let message: String = (0..28)
-            .map(|i| buf.cell((rows.x + i, rows.y)).unwrap().symbol())
-            .collect();
-        assert!(
-            message.trim().contains("nothing to build"),
-            "message: {message:?}"
+        let view = FakeView::with_tile(grassland);
+        assert_eq!(
+            available_commands(&view, UnitId::new(0)),
+            vec![CommandChoice::Fortify, CommandChoice::Sentry],
+            "an improving settler with nothing to build still commands"
         );
     }
 
     #[test]
     fn rows_show_the_number_of_turns_each_build_takes() {
-        let buf = render(Terrain::Desert, 0, 0);
+        let view = FakeView::new(Terrain::Desert);
+        let buf = render(&view, 0, 0);
         let rows = rows_rect(picker_panel());
         let mine: String = (0..20)
-            .map(|i| buf.cell((rows.x + i, rows.y + 1)).unwrap().symbol())
+            .map(|i| buf.cell((rows.x + i, rows.y + 3)).unwrap().symbol())
             .collect();
         assert_eq!(mine.trim(), "Mine (3)", "row was {mine:?}");
     }
 
     #[test]
     fn scroll_is_clamped_when_the_list_fits() {
-        // A desert offers three improvements; they all fit, so any scroll is
+        // A desert offers plenty of commands; they all fit, so any scroll is
         // clamped and the first offered row stays first.
         for scroll in [0, 1, 100] {
-            let buf = render(Terrain::Desert, 0, scroll);
+            let view = FakeView::new(Terrain::Desert);
+            let buf = render(&view, 0, scroll);
             let panel = picker_panel();
             let rows = rows_rect(panel);
             let first_row: String = (0..20)
@@ -545,7 +680,7 @@ mod tests {
                 .collect();
             assert_eq!(
                 first_row.trim(),
-                "Irrigation (2)",
+                "Fortify",
                 "scroll={scroll}: {first_row:?}"
             );
         }
@@ -559,5 +694,22 @@ mod tests {
         assert_eq!(cancel_button_rect(panel).y, y);
         assert_eq!(save_button_rect(panel).y, y);
         assert!(save_button_rect(panel).x > cancel_button_rect(panel).right());
+    }
+
+    #[test]
+    fn a_transported_unit_offers_no_commands() {
+        let mut unit = make_unit(UnitClass::Settler, UnitOrder::Idle);
+        unit.board(UnitId::new(4));
+        let view = FakeView::new(Terrain::Grassland).with_unit(unit);
+        assert!(
+            available_commands(&view, UnitId::new(0)).is_empty(),
+            "cargo has no field agency"
+        );
+    }
+
+    #[test]
+    fn an_unknown_unit_offers_no_commands() {
+        let view = FakeView::new(Terrain::Grassland);
+        assert!(available_commands(&view, UnitId::new(7)).is_empty());
     }
 }

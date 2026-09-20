@@ -225,10 +225,10 @@ impl App {
         self.research_dialog_rect = Cell::new(None);
         self.diplomacy = None;
         self.diplomacy_rect = Cell::new(None);
-        self.work_picker_open = false;
-        self.work_picker_cursor = 0;
-        self.work_picker_scroll = 0;
-        self.work_picker_rect = Cell::new(None);
+        self.command_picker_open = false;
+        self.command_picker_cursor = 0;
+        self.command_picker_scroll = 0;
+        self.command_picker_rect = Cell::new(None);
         self.save_prompt = None;
         self.save_prompt_rect = Cell::new(None);
         self.quit_dialog = None;

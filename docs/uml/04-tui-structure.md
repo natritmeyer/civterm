@@ -19,7 +19,7 @@ classDiagram
         -Option~DiplomacyState~ diplomacy
         -Option~SaveLoadState~ save_prompt
         -bool production_picker_open
-        -bool work_picker_open
+        -bool command_picker_open
         -Option~BattleAnimation~ battle_animation
         -Option~RivalMoveAnimation~ rival_animation
         +new() App
@@ -86,10 +86,11 @@ classDiagram
         +pick_rows() Vec~PickRow~
         +target_at(i) Option~ProductionTarget~
     }
-    class WorkPicker {
+    class CommandPicker {
         +&GameView view
         +UnitId unit
-        +buildable_improvements(tile) Vec
+        +available_commands() Vec~CommandChoice~
+        +label() String
     }
     class ResearchDialog {
         +Advancement discovered
@@ -141,7 +142,7 @@ classDiagram
     App ..> GameScreen : constructs per frame
     App ..> CityWindow : opens on selection
     App ..> ProductionPicker : opens on city
-    App ..> WorkPicker : opens on settler
+    App ..> CommandPicker : opens on a unit
     App ..> ResearchDialog : opens on discovery
     App ..> DiplomacyDialog : opens on contact/block
     App ..> SaveLoadPrompt : S key / menu load
@@ -153,7 +154,7 @@ classDiagram
     GameScreen ..> GameView : reads &dyn
     CityWindow ..> GameView : reads &dyn
     ProductionPicker ..> GameView : reads &dyn
-    WorkPicker ..> GameView : reads &dyn
+    CommandPicker ..> GameView : reads &dyn
     ResearchDialog ..> GameView : reads &dyn
     GameScreen *-- BattleAnimation : 0..1 paints 💥 topmost
     GameScreen ..> RivalMoveAnimation : 0..1 replays steps

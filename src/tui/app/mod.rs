@@ -8,6 +8,7 @@ use ratatui::{Frame, Terminal};
 
 use super::city_window::{self, CityWindow};
 use super::civ_selector::CivSelector;
+use super::command_picker::{self, CommandPicker};
 use super::competition_selector::CompetitionSelector;
 use super::difficulty_selector::DifficultySelector;
 use super::diplomacy_dialog::{self, DiplomacyChoice, DiplomacyDialog, DiplomacyOrigin};
@@ -23,7 +24,6 @@ use super::save_load_prompt::{self, SaveLoadKind, SaveLoadPrompt};
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
 use super::status_bar::StatusBar;
-use super::work_picker::{self, WorkPicker};
 use crate::game_engine::event::Event as GameEvent;
 use crate::game_engine::{Engine, GameView};
 use crate::model::advancements::Advancement;
@@ -187,14 +187,14 @@ pub struct App {
     /// path keeps its own copy for the file header.
     game_competition: Option<Competition>,
     game_difficulty: Option<Difficulty>,
-    /// Whether the work picker floats over the map.
-    work_picker_open: bool,
-    /// The picker cursor: which improvement row is selected.
-    work_picker_cursor: usize,
-    /// Vertical scroll offset of the work picker's list.
-    work_picker_scroll: usize,
-    /// The last-drawn work picker panel rectangle, for mouse hit-testing.
-    work_picker_rect: Cell<Option<Rect>>,
+    /// Whether the command picker floats over the map.
+    command_picker_open: bool,
+    /// The picker cursor: which command row is selected.
+    command_picker_cursor: usize,
+    /// Vertical scroll offset of the command picker's list.
+    command_picker_scroll: usize,
+    /// The last-drawn command picker panel rectangle, for mouse hit-testing.
+    command_picker_rect: Cell<Option<Rect>>,
     /// The in-flight battle flash on the defender's tile, if a combat has just
     /// resolved; `None` once the animation has run its course.
     battle_animation: Option<BattleAnimation>,
@@ -255,10 +255,10 @@ impl App {
             exit_requested: false,
             game_competition: None,
             game_difficulty: None,
-            work_picker_open: false,
-            work_picker_cursor: 0,
-            work_picker_scroll: 0,
-            work_picker_rect: Cell::new(None),
+            command_picker_open: false,
+            command_picker_cursor: 0,
+            command_picker_scroll: 0,
+            command_picker_rect: Cell::new(None),
             battle_animation: None,
             rival_animation: None,
         }
@@ -505,26 +505,27 @@ impl App {
                     } else {
                         app.diplomacy_rect.set(None);
                     }
-                    // The work picker floats over the map when the player is
-                    // about to give a settler a terrain-improvement order.
-                    if app.work_picker_open {
+                    // The command picker floats over the map when the player
+                    // has asked the focused unit what it can do: fortify,
+                    // stand sentry, begin (or cancel) an improvement.
+                    if app.command_picker_open {
                         if let Some(unit) = app.selected_unit {
-                            let panel = work_picker::work_picker_rect(area);
+                            let panel = command_picker::command_picker_rect(area);
                             frame.render_widget(
-                                WorkPicker::new(
+                                CommandPicker::new(
                                     engine,
                                     unit,
-                                    app.work_picker_cursor,
-                                    app.work_picker_scroll,
+                                    app.command_picker_cursor,
+                                    app.command_picker_scroll,
                                 ),
                                 panel,
                             );
-                            app.work_picker_rect.set(Some(panel));
+                            app.command_picker_rect.set(Some(panel));
                         } else {
-                            app.work_picker_rect.set(None);
+                            app.command_picker_rect.set(None);
                         }
                     } else {
-                        app.work_picker_rect.set(None);
+                        app.command_picker_rect.set(None);
                     }
                     // The quit dialog floats above the map, asking what to do
                     // with the game: continue, save, or quit the process.
@@ -602,7 +603,7 @@ fn playing_commands(selected: bool, can_found: bool) -> Vec<(&'static str, &'sta
         commands.push(("j", "centre"));
         commands.push(("f", "fortify"));
         commands.push(("s", "sentry"));
-        commands.push(("w", "work"));
+        commands.push(("w", "command"));
         commands.push(("c", "cancel"));
         if can_found {
             commands.push(("v", "found"));

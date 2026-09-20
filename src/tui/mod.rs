@@ -1,6 +1,7 @@
 pub mod app;
 pub mod city_window;
 pub mod civ_selector;
+pub mod command_picker;
 pub mod competition_selector;
 pub mod difficulty_selector;
 pub mod diplomacy_dialog;
@@ -14,5 +15,4 @@ pub mod splash;
 pub mod start_confirm;
 pub mod status_bar;
 pub mod theme;
-pub mod work_picker;
 pub use app::App;

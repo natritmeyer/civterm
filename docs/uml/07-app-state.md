@@ -3,7 +3,7 @@
 Source: `src/tui/app/mod.rs` (`Phase`), `setup.rs`, `playing.rs`, `dialogs.rs`,
 `pickers.rs`, `mouse.rs`. `App::draw` matches `phase`; `handle_key` dispatches
 per phase. `Playing` keeps modal priority: save prompt swallows everything, then
-research → diplomacy → work picker → production picker → rival replay.
+research → diplomacy → command picker → production picker → rival replay.
 
 ```mermaid
 stateDiagram-v2
@@ -33,8 +33,8 @@ stateDiagram-v2
         ProductionPickerOpen --> CityWindowOpen : save / cancel
         CityWindowOpen --> Exploring : close (Esc / ✕)
 
-        Exploring --> WorkPickerOpen : w on Settler
-        WorkPickerOpen --> Exploring : save Work{imp} / cancel
+        Exploring --> CommandPickerOpen : w on a unit / click a unit
+        CommandPickerOpen --> Exploring : save order / cancel
 
         Exploring --> ResearchDialogOpen : advancement discovered
         ResearchDialogOpen --> Exploring : confirm SetResearchTarget
@@ -58,11 +58,11 @@ stateDiagram-v2
 1. `save_prompt` open → all keys/mouse go to the prompt.
 2. `research_dialog` → research keys only.
 3. `diplomacy` → diplomacy keys only.
-4. `work_picker_open` → work picker keys only.
+4. `command_picker_open` → command picker keys only.
 5. `production_picker_open` → production picker keys only.
 6. `rival_animation` active → swallows game input (modals still capture), pans camera.
 7. Otherwise: unit keys (`arrows/hjkl/yubn`, `Tab` cycle, `space` sentry-wait),
-   `v` found city, `w` work, `c` cancel order, `e` toggle events, `?` help,
+   `v` found city, `w` command window, `c` cancel order, `e` toggle events, `?` help,
    `S` save, `Enter` end turn, `Esc` deselect/close.
 
 `SaveLoadPrompt` renders topmost in every phase (`draw` paints it last).
