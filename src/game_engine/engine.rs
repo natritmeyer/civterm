@@ -115,6 +115,7 @@ impl Engine {
             Command::Sentry { unit } => self.sentry(unit),
             Command::Work { unit, improvement } => self.work(unit, improvement),
             Command::CancelOrder { unit } => self.cancel_order(unit),
+            Command::Unfortify { unit } => self.unfortify(unit),
             Command::FoundCity { unit, name } => self.found_city(unit, name),
             Command::SetProductionTarget { city, target } => self.set_production(city, target),
             Command::DeclareWar { opponent } => self.declare_war(opponent),

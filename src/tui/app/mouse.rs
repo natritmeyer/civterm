@@ -1,4 +1,5 @@
 use super::*;
+use crate::game_engine::Command;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 impl App {
@@ -83,6 +84,36 @@ impl App {
         }
     }
 
+    /// A click on the city window's "Unfortify" buttons: clears the garrison's
+    /// fortify order. The turn is not spent, so a rested unit steps straight
+    /// back into the available-units loop. Returns whether the click landed on
+    /// such a button.
+    fn unfortify_click(&mut self, window: Rect) -> bool {
+        let Some((column, row)) = self.mouse_position.get() else {
+            return false;
+        };
+        if column == u16::MAX || row == u16::MAX {
+            return false;
+        }
+        let Some(city_id) = self.selected_city else {
+            return false;
+        };
+        let Some(unit_id) = self.engine.as_ref().and_then(|engine| {
+            city_window::unfortify_button_rects(window, engine, city_id)
+                .into_iter()
+                .find(|(_, rect)| rect.contains((column, row).into()))
+                .map(|(unit_id, _)| unit_id)
+        }) else {
+            return false;
+        };
+        let Some(engine) = self.engine.as_mut() else {
+            return false;
+        };
+        let events = engine.submit(Command::Unfortify { unit: unit_id });
+        self.record_events(events);
+        true
+    }
+
     /// A left press over the map pane begins a click-or-drag gesture. Presses
     /// over the city window or its buttons act immediately, and presses over
     /// the left column just clear the city selection.
@@ -97,6 +128,9 @@ impl App {
         // picker, the close button dismisses the window, and presses anywhere
         // else inside it are consumed rather than reaching the map.
         if let Some((window, close)) = self.moused_window.get() {
+            if self.unfortify_click(window) {
+                return;
+            }
             let change =
                 city_window::change_button_rect(city_window::production_panel_rect(window));
             if change.contains((column, row).into()) {

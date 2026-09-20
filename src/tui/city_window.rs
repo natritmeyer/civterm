@@ -9,6 +9,7 @@ use crate::game_engine::CityIncome;
 use crate::game_engine::GameView;
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::geography::SpecialResource;
+use crate::model::units::{UnitId, UnitOrder};
 
 /// The vanilla-yellow backdrop of the city window.
 const VANILLA_BG: Color = Color::Rgb(216, 182, 78);
@@ -156,6 +157,11 @@ pub(crate) fn close_button_rect(window: Rect) -> Rect {
 const CHANGE_TEXT: &str = "Change";
 const CHANGE_WIDTH: u16 = 6;
 
+/// The underlined "Unfortify" button on each garrison's row in the units
+/// panel: it shows only against a unit that is fortified on the city tile.
+const UNFORTIFY_TEXT: &str = "Unfortify";
+const UNFORTIFY_WIDTH: u16 = 9;
+
 /// The three equal panels of the bottom band (food, units, production).
 pub(crate) fn bottom_panels(window: Rect) -> (Rect, Rect, Rect) {
     let inner = Rect {
@@ -208,6 +214,41 @@ pub(crate) fn change_button_rect(production: Rect) -> Rect {
         width: CHANGE_WIDTH,
         height: 1,
     }
+}
+
+/// The "Unfortify" buttons painted on the units panel, one per home unit that
+/// is fortified on the city tile, in the exact rows the widget draws them so a
+/// click can be matched back to its unit. Empty while the city is foreign (the
+/// widget already refuses to draw it) or nothing is garrisoned on the tile.
+pub(crate) fn unfortify_button_rects(
+    window: Rect,
+    view: &dyn GameView,
+    city_id: CityId,
+) -> Vec<(UnitId, Rect)> {
+    let Some(city) = view.city(city_id) else {
+        return Vec::new();
+    };
+    if city.owner() != view.current_player_id() {
+        return Vec::new();
+    }
+    let units_panel = bottom_panels(window).1;
+    view.home_units(city_id)
+        .iter()
+        .enumerate()
+        .take_while(|(i, _)| units_panel.y + 1 + (*i as u16) < units_panel.bottom())
+        .filter(|(_, unit)| unit.order() == UnitOrder::Fortified && unit.location == city.location)
+        .map(|(i, unit)| {
+            (
+                unit.id(),
+                Rect {
+                    x: units_panel.right().saturating_sub(UNFORTIFY_WIDTH),
+                    y: units_panel.y + 1 + i as u16,
+                    width: UNFORTIFY_WIDTH,
+                    height: 1,
+                },
+            )
+        })
+        .collect()
 }
 
 /// Thousands-separated number, e.g. `30000` -> `"30,000"`.
@@ -396,6 +437,17 @@ impl<'a> CityWindow<'a> {
                 break;
             }
             draw_text(buf, rect.x, row, &format!("{:?}", unit.unit_class), TEXT);
+            // A fortified unit stowed on the city tile wears a quick-release
+            // button; clicking it restores the unit to the command loop.
+            if unit.order() == UnitOrder::Fortified && unit.location == city.location {
+                draw_text(
+                    buf,
+                    rect.right() - UNFORTIFY_WIDTH,
+                    row,
+                    UNFORTIFY_TEXT,
+                    TEXT.add_modifier(Modifier::UNDERLINED),
+                );
+            }
         }
     }
 
@@ -568,6 +620,7 @@ mod tests {
     use crate::model::cities::{City, CityId, CityImprovement, ProductionTarget};
     use crate::model::civilizations::{Civilization, PlayerId};
     use crate::model::geography::Terrain;
+    use crate::model::units::Unit;
     use crate::model::units::UnitClass;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -577,12 +630,18 @@ mod tests {
         h: usize,
         tile: Tile,
         city: Option<City>,
+        units: Vec<crate::model::units::Unit>,
         current_player: PlayerId,
     }
 
     impl FakeView {
         fn with(mut self, city: City) -> Self {
             self.city = Some(city);
+            self
+        }
+
+        fn with_unit(mut self, unit: crate::model::units::Unit) -> Self {
+            self.units.push(unit);
             self
         }
     }
@@ -631,7 +690,7 @@ mod tests {
             }
         }
         fn home_units(&self, _city: CityId) -> Vec<&crate::model::units::Unit> {
-            Vec::new()
+            self.units.iter().collect()
         }
         fn production_choices(&self, _city: CityId) -> Vec<ProductionTarget> {
             vec![
@@ -680,6 +739,7 @@ mod tests {
             h: 20,
             tile: Tile::new(Terrain::Grassland),
             city: None,
+            units: Vec::new(),
             current_player: PlayerId::new(0),
         }
     }
@@ -697,11 +757,14 @@ mod tests {
     }
 
     fn render(city: City, scroll: usize) -> Buffer {
-        let view = fake_view().with(city);
+        render_view(&fake_view().with(city), scroll)
+    }
+
+    fn render_view(view: &FakeView, scroll: usize) -> Buffer {
         let id = view.city.as_ref().unwrap().id();
         let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
         terminal
-            .draw(|frame| frame.render_widget(CityWindow::new(&view, id, scroll), frame.area()))
+            .draw(|frame| frame.render_widget(CityWindow::new(view, id, scroll), frame.area()))
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -842,6 +905,78 @@ mod tests {
         let (x, y) = pos_of(43, 17);
         let text = row_text(&buf, x, y, 20);
         assert!(text.contains("Militia"), "production label row: {text:?}");
+    }
+
+    /// A militia standing on the city tile, `fortified` or not, rendered with
+    /// its unit panel row string and the window/panel rects it was drawn in.
+    fn garrison_row(city: &City, fortified: bool) -> (FakeView, Rect, Rect, String) {
+        let mut garrison = Unit::new(
+            UnitClass::Militia,
+            city.location,
+            PlayerId::new(0),
+            city.id(),
+            UnitId::new(0),
+        );
+        if fortified {
+            garrison.fortify();
+        }
+        let view = fake_view().with(city.clone()).with_unit(garrison);
+        let window = window_rect(Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 40,
+        });
+        let panel = bottom_panels(window).1;
+        let buf = render_view(&view, 0);
+        let row = row_text(&buf, panel.x, panel.y + 1, panel.width);
+        (view, window, panel, row)
+    }
+
+    #[test]
+    fn a_fortified_garrison_shows_an_unfortify_button_on_its_row() {
+        let (view, window, panel, row) = garrison_row(&london(), true);
+        assert!(row.contains("Militia"), "row: {row:?}");
+        let city_id = view.city.as_ref().unwrap().id();
+        let buttons = unfortify_button_rects(window, &view, city_id);
+        assert_eq!(buttons.len(), 1, "exactly one garrison in the list");
+        let (unit_id, rect) = buttons[0];
+        assert_eq!(unit_id, UnitId::new(0));
+        assert_eq!(rect.y, panel.y + 1, "the button sits on the unit's row");
+        let buf = render_view(&view, 0);
+        assert!(
+            row_text(&buf, rect.x, rect.y, rect.width).contains("Unfortify"),
+            "the hit-test rect must match what the widget drew"
+        );
+    }
+
+    #[test]
+    fn an_idle_or_loose_unit_gets_no_unfortify_button() {
+        let (_, _, _, row) = garrison_row(&london(), false);
+        assert!(!row.contains("Unfortify"), "row: {row:?}");
+
+        // A fortified unit homed here but garrisoned elsewhere draws no button.
+        let city = london();
+        let mut far = Unit::new(
+            UnitClass::Legion,
+            Location::new(city.location.x + 1, city.location.y),
+            PlayerId::new(0),
+            city.id(),
+            UnitId::new(0),
+        );
+        far.fortify();
+        let view = fake_view().with(city.clone()).with_unit(far);
+        let buf = render_view(&view, 0);
+        let window = window_rect(Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 40,
+        });
+        let panel = bottom_panels(window).1;
+        let row = row_text(&buf, panel.x, panel.y + 1, panel.width);
+        assert!(!row.contains("Unfortify"), "row: {row:?}");
+        assert!(unfortify_button_rects(window, &view, city.id()).is_empty());
     }
 
     #[test]

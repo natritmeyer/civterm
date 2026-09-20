@@ -4,7 +4,7 @@ use crate::game_engine::{Event, MoveError, RivalMotion};
 use crate::model::cartography::{Direction, Location};
 use crate::model::civilizations::PlayerId;
 use crate::model::geography::TerrainImprovement;
-use crate::model::units::{Unit, UnitClass, UnitId};
+use crate::model::units::{Unit, UnitClass, UnitId, UnitOrder};
 
 impl Engine {
     pub(super) fn move_unit(&mut self, unit: UnitId, direction: Direction) {
@@ -325,6 +325,35 @@ impl Engine {
                 u.spend_turn();
                 self.events
                     .push(Event::new(format!("Unit {} order cancelled", unit.index())));
+            }
+            None => self.events.push(Event::new("No such unit")),
+        }
+    }
+    /// Rouse a garrisoned unit on its tile: unlike `CancelOrder` this is
+    /// turn-free, so a rested unit that fortified last turn regains the map
+    /// agency it stowed — it steps back into the available-units loop at once.
+    /// The command only ever clears a fortify order; any other order (and
+    /// every transported unit) is left untouched.
+    pub(super) fn unfortify(&mut self, unit: UnitId) {
+        match self.owned_unit_mut(unit) {
+            Some(u) if u.is_transported() => {
+                self.events.push(Event::new(format!(
+                    "Unit {} is aboard a ship",
+                    unit.index()
+                )));
+            }
+            Some(u) if u.order() != UnitOrder::Fortified => {
+                self.events.push(Event::new(format!(
+                    "Unit {} is not fortified",
+                    unit.index()
+                )));
+            }
+            Some(u) => {
+                u.cancel_order();
+                self.events.push(Event::new(format!(
+                    "Unit {} is no longer fortified",
+                    unit.index()
+                )));
             }
             None => self.events.push(Event::new("No such unit")),
         }

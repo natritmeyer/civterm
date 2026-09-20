@@ -957,6 +957,74 @@ fn clicking_the_close_button_closes_the_window() {
 }
 
 #[test]
+fn clicking_unfortify_returns_a_garrison_to_the_command_loop() {
+    let (mut app, _, _) = playing_app();
+    let (city_id, city_location) = {
+        let engine = app.engine.as_ref().unwrap();
+        let city = engine.player_cities()[0];
+        (city.id(), city.location)
+    };
+    // A rested garrison: it fortified a previous turn, so its moves were
+    // restored but the fortify order keeps it out of the available-units loop.
+    let garrison = app.engine.as_mut().unwrap().game.spawn_unit(
+        UnitClass::Militia,
+        city_location,
+        PlayerId::new(0),
+        city_id,
+    );
+    {
+        let engine = app.engine.as_mut().unwrap();
+        let unit = engine
+            .game
+            .units
+            .iter_mut()
+            .find(|u| u.id() == garrison)
+            .unwrap();
+        unit.fortify();
+        unit.restore_moves();
+        assert!(unit.moves_remaining() > 0);
+    }
+    let win = Rect {
+        x: 20,
+        y: 5,
+        width: 60,
+        height: 30,
+    };
+    app.moused_window
+        .set(Some((win, crate::tui::city_window::close_button_rect(win))));
+    app.selected_city = Some(city_id);
+    let button = {
+        let engine = app.engine.as_ref().unwrap();
+        crate::tui::city_window::unfortify_button_rects(win, engine, city_id)[0].1
+    };
+    app.left_click(button.x + 1, button.y);
+
+    let unit = app
+        .engine
+        .as_ref()
+        .unwrap()
+        .game
+        .units
+        .iter()
+        .find(|u| u.id() == garrison)
+        .unwrap();
+    assert_eq!(unit.order(), UnitOrder::Idle);
+    assert!(
+        unit.moves_remaining() > 0,
+        "unfortify must not spend the garrison's turn"
+    );
+    // Back in the available-units loop: the next Tab lands on it.
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.selected_unit, Some(garrison));
+    // The two starting settlers (the human's and the rival's) spawned first,
+    // so the garrison is the third unit in the world.
+    assert_eq!(
+        app.event_log.last().map(|event| event.message()),
+        Some("Unit 2 is no longer fortified")
+    );
+}
+
+#[test]
 fn clicks_inside_the_window_are_consumed() {
     let (mut app, _, _, win) = with_city_window_open();
     let city = app.selected_city;
@@ -2553,6 +2621,32 @@ fn the_work_picker_requires_a_real_selected_settler() {
     app.selected_unit = Some(crate::model::units::UnitId::new(999));
     app.handle_key(key(KeyCode::Char('w')));
     assert!(!app.work_picker_open);
+}
+
+#[test]
+fn pressing_f_fortifies_the_selected_unit() {
+    let mut app = app_with_settler();
+    let selected = app.selected_unit.expect("a unit is selected");
+    app.handle_key(key(KeyCode::Char('f')));
+    let engine = app.engine.as_ref().unwrap();
+    let unit = engine
+        .game
+        .units
+        .iter()
+        .find(|u| u.id() == selected)
+        .unwrap();
+    assert_eq!(unit.order(), UnitOrder::Fortified);
+    assert_eq!(unit.moves_remaining(), 0, "fortifying spends the turn");
+    let expected = format!("Unit {} fortifies", selected.index());
+    assert_eq!(
+        app.event_log.last().map(|event| event.message()),
+        Some(expected.as_str())
+    );
+    // A fortified unit left the loop: the auto-advance is armed to move on.
+    assert!(
+        app.unit_advance_deadline.is_some(),
+        "a spent focus arms the pending unit advance"
+    );
 }
 
 #[test]

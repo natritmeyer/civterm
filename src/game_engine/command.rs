@@ -24,6 +24,9 @@ pub enum Command {
     CancelOrder {
         unit: UnitId,
     },
+    Unfortify {
+        unit: UnitId,
+    },
     FoundCity {
         unit: UnitId,
         name: String,

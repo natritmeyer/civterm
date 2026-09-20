@@ -138,6 +138,10 @@ impl App {
                 self.open_work_picker();
                 false
             }
+            KeyCode::Char('f') => {
+                self.fortify_selected_unit();
+                false
+            }
             KeyCode::Char('c') => {
                 self.cancel_selected_unit_order();
                 false
@@ -554,6 +558,21 @@ impl App {
         let overflow = self.event_log.len().saturating_sub(EVENT_LOG_SIZE);
         if overflow > 0 {
             self.event_log.drain(..overflow);
+        }
+    }
+
+    /// Fortify the selected unit in place: it spends its turn stowing into
+    /// garrison and leaves the available-units loop. The city window's
+    /// "Unfortify" button reverses it.
+    pub(super) fn fortify_selected_unit(&mut self) {
+        let Some(unit) = self.selected_unit else {
+            return;
+        };
+        if let Some(engine) = &mut self.engine {
+            let events = engine.submit(Command::Fortify { unit });
+            self.record_events(events);
+            // Fortifying spends the turn: arm the jump to the next unit.
+            self.schedule_unit_advance_if_spent();
         }
     }
 
