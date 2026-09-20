@@ -82,8 +82,12 @@ pub(crate) fn tile_style(explored: bool, terrain: Terrain) -> Style {
 ///
 /// `selected_city` outlines the matching city tile; `flashing` gates the
 /// selected-unit flash, which itself must be the selected unit with moves left.
-/// `hover_target` (world tile, wrapped horizontally) hatches that tile with
-/// `▓` so the player can see where clicking would move the selected unit.
+/// A selected idle unit's tile turns the flag colour for half a second, then
+/// dims; on a city tile the population digit blinks in time with that off
+/// phase, so the pulse stays visible on an own city whose colour already
+/// matches the flag. `hover_target` (world tile, wrapped horizontally) hatches
+/// that tile with `▓` so the player can see where clicking would move the
+/// selected unit.
 /// `hidden_units` suppresses the unit glyphs of the rival-move animation so a
 /// "in transit" unit is not left painted at its game-state square; hidden
 /// units still count as present for the selected-city outline. A unit
@@ -124,6 +128,18 @@ pub(crate) fn paint_tile(
         let unit = view.units_at(map_x, world_y);
         let city = view.city_at(map_x, world_y);
 
+        // Whether the selected unit, awaiting instruction, stands on this
+        // tile. The flash gates on this (rather than just `flashing`) so the
+        // off phase can still tell it is armed and let the city blink through.
+        let selected_idle_here = selected_unit.is_some_and(|id| {
+            view.unit(id).is_some_and(|u| {
+                u.location.x == map_x as u16
+                    && u.location.y == world_y as u16
+                    && u.order() == UnitOrder::Idle
+                    && u.moves_remaining() > 0
+            })
+        });
+
         // A unit fortifying on a city tile is hidden on the map: it has settled
         // into garrison, so the tile shows its population digit as if
         // unoccupied. Any other unit still displays ahead of the population.
@@ -145,11 +161,21 @@ pub(crate) fn paint_tile(
         } else if explored && let Some(u) = visible_unit {
             // A unit always shows its class letter ahead of the terrain, even
             // when it stands on a city tile; the city keeps its name label
-            // beneath.
-            (
-                first_letter(u.unit_class),
-                city.as_ref().map(|c| c.name.clone()),
-            )
+            // beneath. When that unit is the selected one awaiting instruction
+            // in a city, the tile blinks the population digit in time with the
+            // flash's off phase: the city shows through between pulses, so the
+            // pulse is visible even on an own city whose colour matches the
+            // flag flash exactly.
+            let city_name = city.as_ref().map(|c| c.name.clone());
+            let symbol = if selected_idle_here
+                && !flashing
+                && let Some(city) = city
+            {
+                population_digit(city.population())
+            } else {
+                first_letter(u.unit_class)
+            };
+            (symbol, city_name)
         } else if explored {
             (terrain.as_char(), None)
         } else {
@@ -174,9 +200,7 @@ pub(crate) fn paint_tile(
             // A unit (in a city or not) is painted like any other unit: its
             // letter on the tile, bold and underlined. On a city tile it sits
             // on the city's colour, so the conquest colour is visible through
-            // the occupation. Its idle flash still turns the tile the flag
-            // colour; on an own city that matches the background, so the pulse
-            // is most visible when the unit stands on foreign ground.
+            // the occupation.
             if visible_unit.is_some() {
                 style = style
                     .add_modifier(Modifier::BOLD)
@@ -186,18 +210,11 @@ pub(crate) fn paint_tile(
 
         // The selected unit awaiting instruction flashes once per second: its
         // tile turns the civilization flag colour then dims back to terrain.
-        // The lookup goes through `view.unit`, not `units_at`, so a unit being
-        // ferried aboard a ship still flashes its carrier's tile; it has no
-        // map square of its own but is still awaiting orders to disembark.
-        if flashing
-            && let Some(id) = selected_unit
-            && view.unit(id).is_some_and(|u| {
-                u.location.x == map_x as u16
-                    && u.location.y == world_y as u16
-                    && u.order() == UnitOrder::Idle
-                    && u.moves_remaining() > 0
-            })
-        {
+        // The lookup is gated on `selected_idle_here` (which itself goes
+        // through `view.unit`, not `units_at`, so a unit being ferried aboard
+        // a ship still flashes its carrier's tile; it has no map square of its
+        // own but is still awaiting orders to disembark).
+        if flashing && selected_idle_here {
             style = style.bg(civilization_color(view.current_player()));
         }
 

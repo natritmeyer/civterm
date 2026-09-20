@@ -619,21 +619,101 @@ fn a_captured_city_changes_colour_beneath_the_conquering_unit() {
 }
 
 #[test]
-fn a_selected_idle_unit_in_a_city_keeps_the_city_colour_when_dimmed() {
+fn a_selected_idle_unit_in_its_own_city_blinks_the_population_in_time() {
+    // In its own city the unit and the tile share the civilization colour, so
+    // the flash's background toggle alone would be invisible. The city blinks
+    // in time with the unit instead: the unit letter shows on the flag colour
+    // during the on phase, then the population digit shows through on the same
+    // colour during the off phase, so the pulse reads as a letter/digit toggle.
     let idle = crate::model::units::UnitId::new(1);
     let view = city_and_unit_view();
 
-    // Flashing: the tile turns the civilization flag colour.
-    let (flashing, _) = painted_cell(&view, Some(idle), true);
+    let (flashing, flashing_name) = painted_cell(&view, Some(idle), true);
+    assert_eq!(flashing.symbol(), "M", "on phase shows the unit letter");
+    assert_eq!(
+        flashing.style().bg,
+        Some(civilization_color(Civilization::English))
+    );
+    assert_eq!(flashing_name.as_deref(), Some("London"));
+
+    let (dimmed, dimmed_name) = painted_cell(&view, Some(idle), false);
+    assert_eq!(
+        dimmed.symbol(),
+        "1",
+        "off phase lets the city's population digit show through"
+    );
+    assert_eq!(
+        dimmed.style().bg,
+        Some(civilization_color(Civilization::English)),
+        "the blinking city keeps its own civilization colour"
+    );
+    assert_eq!(dimmed_name.as_deref(), Some("London"));
+}
+
+#[test]
+fn a_selected_idle_unit_in_a_foreign_city_blinks_against_the_occupation() {
+    // A selected unit standing in an enemy city blinks too: the on phase turns
+    // the occupied tile the unit's own flag colour, then the off phase shows
+    // the conquered city's digit in the defender's colour.
+    let mut foreign = fake_view();
+    foreign.city = Some(crate::model::cities::City::new(
+        "Glasgow",
+        crate::model::cartography::Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(1),
+        crate::model::cities::CityId::new(2),
+    ));
+    foreign.unit = Some(crate::model::units::Unit::new(
+        crate::model::units::UnitClass::Militia,
+        crate::model::cartography::Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(0),
+        crate::model::cities::CityId::new(2),
+        crate::model::units::UnitId::new(3),
+    ));
+    let idle = crate::model::units::UnitId::new(3);
+
+    let (flashing, _) = painted_cell(&foreign, Some(idle), true);
+    assert_eq!(flashing.symbol(), "M");
+    assert_eq!(
+        flashing.style().bg,
+        Some(civilization_color(Civilization::English)),
+        "on phase flashes the unit's own flag colour over the foreign city"
+    );
+
+    let (dimmed, dimmed_name) = painted_cell(&foreign, Some(idle), false);
+    assert_eq!(dimmed.symbol(), "1");
+    assert_eq!(
+        dimmed.style().bg,
+        Some(civilization_color(Civilization::Zulu)),
+        "off phase reverts to the occupied city's colour"
+    );
+    assert_eq!(dimmed_name.as_deref(), Some("Glasgow"));
+}
+
+#[test]
+fn a_selected_idle_unit_on_open_ground_keeps_its_letter_off_phase() {
+    // Away from a city the flash stays a background toggle: both phases show
+    // the unit letter, dimmed only in colour.
+    let mut open = fake_view();
+    open.tile = crate::model::cartography::Tile::new(Terrain::Plains);
+    open.unit = Some(crate::model::units::Unit::new(
+        crate::model::units::UnitClass::Militia,
+        crate::model::cartography::Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(0),
+        crate::model::cities::CityId::new(0),
+        crate::model::units::UnitId::new(1),
+    ));
+    let idle = crate::model::units::UnitId::new(1);
+
+    let (flashing, _) = painted_cell(&open, Some(idle), true);
+    assert_eq!(flashing.symbol(), "M");
     assert_eq!(
         flashing.style().bg,
         Some(civilization_color(Civilization::English))
     );
 
-    // Dimmed again, the city's own colour shows through beneath the unit
-    // (the same English flag colour, since the unit sits in its own city).
-    let (dimmed, _) = painted_cell(&view, Some(idle), false);
-    assert_eq!(
+    let (dimmed, _) = painted_cell(&open, Some(idle), false);
+    assert_eq!(dimmed.symbol(), "M", "no city, no digit thanks to blink");
+    assert_ne!(
         dimmed.style().bg,
         Some(civilization_color(Civilization::English))
     );
