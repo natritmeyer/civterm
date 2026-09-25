@@ -443,6 +443,70 @@ fn playing_app() -> (App, usize, usize) {
 }
 
 #[test]
+fn a_floating_window_holds_the_unit_flash_off() {
+    // Plain play leaves the idle-unit flash live; opening any floating window
+    // or dialog suppresses it (`GameScreen::with_flash_enabled` is driven off
+    // `window_is_open`), and closing the panel re-arms it.
+    let (mut app, _, _) = playing_app();
+    assert!(!window_is_open(&app), "plain play keeps the flash live");
+
+    app.selected_city = Some(app.engine.as_ref().unwrap().player_cities()[0].id());
+    assert!(window_is_open(&app), "the city window counts as a window");
+    app.selected_city = None;
+
+    app.command_picker_open = true;
+    assert!(
+        window_is_open(&app),
+        "the command picker counts as a window"
+    );
+    app.command_picker_open = false;
+
+    app.quit_dialog = Some(QuitChoice::Continue);
+    assert!(window_is_open(&app), "the quit dialog counts as a window");
+    app.quit_dialog = None;
+
+    app.save_prompt = Some(SaveLoadState {
+        kind: SaveLoadKind::Load,
+        input: String::new(),
+        error: None,
+    });
+    assert!(
+        window_is_open(&app),
+        "the save-load prompt counts as a window"
+    );
+    app.save_prompt = None;
+
+    app.research_dialog = Some(ResearchDialogState {
+        discovered: crate::model::advancements::Advancement::Wheel,
+        choices: vec![crate::model::advancements::Advancement::Wheel],
+        cursor: 0,
+        scroll: 0,
+    });
+    assert!(
+        window_is_open(&app),
+        "the research dialog counts as a window"
+    );
+    app.research_dialog = None;
+
+    app.diplomacy = Some(DiplomacyState {
+        opponent: crate::model::civilizations::PlayerId::new(1),
+        origin: DiplomacyOrigin::Contact,
+        choice: DiplomacyChoice::Peace,
+        pending: None,
+    });
+    assert!(
+        window_is_open(&app),
+        "the diplomacy dialog counts as a window"
+    );
+    app.diplomacy = None;
+
+    assert!(
+        !window_is_open(&app),
+        "closing everything re-arms the flash"
+    );
+}
+
+#[test]
 fn left_clicking_a_player_city_selects_it() {
     let (mut app, cx, cy) = playing_app();
     app.left_click((LEFT_COLUMN_WIDTH as usize + cx * 2) as u16, cy as u16);

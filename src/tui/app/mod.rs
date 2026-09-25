@@ -414,7 +414,8 @@ impl App {
                         )
                         .with_hovered_tile(hovered_tile)
                         .with_battle_animation(app.battle_animation)
-                        .with_rival_animation(app.rival_animation.as_ref()),
+                        .with_rival_animation(app.rival_animation.as_ref())
+                        .with_flash_enabled(!window_is_open(app)),
                         area,
                     );
                     if app.show_help {
@@ -599,6 +600,22 @@ fn next_city_name(civ: Civilization, existing_cities: usize) -> String {
         None => format!("City {}", existing_cities + 1),
     }
 }
+/// Whether any floating window or dialog currently covers the board: the city
+/// window and its production picker, the command picker, the research,
+/// diplomacy, save-load and quit dialogs. While one is open the idle-unit
+/// flash is held at its off phase (`GameScreen::with_flash_enabled`), so the
+/// blinking does not compete with the panel for attention; the player sees the
+/// flash resume the moment the window closes.
+fn window_is_open(app: &App) -> bool {
+    app.selected_city.is_some()
+        || app.production_picker_open
+        || app.command_picker_open
+        || app.research_dialog.is_some()
+        || app.diplomacy.is_some()
+        || app.save_prompt.is_some()
+        || app.quit_dialog.is_some()
+}
+
 /// The command keystrokes available in the current playing context.
 fn playing_commands(selected: bool, can_found: bool) -> Vec<(&'static str, &'static str)> {
     let mut commands: Vec<(&'static str, &'static str)> = Vec::new();

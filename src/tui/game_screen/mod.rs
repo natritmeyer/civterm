@@ -114,6 +114,10 @@ pub struct GameScreen<'a> {
     selected_city: Option<CityId>,
     /// An instant pushed forward every frame; drives the idle-unit flash.
     now: Duration,
+    /// Whether the idle-unit flash may animate: the app pins it off while a
+    /// floating window or dialog covers the board, so the blinking does not
+    /// compete with the panel for attention.
+    flash_enabled: bool,
     /// Whether the event log overlays the map pane's top-right corner.
     show_events: bool,
     /// The most recent event messages, oldest first.
@@ -163,6 +167,7 @@ impl<'a> GameScreen<'a> {
             hovered_tile: None,
             battle_animation: None,
             rival_animation: None,
+            flash_enabled: true,
         }
     }
 
@@ -189,11 +194,19 @@ impl<'a> GameScreen<'a> {
         self
     }
 
+    /// Pin the idle-unit flash on or off: the app disables it while a window
+    /// or dialog covers the board.
+    pub(crate) fn with_flash_enabled(mut self, enabled: bool) -> Self {
+        self.flash_enabled = enabled;
+        self
+    }
+
     /// Whether the selected idle unit's tile is currently showing the
     /// civilization flash colour: on for half a second, off for half a second,
-    /// repeating once per second.
+    /// repeating once per second — unless the flash is disabled, in which case
+    /// the tile is pinned to the off phase.
     fn flash_phase(&self) -> bool {
-        self.now.as_millis() % 1000 < 500
+        self.flash_enabled && self.now.as_millis() % 1000 < 500
     }
 
     fn draw_main_map(&self, area: Rect, buf: &mut Buffer) {

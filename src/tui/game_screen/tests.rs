@@ -414,6 +414,67 @@ fn the_hovered_tile_is_shaded_while_its_neighbours_are_not() {
     }
 }
 
+#[test]
+fn the_idle_unit_flash_is_pinned_off_while_disabled() {
+    // A selected unit awaiting orders with an on-phase clock: the tile blazes
+    // in its flag colour by default, but stays on the terrain colour when the
+    // flash is disabled (a window covers the board).
+    let view = FakeView {
+        w: 80,
+        h: 50,
+        tile: crate::model::cartography::Tile::new(crate::model::geography::Terrain::Plains),
+        city: None,
+        unit: Some(crate::model::units::Unit::new(
+            crate::model::units::UnitClass::Militia,
+            crate::model::cartography::Location::new(0, 0),
+            crate::model::civilizations::PlayerId::new(0),
+            crate::model::cities::CityId::new(0),
+            crate::model::units::UnitId::new(7),
+        )),
+        explored: true,
+    };
+    let unit_id = crate::model::units::UnitId::new(7);
+    let base = LEFT_COLUMN_WIDTH;
+
+    fn pulsed(view: &FakeView, unit_id: crate::model::units::UnitId, enabled: bool) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(
+                        view,
+                        Some((0, 0)),
+                        (0, 0),
+                        Some(unit_id),
+                        None,
+                        // 100ms into the second: the flash's on phase.
+                        Duration::from_millis(100),
+                        false,
+                        &[],
+                        None,
+                    )
+                    .with_flash_enabled(enabled),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    let buff = pulsed(&view, unit_id, true);
+    assert_eq!(
+        buff.cell((base, 0)).unwrap().style().bg,
+        Some(civilization_color(Civilization::English)),
+        "with the flash enabled the tile blazes in the flag colour"
+    );
+    let buff = pulsed(&view, unit_id, false);
+    assert_eq!(
+        buff.cell((base, 0)).unwrap().style().bg,
+        tile_style(true, crate::model::geography::Terrain::Plains).bg,
+        "with a window covering the board the flash stays at its off phase"
+    );
+}
+
 fn events_log(events: &[&str]) -> Vec<Event> {
     events.iter().map(|m| Event::new(*m)).collect()
 }
@@ -716,6 +777,86 @@ fn a_selected_idle_unit_on_open_ground_keeps_its_letter_off_phase() {
     assert_ne!(
         dimmed.style().bg,
         Some(civilization_color(Civilization::English))
+    );
+}
+
+#[test]
+fn a_unit_letter_wears_its_civilisations_colour() {
+    // An English unit on open ground reads in English's banner colour, so
+    // which flag each unit marches under shows at a glance.
+    let mut view = fake_view();
+    view.tile = crate::model::cartography::Tile::new(Terrain::Grassland);
+    view.unit = Some(crate::model::units::Unit::new(
+        crate::model::units::UnitClass::Militia,
+        crate::model::cartography::Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(0),
+        crate::model::cities::CityId::new(0),
+        crate::model::units::UnitId::new(1),
+    ));
+
+    let (cell, _) = painted_cell(&view, None, false);
+    assert_eq!(cell.symbol(), "M");
+    assert_eq!(
+        cell.style().fg,
+        Some(civilization_color(Civilization::English))
+    );
+    assert!(cell.style().add_modifier.contains(Modifier::BOLD));
+}
+
+#[test]
+fn a_unit_in_its_own_city_keeps_terrain_text_for_contrast() {
+    // On a tile already wearing the unit's own banner the letter must fall
+    // back to the terrain colour, or it would disappear into its background.
+    let mut view = fake_view();
+    view.tile = crate::model::cartography::Tile::new(Terrain::Grassland);
+    view.city = Some(crate::model::cities::City::new(
+        "London",
+        crate::model::cartography::Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(0),
+        crate::model::cities::CityId::new(0),
+    ));
+    view.unit = Some(crate::model::units::Unit::new(
+        crate::model::units::UnitClass::Militia,
+        crate::model::cartography::Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(0),
+        crate::model::cities::CityId::new(0),
+        crate::model::units::UnitId::new(1),
+    ));
+
+    let (cell, _) = painted_cell(&view, None, false);
+    assert_eq!(cell.symbol(), "M");
+    assert_eq!(cell.style().fg, Some(Color::Rgb(60, 160, 80)));
+    assert_ne!(
+        cell.style().fg,
+        Some(civilization_color(Civilization::English))
+    );
+}
+
+#[test]
+fn the_flash_keeps_the_letter_legible_on_its_own_flag() {
+    // The on phase paints the whole tile in the unit's banner colour; the
+    // letter then falls back to the terrain colour instead of blending in.
+    let mut open = fake_view();
+    open.tile = crate::model::cartography::Tile::new(Terrain::Plains);
+    open.unit = Some(crate::model::units::Unit::new(
+        crate::model::units::UnitClass::Militia,
+        crate::model::cartography::Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(0),
+        crate::model::cities::CityId::new(0),
+        crate::model::units::UnitId::new(1),
+    ));
+    let idle = crate::model::units::UnitId::new(1);
+
+    let (flashing, _) = painted_cell(&open, Some(idle), true);
+    assert_eq!(flashing.symbol(), "M");
+    assert_eq!(
+        flashing.style().bg,
+        Some(civilization_color(Civilization::English))
+    );
+    assert_ne!(
+        flashing.style().fg,
+        Some(civilization_color(Civilization::English)),
+        "the letter must not vanish into the flag background"
     );
 }
 

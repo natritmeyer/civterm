@@ -85,7 +85,10 @@ pub(crate) fn tile_style(explored: bool, terrain: Terrain) -> Style {
 /// A selected idle unit's tile turns the flag colour for half a second, then
 /// dims; on a city tile the population digit blinks in time with that off
 /// phase, so the pulse stays visible on an own city whose colour already
-/// matches the flag. `hover_target` (world tile, wrapped horizontally) hatches
+/// matches the flag. A unit's letter always wears its owner's banner colour
+/// (bold), except where the tile itself already carries that banner, where
+/// the terrain text colour keeps it legible. `hover_target` (world tile,
+/// wrapped horizontally) hatches
 /// that tile with `▓` so the player can see where clicking would move the
 /// selected unit.
 /// `hidden_units` suppresses the unit glyphs of the rival-move animation so a
@@ -123,7 +126,13 @@ pub(crate) fn paint_tile(
         let tile = view.tile(map_x, world_y);
         let explored = view.explored(map_x, world_y);
         let terrain = tile.terrain;
-        let mut style = tile_style(explored, terrain);
+        // The terrain's text colour is kept as the fallback wherever a tile
+        // already wears the unit's own flag (an own city, or the flash's on
+        // phase): the letter then needs the terrain colour, not the same
+        // flag colour again, to stay legible.
+        let terrain_style = tile_style(explored, terrain);
+        let terrain_fg = terrain_style.fg;
+        let mut style = terrain_style;
 
         let unit = view.units_at(map_x, world_y);
         let city = view.city_at(map_x, world_y);
@@ -198,13 +207,23 @@ pub(crate) fn paint_tile(
                 }
             }
             // A unit (in a city or not) is painted like any other unit: its
-            // letter on the tile, bold and underlined. On a city tile it sits
-            // on the city's colour, so the conquest colour is visible through
-            // the occupation.
-            if visible_unit.is_some() {
+            // letter on the tile, bold and underlined, wearing its own
+            // civilization's flag colour so which banner each unit marches
+            // under reads at a glance. On a city tile it sits on the city's
+            // colour, so the conquest colour is visible through the
+            // occupation. Where the tile already wears the unit's own flag a
+            // city of the same civilization the terrain text colour takes
+            // over, or the letter would vanish into its own background.
+            if let Some(u) = visible_unit {
                 style = style
                     .add_modifier(Modifier::BOLD)
                     .add_modifier(Modifier::UNDERLINED);
+                let tile_wears_the_flags = city.is_some_and(|c| {
+                    view.civilization_of(c.owner()) == view.civilization_of(u.owner())
+                });
+                if !tile_wears_the_flags {
+                    style = style.fg(civilization_color(view.civilization_of(u.owner())));
+                }
             }
         }
 
@@ -216,6 +235,12 @@ pub(crate) fn paint_tile(
         // own but is still awaiting orders to disembark).
         if flashing && selected_idle_here {
             style = style.bg(civilization_color(view.current_player()));
+            // The letter wears its own flag colour, so on this phase the text
+            // falls back to the terrain colour rather than disappearing into
+            // the flag background the flash just painted.
+            if let Some(terrain_fg) = terrain_fg {
+                style = style.fg(terrain_fg);
+            }
         }
 
         (symbol, style, city_name)
