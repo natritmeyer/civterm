@@ -2,9 +2,14 @@ use super::*;
 
 const HIT_POINTS: u32 = 10;
 
+/// Defense multiplier a unit gains for standing on its own city tile when
+/// that city has built CityWalls. It applies to any defender there, fortified
+/// or not, stacked on top of the ordinary home-city bonus.
+const CITY_WALLS_DEFENSE_BONUS: u32 = 2;
+
 use crate::game_engine::Event;
 use crate::model::cartography::Location;
-use crate::model::cities::CityId;
+use crate::model::cities::{CityId, CityImprovement};
 use crate::model::civilizations::PlayerId;
 use crate::model::geography::Terrain;
 use crate::model::units::{Unit, UnitId};
@@ -250,6 +255,14 @@ impl Engine {
             .any(|city| city.location == unit.location && city.owner() == unit.owner());
         if is_in_home_city {
             power = power * 3 / 2;
+        }
+        let city_is_walled = self.game.cities.iter().any(|city| {
+            city.location == unit.location
+                && city.owner() == unit.owner()
+                && city.improvements().contains(&CityImprovement::CityWalls)
+        });
+        if city_is_walled {
+            power *= CITY_WALLS_DEFENSE_BONUS;
         }
         if unit.is_veteran() {
             power = power * 3 / 2;

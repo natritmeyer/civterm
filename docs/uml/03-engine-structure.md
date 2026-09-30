@@ -2,9 +2,10 @@
 
 Source: `src/game_engine/*.rs`. Facade `mod.rs` re-exports `Engine`,
 `GameView`, `Command`, `Player`, `Event`, `MoveError`, `SettleError`,
-`Exploration`, `CityIncome`, `RivalMotion`, `DEFAULT_MAP_WIDTH/HEIGHT`.
-One `impl Engine` block per concern file (`movement.rs`, `combat.rs`,
-`cities.rs`, `diplomacy.rs`, `research.rs`, `turns.rs`).
+`Exploration`, `CityIncome`, `RivalMotion`, `GameOutcome`,
+`DEFAULT_MAP_WIDTH/HEIGHT`. One `impl Engine` block per concern file
+(`movement.rs`, `combat.rs`, `cities.rs`, `diplomacy.rs`, `research.rs`,
+`turns.rs`, `outcome.rs`).
 
 ```mermaid
 classDiagram
@@ -21,6 +22,7 @@ classDiagram
         +submit(cmd) Vec~Event~
         +drain_rival_motion() Vec~RivalMotion~
         +run_rival_turn()
+        +game_outcome() Option~GameOutcome~
     }
     class Game {
         +Map map
@@ -67,6 +69,8 @@ classDiagram
         Sentry
         Work
         CancelOrder
+        Unfortify
+        Unsentry
         FoundCity
         SetProductionTarget
         DeclareWar
@@ -92,12 +96,17 @@ classDiagram
         +city(id) Option~City~
         +current_player_id() PlayerId
         +city_income(id) CityIncome
+        +home_units(city) Vec~Unit~
         +explored(x, y) bool
+        +current_player() Civilization
+        +civilization_of(player) Civilization
         +turn() int
         +year() int
         +gold() int
+        +advancement_in_progress() Option~Advancement~
         +research_progress() int
         +research_cost() Option~int~
+        +research_income() int
         +production_choices(city) Vec~ProductionTarget~
     }
     class CityIncome {
@@ -107,6 +116,11 @@ classDiagram
         +int gold
         +int research
         +Vec~SpecialResource~ special_resources
+    }
+    class GameOutcome {
+        <<enumeration>>
+        Victory
+        Defeat
     }
     class RivalMotion {
         +UnitId unit
@@ -165,6 +179,7 @@ classDiagram
     Game *-- City : 0..* cities
     Game *-- Map : 1 map
     Game ..> CityIncome : city_breakdown()
+    Engine ..> GameOutcome : game_outcome() reads eliminate flags
     Player *-- Exploration : 1 fog bitmap
     Player ..> Civilization : civilization
     Player ..> Advancement : research state
@@ -183,7 +198,7 @@ classDiagram
 | `Command` | Owner file | Key callees |
 |---|---|---|
 | `Move` | `movement.rs` | `try_board`, `meet_contacts_within`, `resolve_move_combat` (`combat.rs`), `capture_city` (`combat.rs`) |
-| `Fortify` / `Sentry` / `Work` / `CancelOrder` | `movement.rs` | `owned_unit_mut`, terrain `supports()` gates |
+| `Fortify` / `Sentry` / `Work` / `CancelOrder` / `Unfortify` / `Unsentry` | `movement.rs` | `owned_unit_mut`, terrain `supports()` gates |
 | `FoundCity` / `SetProductionTarget` | `cities.rs` | `Game::add_city`, `auto_assign_work`, `player.can_build` |
 | `DeclareWar` / `MakePeace` | `diplomacy.rs` | `Game::declare_war` / `make_peace` |
 | `SetResearchTarget` | `research.rs` | `Game::can_research`, `set_research_target` |

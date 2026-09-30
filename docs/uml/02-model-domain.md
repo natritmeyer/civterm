@@ -174,6 +174,8 @@ classDiagram
         +add_worked_tile(loc)
         +tick(food, res) CityTick
         +research() int
+        +food_income(raw) int
+        +gold_income(raw) int
     }
     class CityImprovement {
         <<enumeration>>

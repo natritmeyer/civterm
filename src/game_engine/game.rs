@@ -205,7 +205,7 @@ impl Game {
             food += tile.yields_food() as u32;
             resources += tile.yields_resources() as u32;
         }
-        (food, resources)
+        (city.food_income(food), resources)
     }
 
     /// The full per-turn harvest of a city for display: food, resources and
@@ -240,10 +240,10 @@ impl Game {
         }
         special_resources.sort_by_key(|resource| format!("{resource:?}"));
         CityIncome {
-            food,
+            food: city.food_income(food),
             resources,
             trade,
-            gold,
+            gold: city.gold_income(gold),
             research: city.research(),
             special_resources,
         }

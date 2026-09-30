@@ -18,10 +18,13 @@ classDiagram
         -Option~ResearchDialogState~ research_dialog
         -Option~DiplomacyState~ diplomacy
         -Option~SaveLoadState~ save_prompt
+        -Option~QuitDialog~ quit_dialog
         -bool production_picker_open
         -bool command_picker_open
         -Option~BattleAnimation~ battle_animation
         -Option~RivalMoveAnimation~ rival_animation
+        -Option~GameOverState~ game_over
+        -Cell~Option~tuple~ game_over_buttons
         +new() App
         +run(term) Result
         +draw(frame, app)
@@ -32,6 +35,10 @@ classDiagram
         +found_selected_city()
         +end_turn()
         +record_events(events)
+        +check_game_over()
+        +handle_game_over_key(key)
+        +handle_game_over_mouse(m)
+        +handle_quit_dialog_key(key)
         +start_game()
         +enter_playing()
     }
@@ -71,6 +78,20 @@ classDiagram
         +hidden_units(now) HashSet~UnitId~
         +active_frame(now) Option
     }
+    class GameOverState {
+        +GameOutcome outcome
+        +String civ_name
+        +bool first_selected
+    }
+    class GameOver {
+        +GameOutcome outcome
+        +String civ_name
+        +bool first_selected
+        +new(outcome, civ_name, first_selected) GameOver
+        +button_labels(outcome) tuple
+        +buttons_row(area) int
+        +button_rects(area, outcome) tuple
+    }
     class CityWindow {
         +&GameView view
         +CityId city
@@ -107,6 +128,20 @@ classDiagram
         +String input
         +Option~String~ error
     }
+    class QuitDialog {
+        +QuitChoice choice
+        +new(choice) QuitDialog
+        +dialog_rect(area) Rect
+        +quit_button_rect(panel) Rect
+        +save_button_rect(panel) Rect
+        +continue_button_rect(panel) Rect
+    }
+    class QuitChoice {
+        <<enumeration>>
+        Continue
+        Save
+        Quit
+    }
     class SplashScreen {
         +new() SplashScreen
     }
@@ -139,6 +174,7 @@ classDiagram
     App *-- Engine : 0..1 active match
     App *-- BattleAnimation : 0..1 flash overlay
     App *-- RivalMoveAnimation : 0..1 replay overlay
+    App *-- GameOverState : 0..1 end-of-match overlay
     App ..> GameScreen : constructs per frame
     App ..> CityWindow : opens on selection
     App ..> ProductionPicker : opens on city
@@ -146,11 +182,16 @@ classDiagram
     App ..> ResearchDialog : opens on discovery
     App ..> DiplomacyDialog : opens on contact/block
     App ..> SaveLoadPrompt : S key / menu load
+    App *-- QuitDialog : 0..1 quit-to-menu prompt
+    App ..> QuitDialog : q in Playing
+    QuitDialog ..> QuitChoice : choice
     App ..> SplashScreen : Menu phase
     App ..> CivSelector : ChoosingCiv phase
     App ..> CompetitionSelector : ChoosingCompetition phase
     App ..> DifficultySelector : ChoosingDifficulty phase
     App ..> StartConfirm : ReadyToStart phase
+    App ..> GameOver : overlay drawn last when game_over set
+    GameOver ..> GameOutcome : tombstone or banner
     GameScreen ..> GameView : reads &dyn
     CityWindow ..> GameView : reads &dyn
     ProductionPicker ..> GameView : reads &dyn
@@ -169,4 +210,6 @@ classDiagram
 3. Transient overlays on top: battle flash `💥` (anchored in tile left column),
    rival-move glyph (owner civilisation colour, `BOLD+UNDERLINED`), hover `▓`.
 
-City tiles always wear the owner civilisation colour even under an occupying unit.
+`App::draw` paints the `GameOver` overlay after the whole map/window pass, so a
+finished match sits above every phase and swallows all input. City tiles always
+wear the owner civilisation colour even under an occupying unit.

@@ -2,7 +2,7 @@ use super::*;
 
 use crate::game_engine::{Event, SettleError};
 use crate::model::cartography::Location;
-use crate::model::cities::{CityId, ProductionTarget};
+use crate::model::cities::{CityId, CityImprovement, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 use crate::model::units::UnitId;
 
@@ -111,7 +111,15 @@ impl Engine {
                     ProductionTarget::Unit(unit_class) => {
                         let city = self.game.cities.iter().find(|c| c.id() == city_id).unwrap();
                         let location = city.location;
-                        self.game.spawn_unit(unit_class, location, owner, city_id);
+                        let has_barracks = city.improvements().contains(&CityImprovement::Barracks);
+                        let unit = self.game.spawn_unit(unit_class, location, owner, city_id);
+                        if has_barracks
+                            && let Some(index) = self.game.units.iter().position(|u| u.id() == unit)
+                        {
+                            // A Barracks trains the city's recruits: they
+                            // mustered as veterans before taking the field.
+                            self.game.units[index].promote();
+                        }
                         self.events.push(Event::new(format!(
                             "{} produces {:?}",
                             city_name, unit_class

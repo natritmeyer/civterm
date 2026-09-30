@@ -7,6 +7,7 @@ use crate::model::cartography::Location;
 use crate::model::cities::{City, CityId, CityImprovement, ProductionTarget};
 use crate::model::civilizations::Civilization;
 use crate::model::civilizations::PlayerId;
+use crate::model::geography::SpecialResource;
 use crate::model::geography::Terrain;
 use crate::model::geography::TerrainImprovement;
 use crate::model::units::{UnitClass, UnitId, UnitOrder};
@@ -2260,6 +2261,29 @@ fn defender_power_applies_terrain_city_and_veteran_bonuses() {
 }
 
 #[test]
+fn city_walls_double_defense_on_a_city_tile() {
+    let mut engine = Engine::new(
+        5,
+        5,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(2, 2));
+    engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(2, 2),
+        PlayerId::new(1),
+        CityId::new(0),
+    );
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 15);
+    engine.game.cities[0].add_improvement(CityImprovement::CityWalls);
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 30);
+}
+
+#[test]
 fn movement_onto_a_peaceful_tile_is_blocked() {
     let mut engine = Engine::new(
         5,
@@ -2702,6 +2726,97 @@ fn a_city_produces_units() {
             .iter()
             .any(|u| u.unit_class == UnitClass::Militia)
     );
+    let militia = engine
+        .game
+        .units
+        .iter()
+        .find(|u| u.unit_class == UnitClass::Militia)
+        .unwrap();
+    assert!(!militia.is_veteran(), "an open city trains fresh recruits");
+}
+
+#[test]
+fn a_barracks_trains_produced_units_as_veterans() {
+    let mut engine = Engine::new(7, 7, Player::new(Civilization::English), Vec::new());
+    engine.game.map.tile_at_mut(Location::new(3, 3)).terrain = Terrain::Grassland;
+    engine.game.map.tile_at_mut(Location::new(2, 3)).terrain = Terrain::Forest;
+    engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Forest;
+    engine.game.map.tile_at_mut(Location::new(4, 3)).terrain = Terrain::Forest;
+    engine.game.map.tile_at_mut(Location::new(3, 4)).terrain = Terrain::Forest;
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(3, 3),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    engine.submit(Command::FoundCity {
+        unit: UnitId::new(0),
+        name: "London".to_string(),
+    });
+    engine.game.cities[0].add_improvement(CityImprovement::Barracks);
+    engine.submit(Command::SetProductionTarget {
+        city: CityId::new(0),
+        target: ProductionTarget::Unit(UnitClass::Militia),
+    });
+    let mut produced = false;
+    for _ in 0..8 {
+        let events = engine.submit(Command::EndTurn);
+        if events
+            .iter()
+            .any(|e| e.message() == "London produces Militia")
+        {
+            produced = true;
+        }
+    }
+    assert!(produced, "expected production event across the turns");
+    let militia = engine
+        .game
+        .units
+        .iter()
+        .find(|u| u.unit_class == UnitClass::Militia)
+        .unwrap();
+    assert!(militia.is_veteran(), "a Barracks musters veterans");
+}
+
+#[test]
+fn granary_and_aqueduct_raise_a_citys_food_income() {
+    let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+    let london = CityId::new(0);
+    // A Grassland centre feeds the city 2; the Granary doubles it and the
+    // Aqueduct adds half again, on both the stored harvest and the display.
+    assert_eq!(engine.game.city_income(london).0, 2);
+    assert_eq!(engine.game.city_breakdown(london).food, 2);
+    engine.game.cities[0].add_improvement(CityImprovement::Granary);
+    assert_eq!(engine.game.city_income(london).0, 4);
+    assert_eq!(engine.game.city_breakdown(london).food, 4);
+    engine.game.cities[0].add_improvement(CityImprovement::Aqueduct);
+    assert_eq!(engine.game.city_income(london).0, 6);
+    assert_eq!(engine.game.city_breakdown(london).food, 6);
+}
+
+#[test]
+fn bank_and_marketplace_raise_a_citys_gold_income() {
+    let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Mountain;
+    engine
+        .game
+        .map
+        .tile_at_mut(Location::new(2, 2))
+        .place_resource(SpecialResource::Gold)
+        .unwrap();
+    engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+    let london = CityId::new(0);
+    assert_eq!(engine.game.city_breakdown(london).gold, 2);
+    engine.game.cities[0].add_improvement(CityImprovement::Bank);
+    assert_eq!(engine.game.city_breakdown(london).gold, 3);
+    engine.game.cities[0].add_improvement(CityImprovement::Marketplace);
+    assert_eq!(engine.game.city_breakdown(london).gold, 4);
 }
 
 #[test]

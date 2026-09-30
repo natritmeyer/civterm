@@ -55,13 +55,16 @@ stateDiagram-v2
 
 ## Modal input priority (`handle_playing_key` / `handle_mouse`)
 
-1. `save_prompt` open → all keys/mouse go to the prompt.
-2. `research_dialog` → research keys only.
-3. `diplomacy` → diplomacy keys only.
-4. `command_picker_open` → command picker keys only.
-5. `production_picker_open` → production picker keys only.
-6. `rival_animation` active → swallows game input (modals still capture), pans camera.
-7. Otherwise: unit keys (`arrows/hjkl/yubn`, `Tab` cycle, `space` sentry-wait),
+1. `save_prompt` open → all keys/mouse go to the prompt (checked first in `handle_key`).
+2. `game_over` set → only `handle_game_over_key` / `handle_game_over_mouse` — the
+   EndTurn outcome overlay, no `Phase` change. Save prompt and game-over never both open.
+3. `quit_dialog` open → quit dialog keys/mouse only.
+4. `research_dialog` → research keys only.
+5. `diplomacy` → diplomacy keys only.
+6. `command_picker_open` → command picker keys only.
+7. `production_picker_open` → production picker keys only.
+8. `rival_animation` active → swallows game input (modals still capture), pans camera.
+9. Otherwise: unit keys (`arrows/hjkl/yubn`, `Tab` cycle, `space` sentry-wait),
    `v` found city, `w` command window, `c` cancel order, `e` toggle events, `?` help,
    `S` save, `Enter` end turn, `Esc` deselect/close.
 

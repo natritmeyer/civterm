@@ -176,6 +176,38 @@ impl City {
         }
         self.population * numerator / denominator
     }
+
+    /// The city's food harvest on top of the raw worked-tile yield. A Granary
+    /// doubles the harvest and an Aqueduct adds half again to it, so a grown
+    /// city can feed more mouths and grow sooner.
+    pub fn food_income(&self, raw: u32) -> u32 {
+        let mut numerator = 1u32;
+        let mut denominator = 1u32;
+        if self.improvements.contains(&CityImprovement::Granary) {
+            numerator *= 2;
+        }
+        if self.improvements.contains(&CityImprovement::Aqueduct) {
+            numerator *= 3;
+            denominator *= 2;
+        }
+        raw * numerator / denominator
+    }
+
+    /// Gold minted on top of the raw special-resource yield. A Marketplace
+    /// adds half again to it and a Bank adds half again to that.
+    pub fn gold_income(&self, raw: u32) -> u32 {
+        let mut numerator = 1u32;
+        let mut denominator = 1u32;
+        if self.improvements.contains(&CityImprovement::Marketplace) {
+            numerator *= 3;
+            denominator *= 2;
+        }
+        if self.improvements.contains(&CityImprovement::Bank) {
+            numerator *= 3;
+            denominator *= 2;
+        }
+        raw * numerator / denominator
+    }
 }
 
 #[cfg(test)]
@@ -330,6 +362,59 @@ mod tests {
         city.add_improvement(CityImprovement::Library);
         city.add_improvement(CityImprovement::University);
         assert_eq!(city.research(), 9);
+    }
+
+    #[test]
+    fn granary_doubles_food_income() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert_eq!(city.food_income(4), 4);
+        city.add_improvement(CityImprovement::Granary);
+        assert_eq!(city.food_income(4), 8);
+    }
+
+    #[test]
+    fn aqueduct_adds_half_again_food_income() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        city.add_improvement(CityImprovement::Aqueduct);
+        assert_eq!(city.food_income(4), 6);
+    }
+
+    #[test]
+    fn granary_and_aqueduct_food_bonuses_stack() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        city.add_improvement(CityImprovement::Granary);
+        city.add_improvement(CityImprovement::Aqueduct);
+        assert_eq!(city.food_income(4), 12);
+    }
+
+    #[test]
+    fn marketplace_and_bank_gold_bonuses_stack() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert_eq!(city.gold_income(2), 2);
+        city.add_improvement(CityImprovement::Marketplace);
+        assert_eq!(city.gold_income(2), 3);
+        city.add_improvement(CityImprovement::Bank);
+        assert_eq!(city.gold_income(2), 4);
     }
 
     #[test]

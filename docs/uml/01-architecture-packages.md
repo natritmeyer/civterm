@@ -14,7 +14,7 @@ flowchart TB
     subgraph ENG["game_engine — simulation"]
         Engine["Engine<br/>(submit + turn counter + rng + motion)"]
         GameViewI["GameView trait<br/>(read-only view)"]
-        Concerns["movement / combat / cities<br/>diplomacy / research / turns<br/>rival_player_engine / calendar"]
+        Concerns["movement / combat / cities<br/>diplomacy / research / turns<br/>rival_player_engine / calendar / outcome"]
         Save["save<br/>(SaveData / LoadedGame)"]
     end
 
@@ -54,6 +54,9 @@ flowchart TB
 ## Notes
 
 - `Engine::submit` is the only mutation path; the TUI never mutates game state directly.
+- `outcome.rs` reads the players' eliminate flags: `GameOutcome::Victory` once every
+  rival is eliminated, `Defeat` once the human's civilization is. `App` shows the
+  `GameOver` overlay when `Engine::game_outcome()` is `Some`.
 - `GameView` is implemented by `Engine` (`engine_view.rs`) and borrowed as `&dyn GameView` by every widget.
 - `model` has no `Game`/`Player` aggregate — those live in `game_engine` (`game.rs`, `player.rs`).
 - `utils::Rng` is the only RNG. The rival AI never draws from `Engine.rng`, so the combat stream is untouched.
