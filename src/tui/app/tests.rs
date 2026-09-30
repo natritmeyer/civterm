@@ -3351,3 +3351,123 @@ fn clicking_the_painted_close_button_closes_the_window() {
         "clicking the painted ✕ must close the window"
     );
 }
+
+/// A freshly started game (`s` on the start prompt), with every rival
+/// eliminated and the human left standing.
+fn finished_app() -> App {
+    let mut app = App::new();
+    at_start(&mut app);
+    app.handle_key(key(KeyCode::Char('s')));
+    let rival_count = app.engine.as_ref().unwrap().game.players.len() - 1;
+    for index in 1..=rival_count {
+        app.engine
+            .as_mut()
+            .unwrap()
+            .eliminate_player(PlayerId::new(index));
+    }
+    app
+}
+
+#[test]
+fn victory_overlay_rises_when_the_last_rival_falls() {
+    let mut app = finished_app();
+    app.check_game_over();
+    let state = app.game_over.as_ref().unwrap();
+    assert_eq!(state.outcome, GameOutcome::Victory);
+    assert_eq!(state.civ_name, "American");
+    assert!(state.first_selected, "the first button starts selected");
+}
+
+#[test]
+fn defeat_overlay_rises_when_the_human_falls() {
+    let mut app = finished_app();
+    app.engine
+        .as_mut()
+        .unwrap()
+        .eliminate_player(PlayerId::new(0));
+    app.check_game_over();
+    let state = app.game_over.as_ref().unwrap();
+    assert_eq!(state.outcome, GameOutcome::Defeat);
+    assert_eq!(state.civ_name, "American");
+}
+
+#[test]
+fn end_turn_raises_the_victory_overlay_once_all_rivals_are_gone() {
+    let mut app = finished_app();
+    app.handle_key(key(KeyCode::Char(' '))); // end turn
+    assert!(matches!(
+        app.game_over.as_ref().map(|state| state.outcome),
+        Some(GameOutcome::Victory)
+    ));
+}
+
+#[test]
+fn continue_playing_from_the_victory_overlay_returns_to_the_game() {
+    let mut app = finished_app();
+    app.check_game_over();
+    app.handle_key(key(KeyCode::Enter)); // first button: Continue playing
+    assert!(app.game_over.is_none());
+    assert!(matches!(app.phase, Phase::Playing));
+    assert!(!app.exit_requested);
+}
+
+#[test]
+fn start_again_from_the_defeat_screen_returns_to_the_menu() {
+    let mut app = finished_app();
+    app.engine
+        .as_mut()
+        .unwrap()
+        .eliminate_player(PlayerId::new(0));
+    app.check_game_over();
+    app.handle_key(key(KeyCode::Enter)); // first button: Start again
+    assert!(app.game_over.is_none());
+    assert!(matches!(app.phase, Phase::Menu));
+}
+
+#[test]
+fn quitting_from_the_end_screen_ends_the_process() {
+    let mut app = finished_app();
+    app.check_game_over();
+    app.handle_key(key(KeyCode::Right)); // second button: Quit
+    app.handle_key(key(KeyCode::Enter));
+    assert!(app.exit_requested);
+}
+
+#[test]
+fn the_arrow_keys_move_the_game_over_cursor_between_the_buttons() {
+    let mut app = finished_app();
+    app.check_game_over();
+    assert!(app.game_over.as_ref().unwrap().first_selected);
+    app.handle_key(key(KeyCode::Right));
+    assert!(!app.game_over.as_ref().unwrap().first_selected);
+    app.handle_key(key(KeyCode::Right));
+    assert!(!app.game_over.as_ref().unwrap().first_selected);
+    app.handle_key(key(KeyCode::Left));
+    assert!(app.game_over.as_ref().unwrap().first_selected);
+    app.handle_key(key(KeyCode::Tab));
+    assert!(!app.game_over.as_ref().unwrap().first_selected);
+    app.handle_key(key(KeyCode::Tab));
+    assert!(app.game_over.as_ref().unwrap().first_selected);
+}
+
+#[test]
+fn clicking_a_game_over_button_activates_it() {
+    let mut app = finished_app();
+    app.check_game_over();
+    let area = Rect::new(0, 0, 120, 40);
+    let (first, second) = game_over_button_rects(area, GameOutcome::Victory);
+    app.game_over_buttons.set(Some((first, second)));
+
+    // A click on the Quit button ends the process.
+    app.left_click(second.x + 1, second.y);
+    assert!(app.exit_requested);
+}
+
+#[test]
+fn clicks_outside_the_game_over_buttons_do_nothing() {
+    let mut app = finished_app();
+    app.check_game_over();
+    app.left_click(4, 4);
+    assert!(app.game_over.is_some());
+    assert!(!app.exit_requested);
+}

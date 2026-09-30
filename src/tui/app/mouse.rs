@@ -14,6 +14,12 @@ impl App {
         if self.engine.is_none() {
             return;
         }
+        // The end-of-match overlay covers everything and captures all mouse
+        // input while it is up.
+        if self.game_over.is_some() {
+            self.handle_game_over_mouse(mouse);
+            return;
+        }
         // The save/load prompt is keyboard-only; swallow mouse input while it
         // is showing so clicks cannot reach the map underneath.
         if self.save_prompt_rect.get().is_some() {

@@ -3376,3 +3376,64 @@ fn a_transported_unit_has_no_map_square_of_its_own() {
         Some(Some(trireme))
     );
 }
+
+/// A tiny seeded world with an English human and one Zulu rival; both have a
+/// settler on a land tile.
+fn head_to_head() -> Engine {
+    Engine::new(
+        20,
+        12,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    )
+}
+
+#[test]
+fn a_live_match_has_no_outcome() {
+    let engine = head_to_head();
+    assert_eq!(engine.game_outcome(), None);
+}
+
+#[test]
+fn the_human_being_eliminated_is_a_defeat() {
+    let mut engine = head_to_head();
+    engine.eliminate_player(PlayerId::new(0));
+    assert_eq!(engine.game_outcome(), Some(GameOutcome::Defeat));
+}
+
+#[test]
+fn the_last_rival_falling_is_a_victory() {
+    let mut engine = head_to_head();
+    engine.eliminate_player(PlayerId::new(1));
+    // Both rivals gone, the human untouched: the planet is conquered.
+    assert_eq!(engine.game_outcome(), Some(GameOutcome::Victory));
+}
+
+#[test]
+fn defeat_takes_precedence_over_victory_in_the_same_round() {
+    let mut engine = head_to_head();
+    engine.eliminate_player(PlayerId::new(0));
+    engine.eliminate_player(PlayerId::new(1));
+    assert_eq!(engine.game_outcome(), Some(GameOutcome::Defeat));
+}
+
+#[test]
+fn a_surviving_rival_keeps_the_match_open() {
+    let mut engine = Engine::new(
+        20,
+        12,
+        Player::new(Civilization::English),
+        vec![
+            Player::new(Civilization::Zulu),
+            Player::new(Civilization::Roman),
+        ],
+    );
+    engine.eliminate_player(PlayerId::new(1));
+    assert_eq!(engine.game_outcome(), None);
+}
+
+#[test]
+fn a_single_human_player_is_not_automatically_a_victory() {
+    let engine = Engine::new(20, 12, Player::new(Civilization::English), Vec::new());
+    assert_eq!(engine.game_outcome(), None);
+}

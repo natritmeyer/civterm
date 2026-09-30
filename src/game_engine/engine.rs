@@ -140,6 +140,14 @@ impl Engine {
         self.game.spawn_unit(unit_class, location, owner, home_city)
     }
 
+    /// Mark `player` eliminated out-of-band, as the end-condition tests use
+    /// to stage a finished match. The game itself eliminates only through the
+    /// ordinary combat and city-capture paths (`eliminate`, in `combat.rs`).
+    #[cfg(test)]
+    pub(crate) fn eliminate_player(&mut self, player: PlayerId) {
+        self.game.players[player.index()].mark_eliminated();
+    }
+
     /// The player governed by `civilization`, if that civilization is in play.
     pub fn player_id_of(&self, civilization: Civilization) -> Option<PlayerId> {
         self.game

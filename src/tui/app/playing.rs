@@ -523,7 +523,13 @@ impl App {
             (Vec::new(), None, false)
         };
         self.record_events(events);
-        if wrapped && let Some(discovered) = discovered {
+        // The research dialog only belongs to a live turn: a round that just
+        // ended the match (usually the final rivals' death) must not pile a
+        // research choice on top of the victory screen.
+        if self.game_over.is_none()
+            && wrapped
+            && let Some(discovered) = discovered
+        {
             let choices = self
                 .engine
                 .as_ref()
@@ -550,6 +556,10 @@ impl App {
     }
 
     pub(super) fn record_events(&mut self, events: Vec<GameEvent>) {
+        // Whatever the command was, it may have ended the match (a city
+        // captured, the last rival wiped out); raise the curtain before the
+        // events are shown.
+        self.check_game_over();
         if events.is_empty() {
             return;
         }

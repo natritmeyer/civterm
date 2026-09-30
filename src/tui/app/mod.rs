@@ -12,6 +12,8 @@ use super::command_picker::{self, CommandPicker};
 use super::competition_selector::CompetitionSelector;
 use super::difficulty_selector::DifficultySelector;
 use super::diplomacy_dialog::{self, DiplomacyChoice, DiplomacyDialog, DiplomacyOrigin};
+use super::game_over::GameOver;
+use super::game_over::button_rects as game_over_button_rects;
 use super::game_screen::{
     BATTLE_FLASH_DURATION, BattleAnimation, GameScreen, LEFT_COLUMN_WIDTH, RivalMoveAnimation,
     RivalMoveFrame, TILE_WIDTH,
@@ -25,7 +27,7 @@ use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
 use super::status_bar::StatusBar;
 use crate::game_engine::event::Event as GameEvent;
-use crate::game_engine::{Engine, GameView};
+use crate::game_engine::{Engine, GameOutcome, GameView};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Direction;
 use crate::model::cities::CityId;
@@ -105,6 +107,15 @@ struct SaveLoadState {
     kind: SaveLoadKind,
     input: String,
     error: Option<String>,
+}
+
+/// The end-of-match overlay's live state: how it ended, whose civilization
+/// name the tombstone or banner carries, and which of the two buttons the
+/// cursor sits on.
+struct GameOverState {
+    outcome: GameOutcome,
+    civ_name: String,
+    first_selected: bool,
 }
 
 pub struct App {
@@ -201,6 +212,11 @@ pub struct App {
     /// The replay of the rival movements of the round just resolved; `None`
     /// once the animation has run its course.
     rival_animation: Option<RivalMoveAnimation>,
+    /// Whether the match has ended, and how; while present the full-screen
+    /// victory/defeat overlay shows and swallows all input.
+    game_over: Option<GameOverState>,
+    /// The last-drawn end-game button rectangles, for mouse hit-testing.
+    game_over_buttons: Cell<Option<(Rect, Rect)>>,
 }
 
 impl Default for App {
@@ -261,6 +277,8 @@ impl App {
             command_picker_rect: Cell::new(None),
             battle_animation: None,
             rival_animation: None,
+            game_over: None,
+            game_over_buttons: Cell::new(None),
         }
     }
 
@@ -542,6 +560,20 @@ impl App {
                     } else {
                         app.quit_dialog_rect.set(None);
                     }
+                    // The end-of-match overlay covers the whole screen when a
+                    // match has ended — a tombstone when the civilization
+                    // falls, a celebration when the planet is won. Painted
+                    // last, it sits above every panel.
+                    if let Some(state) = &app.game_over {
+                        frame.render_widget(
+                            GameOver::new(state.outcome, &state.civ_name, state.first_selected),
+                            frame.area(),
+                        );
+                        app.game_over_buttons
+                            .set(Some(game_over_button_rects(frame.area(), state.outcome)));
+                    } else {
+                        app.game_over_buttons.set(None);
+                    }
                 }
             }
         }
@@ -563,6 +595,11 @@ impl App {
         // While the save/load prompt is open it captures the keyboard.
         if self.save_prompt.is_some() {
             self.handle_save_prompt_key(key);
+            return false;
+        }
+        // While the end-of-match overlay shows it captures the keyboard.
+        if self.game_over.is_some() {
+            self.handle_game_over_key(key);
             return false;
         }
         match self.phase {
@@ -771,6 +808,7 @@ fn fade_progress(elapsed: Duration) -> f32 {
 }
 
 mod dialogs;
+mod game_over;
 mod mouse;
 mod pickers;
 mod playing;
