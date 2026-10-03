@@ -1,7 +1,10 @@
 use super::*;
 use crate::model::cartography::Direction;
+use crate::model::cartography::Location;
 use crate::model::civilizations::Civilization;
+use crate::model::civilizations::PlayerId;
 use crate::model::geography::Terrain;
+use crate::model::units::UnitClass;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use std::collections::HashSet;
@@ -2115,5 +2118,181 @@ fn a_late_battle_frame_still_flashes_its_own_tile() {
         animation
             .active_battle(Duration::from_millis(frame_ms * 2))
             .is_none()
+    );
+}
+
+/// The tile the stacked-unit fixtures pile every unit onto, well clear of the
+/// populated start so the counts below mean only what the fixture placed.
+const STACKED_TILE: (usize, usize) = (20, 20);
+
+/// An engine carrying `classes` as separate friendly units on `STACKED_TILE`.
+fn stacked_engine(classes: &[UnitClass]) -> crate::game_engine::Engine {
+    let mut engine = crate::game_engine::Engine::new(
+        crate::game_engine::DEFAULT_MAP_WIDTH,
+        crate::game_engine::DEFAULT_MAP_HEIGHT,
+        crate::game_engine::Player::new(Civilization::English),
+        vec![],
+    );
+    engine.populate_starting_world();
+    for unit_class in classes {
+        engine.game.spawn_unit(
+            *unit_class,
+            Location::new(STACKED_TILE.0 as u16, STACKED_TILE.1 as u16),
+            PlayerId::new(0),
+            None,
+        );
+    }
+    engine
+}
+
+/// A tile can hold more than one unit: nothing stops a second friendly unit
+/// from stepping onto a square its own side already occupies, and a city keeps
+/// its garrison underfoot. The info panel must describe all of them, not just
+/// whichever the unit list happens to yield first.
+#[test]
+fn the_focus_panel_describes_every_unit_on_the_focused_tile() {
+    let engine = stacked_engine(&[UnitClass::Settler, UnitClass::Legion]);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                GameScreen::new(
+                    &engine,
+                    Some(STACKED_TILE),
+                    (0, 0),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    false,
+                    &[],
+                    None,
+                ),
+                frame.area(),
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    let panel = (0..40)
+        .map(|y| left_row(&buf, y).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" || ");
+    assert!(
+        panel.contains("Settler"),
+        "the settler on the tile is described: {panel}"
+    );
+    assert!(
+        panel.contains("Legion"),
+        "the second unit on the tile is described too: {panel}"
+    );
+}
+
+#[test]
+fn the_hover_block_lists_every_unit_on_the_hovered_tile() {
+    let engine = stacked_engine(&[UnitClass::Settler, UnitClass::Legion, UnitClass::Phalanx]);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                GameScreen::new(
+                    &engine,
+                    None,
+                    (0, 0),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    false,
+                    &[],
+                    None,
+                )
+                .with_hovered_tile(Some(STACKED_TILE)),
+                frame.area(),
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    let panel = (0..40)
+        .map(|y| left_row(&buf, y).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" || ");
+    for expected in ["Settler", "Legion", "Phalanx"] {
+        assert!(
+            panel.contains(expected),
+            "{expected} appears in the hover listing: {panel}"
+        );
+    }
+}
+
+/// The panel is the bottom slice of the left column, so a crowded tile must
+/// not spill its listing over the map pane. Units that do not fit are counted
+/// rather than silently dropped — the same failure as showing only one unit,
+/// just further down the page.
+#[test]
+fn a_unit_list_too_tall_for_the_panel_is_summarised_instead_of_overdrawn() {
+    let engine = stacked_engine(&[
+        UnitClass::Settler,
+        UnitClass::Legion,
+        UnitClass::Phalanx,
+        UnitClass::Cavalry,
+        UnitClass::Chariot,
+        UnitClass::Knight,
+        UnitClass::Catapult,
+        UnitClass::Diplomat,
+        UnitClass::Caravan,
+        UnitClass::Trireme,
+        UnitClass::Sail,
+        UnitClass::Frigate,
+        UnitClass::Militia,
+    ]);
+    let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                GameScreen::new(
+                    &engine,
+                    Some(STACKED_TILE),
+                    (0, 0),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    false,
+                    &[],
+                    None,
+                )
+                .with_hovered_tile(Some(STACKED_TILE)),
+                frame.area(),
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    // The focus pane ends where the map begins; nothing may be written past it.
+    let focus_bottom = {
+        let height: u16 = 24;
+        let mini_height = height / 3;
+        let stats_height = (height - mini_height) / 2 - 5;
+        mini_height + stats_height + (height - mini_height - stats_height)
+    };
+    for y in focus_bottom..24 {
+        let row = left_row(&buf, y).trim().to_string();
+        assert!(
+            row.is_empty(),
+            "row {y} is past the focus panel but reads {row:?}"
+        );
+    }
+
+    let panel = (0..24)
+        .map(|y| left_row(&buf, y).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" || ");
+    assert!(
+        panel.contains("more"),
+        "the crowded listing says how many it could not fit: {panel}"
     );
 }

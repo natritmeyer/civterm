@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 634 passing unit
+Run `make build` after any change. Current test baseline: 639 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -239,6 +239,14 @@ New features are judged for their save impact before they are built:
 
 ## TUI rendering invariants
 
+- The left-hand info panel describes **every** unit on the focused or hovered
+  tile, never just the first. A tile legitimately holds several units (a city
+  garrison, or a second friendly unit stepping onto ground its own side already
+  occupies), so both blocks iterate the whole list. Each unit takes its own row:
+  joined onto one line a listing overruns the 36-column panel, and `draw_text`
+  stops at the edge rather than wrapping, silently dropping every unit after the
+  first. Every row is clamped to the panel's `bottom`, and a list too tall for
+  the space reports `+N more` rather than overdrawing the map pane.
 - A city tile always wears its owning civilization's colour, even beneath an
   occupying unit, so a captured city flips colour the instant it falls
   rather than waiting for the victor to move off.
@@ -273,6 +281,14 @@ New features are judged for their save impact before they are built:
   never the terrain).
 
 ## Tooling
+
+- Tests that start a game share one pinned world seed (`TEST_SEED` in
+  `src/tui/app/mod.rs`, read by `App::new_game_seed` in `setup.rs`); a real
+  game still draws a fresh clock-derived seed. A random map turns any
+  assertion about terrain into a coin flip — a test wanting a passable tile
+  beside the starting city failed on ~1.5% of maps, those that ring it with
+  water and forest. If a fixture needs terrain the pinned world lacks, place
+  the unit or tile explicitly rather than drawing a new map.
 
 - `scratch/` holds one-off refactor scripts (splitting/moving files). Keep
   them; they are not part of the build.

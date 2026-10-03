@@ -3542,3 +3542,63 @@ fn clicks_outside_the_game_over_buttons_do_nothing() {
     assert!(app.game_over.is_some());
     assert!(!app.exit_requested);
 }
+
+/// The app tests share one pinned world seed. Without it every test that
+/// starts a game draws a fresh random map, and any assertion about the terrain
+/// becomes a coin flip — `clicking_a_city_next_to_a_spent_unit_still_opens_
+/// the_city_window` failed on roughly 1.5% of maps, the ones that happen to
+/// ring the starting city with water and forest and leave no passable
+/// neighbour to park its unit on.
+#[test]
+fn every_game_the_tests_start_shares_one_pinned_world_seed() {
+    let (first, cx, cy) = playing_app();
+    let (second, dx, dy) = playing_app();
+    assert_eq!(
+        (cx, cy),
+        (dx, dy),
+        "the starting city lands in the same place"
+    );
+
+    let terrain_of = |app: &App| {
+        let engine = app.engine.as_ref().unwrap();
+        (0..engine.height())
+            .flat_map(|y| (0..engine.width()).map(move |x| (x, y)))
+            .map(|(x, y)| engine.tile(x, y).terrain)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        terrain_of(&first),
+        terrain_of(&second),
+        "two games started in one run generate the same world"
+    );
+}
+
+/// The pinned seed must still yield a world these tests can work with: a
+/// starting city ringed by at least one passable tile to stand on.
+#[test]
+fn the_pinned_seed_leaves_the_starting_city_a_passable_neighbour() {
+    let (app, cx, cy) = playing_app();
+    let engine = app.engine.as_ref().unwrap();
+    let passable = [
+        (0isize, -1isize),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+        (0, 1),
+        (-1, 1),
+        (-1, 0),
+        (-1, -1),
+    ]
+    .into_iter()
+    .filter(|(dx, dy)| {
+        let nx = (cx as isize + dx).rem_euclid(engine.width() as isize) as usize;
+        let ny = (cy as isize + dy).clamp(0, engine.height() as isize - 1) as usize;
+        let tile = engine.tile(nx, ny);
+        tile.terrain.is_land() && tile.terrain.movement_cost() <= 1
+    })
+    .count();
+    assert!(
+        passable > 0,
+        "the pinned world rings its city with at least one passable tile"
+    );
+}

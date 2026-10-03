@@ -171,6 +171,20 @@ impl App {
         }
     }
 
+    /// The seed a new game draws its map and rivals from. A real game takes a
+    /// fresh clock-derived seed so no two games match; tests use the pinned
+    /// `TEST_SEED` so the world they generate never varies between runs.
+    fn new_game_seed(&self) -> u64 {
+        #[cfg(test)]
+        {
+            self.seed
+        }
+        #[cfg(not(test))]
+        {
+            crate::utils::random_seed()
+        }
+    }
+
     pub(super) fn start_game(&mut self) {
         let rival_count = self
             .chosen_competition
@@ -179,19 +193,22 @@ impl App {
         let chosen = self.chosen_civ.unwrap();
         let mut pool: Vec<Civilization> =
             Civilization::iter().filter(|civ| *civ != chosen).collect();
-        // Seed the rival draw (and the map, inside `Engine::new_random`) from
-        // the system clock so each new game randomizes both.
-        let mut rng = crate::utils::Rng::new(crate::utils::random_seed());
+        // Seed the rival draw and the map together so each new game randomizes
+        // both — except under test, where the seed is pinned and the world is
+        // the same on every run.
+        let seed = self.new_game_seed();
+        let mut rng = crate::utils::Rng::new(seed);
         let mut rivals = Vec::with_capacity(rival_count);
         while rivals.len() < rival_count.min(pool.len()) {
             let idx = rng.in_range(pool.len() as u32) as usize;
             rivals.push(pool.swap_remove(idx));
         }
-        let mut engine = Engine::new_random(
+        let mut engine = Engine::with_seed(
             crate::game_engine::DEFAULT_MAP_WIDTH,
             crate::game_engine::DEFAULT_MAP_HEIGHT,
             Player::new(chosen),
             rivals.into_iter().map(Player::new).collect(),
+            seed,
         );
         engine.populate_starting_world();
         self.engine = Some(engine);

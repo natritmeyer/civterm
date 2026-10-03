@@ -50,6 +50,11 @@ const CLICK_SLOP: i32 = 2;
 /// selection auto-advances to the next unit that still has budget.
 const UNIT_ADVANCE_DELAY: Duration = Duration::from_millis(300);
 
+/// The fixed world seed used by every test that starts a game, so the generated
+/// map is identical run to run.
+#[cfg(test)]
+pub(crate) const TEST_SEED: u64 = 0x5EED;
+
 #[derive(PartialEq)]
 enum Phase {
     Menu,
@@ -232,6 +237,13 @@ pub struct App {
     game_over: Option<GameOverState>,
     /// The last-drawn end-game button rectangles, for mouse hit-testing.
     game_over_buttons: Cell<Option<(Rect, Rect)>>,
+    /// The seed a new game's map and rivals are drawn from. A real game takes a
+    /// fresh clock-derived seed every time; tests pin one so the world they
+    /// generate is the same on every run. A random map makes any assertion
+    /// about the terrain flaky — an app test needing a passable tile beside the
+    /// city fails on the maps that happen to ring it with water and forest.
+    #[cfg(test)]
+    seed: u64,
 }
 
 impl Default for App {
@@ -296,6 +308,8 @@ impl App {
             rival_animation: None,
             game_over: None,
             game_over_buttons: Cell::new(None),
+            #[cfg(test)]
+            seed: TEST_SEED,
         }
     }
 

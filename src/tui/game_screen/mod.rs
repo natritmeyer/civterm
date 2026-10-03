@@ -542,6 +542,12 @@ impl<'a> GameScreen<'a> {
     fn draw_focus(&self, area: Rect, buf: &mut Buffer) {
         let civ = self.view.current_player();
         let x = area.x + 1;
+        // The panel is the bottom slice of the left column, so a long listing
+        // must stop at its last row rather than spill over the map pane. Every
+        // row drawn below is clipped against `area.bottom()`, and a list that
+        // runs past the end says so rather than quietly losing its tail.
+        let bottom = area.bottom();
+        let next_row = |row: u16| -> u16 { (row + 1).min(bottom) };
         draw_text(
             buf,
             area.right(),
@@ -554,34 +560,12 @@ impl<'a> GameScreen<'a> {
         let mut row = area.y + 2;
         match self.focus {
             Some((fx, fy)) => {
-                let unit = self.view.units_at(fx, fy).first().copied();
-                if let Some(unit) = unit {
-                    draw_text(
-                        buf,
-                        area.right(),
-                        x,
-                        row,
-                        &format!("Unit: {:?} mv {}", unit.unit_class, unit.moves_remaining()),
-                        Style::default().fg(Color::Rgb(230, 200, 120)),
-                    );
-                    row += 1;
-                    if let UnitOrder::Improving(improvement) = unit.order() {
-                        draw_text(
-                            buf,
-                            area.right(),
-                            x,
-                            row,
-                            &format!(
-                                "Building {} {} of {} turns",
-                                improvement.name().to_lowercase(),
-                                unit.work_progress(),
-                                improvement.work_turns()
-                            ),
-                            Style::default().fg(Color::Rgb(150, 220, 160)),
-                        );
-                        row += 1;
-                    }
-                } else {
+                // A tile can hold more than one unit — a city garrison, or a
+                // second friendly unit that stepped onto ground its own side
+                // already occupies — so describe all of them, not just the
+                // first the unit list yields.
+                let units = self.view.units_at(fx, fy);
+                if units.is_empty() {
                     draw_text(
                         buf,
                         area.right(),
@@ -590,7 +574,48 @@ impl<'a> GameScreen<'a> {
                         "(no unit here)",
                         Style::default().fg(DIM),
                     );
-                    row += 1;
+                    row = next_row(row);
+                } else {
+                    let room = rows_for_list(row, bottom);
+                    let hidden = units.len().saturating_sub(room);
+                    for unit in units.iter().take(room) {
+                        draw_text(
+                            buf,
+                            area.right(),
+                            x,
+                            row,
+                            &format!("Unit: {:?} mv {}", unit.unit_class, unit.moves_remaining()),
+                            Style::default().fg(Color::Rgb(230, 200, 120)),
+                        );
+                        row = next_row(row);
+                        if let UnitOrder::Improving(improvement) = unit.order() {
+                            draw_text(
+                                buf,
+                                area.right(),
+                                x,
+                                row,
+                                &format!(
+                                    "Building {} {} of {} turns",
+                                    improvement.name().to_lowercase(),
+                                    unit.work_progress(),
+                                    improvement.work_turns()
+                                ),
+                                Style::default().fg(Color::Rgb(150, 220, 160)),
+                            );
+                            row = next_row(row);
+                        }
+                    }
+                    if hidden > 0 {
+                        draw_text(
+                            buf,
+                            area.right(),
+                            x,
+                            row,
+                            &format!("+{hidden} more"),
+                            Style::default().fg(DIM),
+                        );
+                        row = next_row(row);
+                    }
                 }
                 let tile = self.view.tile(fx, fy);
                 draw_text(
@@ -601,7 +626,7 @@ impl<'a> GameScreen<'a> {
                     &format!("Terrain: {:?}", tile.terrain),
                     Style::default().fg(DIM),
                 );
-                row += 1;
+                row = next_row(row);
                 draw_text(
                     buf,
                     area.right(),
@@ -616,7 +641,7 @@ impl<'a> GameScreen<'a> {
                     Style::default().fg(DIM),
                 );
                 if tile.has_road() || tile.is_mined() || tile.is_irrigated() {
-                    row += 1;
+                    row = next_row(row);
                     let improvements = [
                         tile.is_irrigated().then_some("≈ irrigation"),
                         tile.is_mined().then_some("⛏ mine"),
@@ -664,7 +689,7 @@ impl<'a> GameScreen<'a> {
                 &format!("Hovering: {:?} ({}, {})", tile.terrain, hx, hy),
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             );
-            row += 1;
+            row = next_row(row);
             draw_text(
                 buf,
                 area.right(),
@@ -679,7 +704,7 @@ impl<'a> GameScreen<'a> {
                 ),
                 Style::default().fg(DIM),
             );
-            row += 1;
+            row = next_row(row);
             if tile.has_road() || tile.is_mined() || tile.is_irrigated() {
                 let improvements = [
                     tile.is_irrigated().then_some("≈ irrigation"),
@@ -698,7 +723,7 @@ impl<'a> GameScreen<'a> {
                     &improvements,
                     Style::default().fg(Color::Rgb(150, 220, 160)),
                 );
-                row += 1;
+                row = next_row(row);
             }
             if let Some(resource) = tile.resource() {
                 draw_text(
@@ -709,7 +734,7 @@ impl<'a> GameScreen<'a> {
                     &format!("Resource: {:?}", resource),
                     Style::default().fg(DIM),
                 );
-                row += 1;
+                row = next_row(row);
             }
             if let Some(city) = self.view.city_at(hx, hy) {
                 draw_text(
@@ -720,7 +745,7 @@ impl<'a> GameScreen<'a> {
                     &format!("City: {} (pop {})", city.name, city.population()),
                     Style::default().fg(DIM),
                 );
-                row += 1;
+                row = next_row(row);
             }
             let units = self.view.units_at(hx, hy);
             if units.is_empty() {
@@ -733,22 +758,34 @@ impl<'a> GameScreen<'a> {
                     Style::default().fg(DIM),
                 );
             } else {
-                let listing = units
-                    .iter()
-                    .map(|unit| {
-                        let owner = self.view.civilization_of(unit.owner()).display_name();
-                        format!("{:?} ({owner})", unit.unit_class)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                draw_text(
-                    buf,
-                    area.right(),
-                    x,
-                    row,
-                    &listing,
-                    Style::default().fg(Color::Rgb(230, 200, 120)),
-                );
+                // One unit per row: joined onto a single line the listing
+                // would run past the panel's width, and `draw_text` stops at
+                // the edge rather than wrapping, silently dropping every unit
+                // after the first.
+                let room = rows_for_list(row, bottom);
+                let hidden = units.len().saturating_sub(room);
+                for unit in units.iter().take(room) {
+                    let owner = self.view.civilization_of(unit.owner()).display_name();
+                    draw_text(
+                        buf,
+                        area.right(),
+                        x,
+                        row,
+                        &format!("{:?} ({owner})", unit.unit_class),
+                        Style::default().fg(Color::Rgb(230, 200, 120)),
+                    );
+                    row = next_row(row);
+                }
+                if hidden > 0 {
+                    draw_text(
+                        buf,
+                        area.right(),
+                        x,
+                        row,
+                        &format!("+{hidden} more"),
+                        Style::default().fg(DIM),
+                    );
+                }
             }
         }
     }
@@ -810,6 +847,21 @@ impl<'a> Widget for GameScreen<'a> {
         self.draw_main_map(right, buf);
         self.draw_event_log(right, buf);
     }
+}
+
+/// How many rows the focus panel can still draw between `row` and its last
+/// row, `bottom` exclusive. A list longer than this has no room left and its
+/// tail is summarised rather than drawn over the map pane.
+fn rows_left(row: u16, bottom: u16) -> usize {
+    (bottom.saturating_sub(row)) as usize
+}
+
+/// The rows a unit list may draw while still leaving room for the trailing
+/// "+N more" summary. Reserving that row is what makes the summary possible at
+/// all: a list allowed to fill the panel to its last row would have nowhere to
+/// report the units it left out.
+fn rows_for_list(row: u16, bottom: u16) -> usize {
+    rows_left(row, bottom).saturating_sub(1)
 }
 
 #[cfg(test)]
