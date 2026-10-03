@@ -8,7 +8,8 @@ rival replay.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Menu : App::new()
+    state "App::new()" as Menu
+    [*] --> Menu
 
     Menu --> ChoosingCiv : N / Enter (New Game)
     Menu --> Menu : L (Load Saved Game → SaveLoadPrompt.Load)

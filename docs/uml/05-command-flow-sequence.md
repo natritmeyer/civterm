@@ -25,7 +25,7 @@ sequenceDiagram
     Eng->>Mov: move_unit(unit, direction)
     Mov->>Mov: ensure_can_move()<br/>(owned, moves left,<br/>on-map, medium, peaceful)
     alt cannot cross land/sea border
-        Mov->>Mov: try_board()<br/>(adjacent friendly transport,<br/>free berth; no move cost)
+        Mov->>Mov: try_board()<br/>(adjacent friendly transport,<br/>free berth, no move cost)
         Mov->>Gam: meet_contacts_within() + reveal_tiles_at()
     end
     Mov->>Mov: meet_contacts_within(dest)
@@ -50,7 +50,7 @@ sequenceDiagram
         Cbt->>Gam: change_owner(current) + advance +<br/>disembark + spend + reveal
         Cbt->>Gam: eliminate_if_cityless(old owner)
     else plain move
-        Mov->>Gam: location = dest; disembark()
+        Mov->>Gam: location = dest, disembark()
         Mov->>Gam: spend_moves(terrain cost)
         Mov->>Gam: reveal_tiles_at(owner, dest)
         Mov->>Gam: sync_cargo(carrier)
