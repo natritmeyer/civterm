@@ -9,7 +9,18 @@ pub trait GameView {
     fn width(&self) -> usize;
     fn height(&self) -> usize;
     fn tile(&self, x: usize, y: usize) -> &Tile;
+    /// The units standing on their own square on this tile. A unit being
+    /// transported aboard a ship shares the carrier's tile but has no map
+    /// square of its own, so it is not listed here — ask `cargo_at` for it.
     fn units_at(&self, x: usize, y: usize) -> Vec<&Unit>;
+    /// The units riding the ship on this tile. Cargo is kept apart from
+    /// `units_at` because callers mean different things by "on this tile": the
+    /// map painter wants the single hull to draw, while the info panel wants
+    /// the whole manifest. Defaults to empty, since a view with no notion of
+    /// transport has no cargo to report.
+    fn cargo_at(&self, _x: usize, _y: usize) -> Vec<&Unit> {
+        Vec::new()
+    }
     /// The unit with the given id, anywhere in the world — including one
     /// being transported aboard a ship, which has no map square of its own.
     fn unit(&self, id: UnitId) -> Option<&Unit>;

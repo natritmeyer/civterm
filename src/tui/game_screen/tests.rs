@@ -2228,6 +2228,209 @@ fn the_hover_block_lists_every_unit_on_the_hovered_tile() {
     }
 }
 
+/// An engine whose `STACKED_TILE` holds a trireme with `passengers` loaded
+/// aboard it. Boarding drops each passenger's order and leaves it sharing the
+/// hull's tile, which is exactly the state the info panel has to describe.
+fn laden_engine(passengers: &[UnitClass]) -> crate::game_engine::Engine {
+    let mut engine = crate::game_engine::Engine::new(
+        crate::game_engine::DEFAULT_MAP_WIDTH,
+        crate::game_engine::DEFAULT_MAP_HEIGHT,
+        crate::game_engine::Player::new(Civilization::English),
+        vec![],
+    );
+    engine.populate_starting_world();
+    let ship = engine.game.spawn_unit(
+        UnitClass::Trireme,
+        Location::new(STACKED_TILE.0 as u16, STACKED_TILE.1 as u16),
+        PlayerId::new(0),
+        None,
+    );
+    for unit_class in passengers {
+        let id = engine.game.spawn_unit(
+            *unit_class,
+            Location::new(STACKED_TILE.0 as u16, STACKED_TILE.1 as u16),
+            PlayerId::new(0),
+            None,
+        );
+        let index = engine
+            .game
+            .units
+            .iter()
+            .position(|unit| unit.id() == id)
+            .unwrap();
+        engine.game.units[index].board(ship);
+    }
+    engine
+}
+
+/// Cargo shares its carrier's tile but has no map square of its own, so
+/// `units_at` omits it. The info panel is the one place the manifest belongs:
+/// the units aboard a ship are exactly what a player needs to know when
+/// deciding whether to sail or to unload.
+#[test]
+fn the_focus_panel_lists_the_cargo_aboard_a_ship_on_its_tile() {
+    let engine = laden_engine(&[UnitClass::Legion, UnitClass::Settler]);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                GameScreen::new(
+                    &engine,
+                    Some(STACKED_TILE),
+                    (0, 0),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    false,
+                    &[],
+                    None,
+                ),
+                frame.area(),
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    let panel = (0..40)
+        .map(|y| left_row(&buf, y).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" || ");
+    assert!(
+        panel.contains("Trireme"),
+        "the ship itself is described: {panel}"
+    );
+    for passenger in ["Legion", "Settler"] {
+        assert!(
+            panel.contains(passenger),
+            "{passenger} rides the ship and is described: {panel}"
+        );
+    }
+    assert!(
+        panel.contains("Aboard"),
+        "cargo is marked as aboard rather than as a unit to command: {panel}"
+    );
+}
+
+#[test]
+fn the_hover_block_lists_the_cargo_aboard_a_ship_on_its_tile() {
+    let engine = laden_engine(&[UnitClass::Legion]);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                GameScreen::new(
+                    &engine,
+                    None,
+                    (0, 0),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    false,
+                    &[],
+                    None,
+                )
+                .with_hovered_tile(Some(STACKED_TILE)),
+                frame.area(),
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    let panel = (0..40)
+        .map(|y| left_row(&buf, y).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" || ");
+    assert!(
+        panel.contains("Trireme"),
+        "the ship itself is listed: {panel}"
+    );
+    assert!(
+        panel.contains("Legion"),
+        "its passenger is listed too: {panel}"
+    );
+    assert!(
+        panel.contains("aboard"),
+        "the passenger is marked as aboard: {panel}"
+    );
+}
+
+/// A transported unit must stay out of `units_at`: the map painter takes the
+/// first unit on a tile to decide which letter to draw, and a land unit's
+/// letter on a hull's tile would misreport the fleet. Cargo is exposed only
+/// through `cargo_at`, which the info panel asks for by name.
+#[test]
+fn cargo_is_excluded_from_units_at_and_exposed_through_cargo_at() {
+    let engine = laden_engine(&[UnitClass::Legion]);
+    let (x, y) = STACKED_TILE;
+
+    let on_tile = engine.units_at(x, y);
+    assert_eq!(
+        on_tile.len(),
+        1,
+        "only the hull stands on its own square: {on_tile:?}"
+    );
+    assert_eq!(on_tile[0].unit_class, UnitClass::Trireme);
+
+    let cargo = engine.cargo_at(x, y);
+    assert_eq!(cargo.len(), 1, "the passenger is found as cargo: {cargo:?}");
+    assert_eq!(cargo[0].unit_class, UnitClass::Legion);
+    assert!(
+        cargo[0].is_transported(),
+        "the passenger is flagged as aboard"
+    );
+    assert_eq!(
+        cargo[0].location.x as usize, x,
+        "cargo shares the hull's location, so the panel finds it on that tile"
+    );
+}
+
+/// A tile with nothing but cargo under it is a ship with a manifest, not an
+/// empty square, so the panel must not fall back to "no unit here".
+#[test]
+fn a_manifest_is_reported_even_though_no_unit_stands_on_the_water() {
+    let engine = laden_engine(&[UnitClass::Militia]);
+    let (x, y) = STACKED_TILE;
+
+    // The hull is a real unit on the tile, so this guards the case that
+    // actually arises: cargo present, hull present, both must be listed.
+    assert_eq!(engine.units_at(x, y).len(), 1);
+    assert_eq!(engine.cargo_at(x, y).len(), 1);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                GameScreen::new(
+                    &engine,
+                    Some(STACKED_TILE),
+                    (0, 0),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    false,
+                    &[],
+                    None,
+                ),
+                frame.area(),
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+    let panel = (0..40)
+        .map(|y| left_row(&buf, y).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" || ");
+    assert!(
+        !panel.contains("no unit here"),
+        "a laden ship is not an empty tile: {panel}"
+    );
+}
+
 /// The panel is the bottom slice of the left column, so a crowded tile must
 /// not spill its listing over the map pane. Units that do not fit are counted
 /// rather than silently dropped — the same failure as showing only one unit,

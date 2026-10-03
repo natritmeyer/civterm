@@ -28,6 +28,18 @@ impl GameView for Engine {
             .collect()
     }
 
+    /// `sync_cargo` re-points every cargo unit's `location` at its carrier, so
+    /// a ship's manifest is found by asking for the transported units on the
+    /// same tile the hull sits on.
+    fn cargo_at(&self, x: usize, y: usize) -> Vec<&Unit> {
+        self.game
+            .units
+            .iter()
+            .filter(|unit| unit.location.x == x as u16 && unit.location.y == y as u16)
+            .filter(|unit| unit.is_transported())
+            .collect()
+    }
+
     fn unit(&self, id: UnitId) -> Option<&Unit> {
         self.game.units.iter().find(|unit| unit.id() == id)
     }

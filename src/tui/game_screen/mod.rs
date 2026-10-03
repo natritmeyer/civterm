@@ -563,8 +563,10 @@ impl<'a> GameScreen<'a> {
                 // A tile can hold more than one unit — a city garrison, or a
                 // second friendly unit that stepped onto ground its own side
                 // already occupies — so describe all of them, not just the
-                // first the unit list yields.
-                let units = self.view.units_at(fx, fy);
+                // first the unit list yields. A ship also carries cargo that
+                // shares its tile; the manifest belongs in the listing too.
+                let mut units = self.view.units_at(fx, fy);
+                units.extend(self.view.cargo_at(fx, fy));
                 if units.is_empty() {
                     draw_text(
                         buf,
@@ -579,12 +581,20 @@ impl<'a> GameScreen<'a> {
                     let room = rows_for_list(row, bottom);
                     let hidden = units.len().saturating_sub(room);
                     for unit in units.iter().take(room) {
+                        // Cargo is inert and holds no moves of its own, so it is
+                        // reported as a passenger rather than as a unit to
+                        // command.
+                        let label = if unit.is_transported() {
+                            format!("Aboard: {:?}", unit.unit_class)
+                        } else {
+                            format!("Unit: {:?} mv {}", unit.unit_class, unit.moves_remaining())
+                        };
                         draw_text(
                             buf,
                             area.right(),
                             x,
                             row,
-                            &format!("Unit: {:?} mv {}", unit.unit_class, unit.moves_remaining()),
+                            &label,
                             Style::default().fg(Color::Rgb(230, 200, 120)),
                         );
                         row = next_row(row);
@@ -747,7 +757,8 @@ impl<'a> GameScreen<'a> {
                 );
                 row = next_row(row);
             }
-            let units = self.view.units_at(hx, hy);
+            let mut units = self.view.units_at(hx, hy);
+            units.extend(self.view.cargo_at(hx, hy));
             if units.is_empty() {
                 draw_text(
                     buf,
@@ -766,12 +777,20 @@ impl<'a> GameScreen<'a> {
                 let hidden = units.len().saturating_sub(room);
                 for unit in units.iter().take(room) {
                     let owner = self.view.civilization_of(unit.owner()).display_name();
+                    // A ship carries its cargo on the same tile, so the hover
+                    // listing names the passengers as such rather than as
+                    // separate units standing on the water.
+                    let label = if unit.is_transported() {
+                        format!("{:?} ({owner}) aboard", unit.unit_class)
+                    } else {
+                        format!("{:?} ({owner})", unit.unit_class)
+                    };
                     draw_text(
                         buf,
                         area.right(),
                         x,
                         row,
-                        &format!("{:?} ({owner})", unit.unit_class),
+                        &label,
                         Style::default().fg(Color::Rgb(230, 200, 120)),
                     );
                     row = next_row(row);

@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 639 passing unit
+Run `make build` after any change. Current test baseline: 643 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -202,6 +202,10 @@ a hard boundary; keep it by convention.
   omits it, but `player_units` keeps it so it can be selected to disembark;
   `GameView::unit(id)` finds it regardless. `Game::sync_cargo` re-points
   every cargo unit's `location` to the carrier after each carrier move.
+  `GameView::cargo_at` reports the cargo sharing a tile, and the info panel
+  lists it marked `Aboard:` / `aboard`. Cargo stays out of `units_at` because
+  the map painter takes a tile's first unit to pick the letter to draw, and a
+  land unit's letter on a hull's tile would misreport the fleet.
 - A transported unit is inert: it cannot move except ashore, fortify, work,
   stand sentry, or found a city. Cargo never fights — `select_defender`,
   `enemies_present` and `ensure_peaceful_passage` skip transported units.
