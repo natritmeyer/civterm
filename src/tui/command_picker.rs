@@ -378,7 +378,7 @@ mod tests {
             class,
             Location::new(3, 3),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         match order {

@@ -59,4 +59,5 @@ flowchart TB
   `GameOver` overlay when `Engine::game_outcome()` is `Some`.
 - `GameView` is implemented by `Engine` (`engine_view.rs`) and borrowed as `&dyn GameView` by every widget.
 - `model` has no `Game`/`Player` aggregate — those live in `game_engine` (`game.rs`, `player.rs`).
-- `utils::Rng` is the only RNG. The rival AI never draws from `Engine.rng`, so the combat stream is untouched.
+- `utils::Rng` is the only RNG. The rival AI's *decisions* never draw from `Engine.rng`; the only
+  draws it triggers are the ordinary combat resolutions a fight it started resolves through.

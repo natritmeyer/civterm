@@ -29,7 +29,10 @@ impl Engine {
             }
         };
 
-        let owner = self.owned_unit(unit).unwrap().owner();
+        let (owner, origin) = {
+            let unit = self.owned_unit(unit).unwrap();
+            (unit.owner(), unit.location)
+        };
         self.meet_contacts_within(destination, owner);
         // A transported unit has no map presence: it neither stands in the
         // way of an advance nor counts among the defenders at sea.
@@ -37,30 +40,39 @@ impl Engine {
             !u.is_transported() && u.location == destination && self.game.at_war(owner, u.owner())
         });
         if enemies_present {
+            // The step is recorded before the fight resolves: an attacker
+            // repelled here is about to be removed from the game, but the
+            // TUI still needs the landing to replay the attack.
+            self.record_rival_step(owner, unit, origin, destination, true);
             self.resolve_move_combat(unit, destination);
             return;
         }
 
-        // An at-war unit moving onto a foreign city tile that has no defending
-        // units captures the city for the attacker.
-        let capture_city = self.game.cities.iter().find(|c| {
-            c.location == destination && c.owner() != owner && self.game.at_war(owner, c.owner())
+        // An at-war unit moving onto an undefended foreign city tile captures
+        // the city for the attacker.
+        let captured = self.game.cities.iter().find_map(|c| {
+            if c.location == destination && c.owner() != owner && self.game.at_war(owner, c.owner())
+            {
+                Some(c.id())
+            } else {
+                None
+            }
         });
-        if let Some(city) = capture_city {
+        if let Some(captured) = captured {
             let defender_present = self.game.units.iter().any(|u| {
                 !u.is_transported()
                     && u.location == destination
-                    && u.owner() == city.owner()
                     && u.owner() != owner
+                    && self.game.at_war(owner, u.owner())
             });
             if !defender_present {
-                self.capture_city(city.id(), unit, destination);
+                self.record_rival_step(owner, unit, origin, destination, false);
+                self.capture_city(captured, unit, destination);
                 return;
             }
         }
 
         let mut_unit = self.owned_unit_mut(unit).unwrap();
-        let origin = mut_unit.location;
         mut_unit.location = destination;
         mut_unit.disembark();
         // Stepping off a carrier is free; an ordinary move pays the cost.
@@ -71,20 +83,36 @@ impl Engine {
         // Cargo aboard the mover (a ship) follows it onto the new tile; a
         // land unit stepping ashore brings nothing with it.
         self.game.sync_cargo(unit);
-        // A rival's step is recorded so the TUI can replay it; only the human
-        // is exempt.
-        if owner != PlayerId::new(0) {
-            self.motion.push(RivalMotion {
-                unit,
-                from: origin,
-                to: destination,
-            });
-        }
+        self.record_rival_step(owner, unit, origin, destination, false);
         self.events.push(Event::new(if was_transported {
             format!("Unit {} disembarks", unit.index())
         } else {
             format!("Unit {} moves {:?}", unit.index(), direction)
         }));
+    }
+    /// Record a landing of `unit` from `from` onto `to` for the TUI's rival
+    /// replay, marking the steps that ended in combat so the replay can flash
+    /// the explosion on the tile the fight was fought over. Every way a rival
+    /// unit lands on a new tile records here — the plain move tail, boarding,
+    /// a city capture and an attack alike — so the replay shows the round as
+    /// it unfolded. The human's own moves are never recorded.
+    fn record_rival_step(
+        &mut self,
+        owner: PlayerId,
+        unit: UnitId,
+        from: Location,
+        to: Location,
+        battle: bool,
+    ) {
+        if owner == PlayerId::new(0) {
+            return;
+        }
+        self.motion.push(RivalMotion {
+            unit,
+            from,
+            to,
+            battle,
+        });
     }
     pub(super) fn ensure_medium_access(
         &self,
@@ -113,13 +141,7 @@ impl Engine {
         boarder.location = destination;
         boarder.board(carrier);
         self.game.reveal_tiles_at(owner, destination);
-        if owner != PlayerId::new(0) {
-            self.motion.push(RivalMotion {
-                unit,
-                from: origin,
-                to: destination,
-            });
-        }
+        self.record_rival_step(owner, unit, origin, destination, false);
         self.events
             .push(Event::new(format!("Unit {} boards the ship", unit.index())));
         Ok(())

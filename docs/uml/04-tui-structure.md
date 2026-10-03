@@ -23,6 +23,7 @@ classDiagram
         -bool command_picker_open
         -Option~BattleAnimation~ battle_animation
         -Option~RivalMoveAnimation~ rival_animation
+        -Option~WarNoticeState~ war_notice
         -Option~GameOverState~ game_over
         -Cell~Option~tuple~ game_over_buttons
         +new() App
@@ -77,6 +78,7 @@ classDiagram
         +is_complete(now) bool
         +hidden_units(now) HashSet~UnitId~
         +active_frame(now) Option
+        +active_battle(now) Option~BattleAnimation~
     }
     class GameOverState {
         +GameOutcome outcome
@@ -117,6 +119,11 @@ classDiagram
         +Advancement discovered
         +Vec~Advancement~ choices
         +int cursor
+    }
+    class WarDialog {
+        +PlayerId rival
+        +dialog_rect(area) Rect
+        +ok_button_rect(panel) Rect
     }
     class DiplomacyDialog {
         +PlayerId opponent
@@ -179,9 +186,10 @@ classDiagram
     App ..> CityWindow : opens on selection
     App ..> ProductionPicker : opens on city
     App ..> CommandPicker : opens on a unit
-    App ..> ResearchDialog : opens on discovery
+App ..> ResearchDialog : opens on discovery
     App ..> DiplomacyDialog : opens on contact/block
-    App ..> SaveLoadPrompt : S key / menu load
+    App ..> WarDialog : opens on rival war declaration
+    App *-- SaveLoadPrompt : 0..1 save/load text box
     App *-- QuitDialog : 0..1 quit-to-menu prompt
     App ..> QuitDialog : q in Playing
     QuitDialog ..> QuitChoice : choice
@@ -207,8 +215,11 @@ classDiagram
 1. Per-tile pass (`tiles.rs::paint_tile`) — terrain, city colour wash, unit glyphs.
    Units with replay frames still to play are in `hidden_units` and skipped here.
 2. City-name labels (collected during pass 1, drawn after so rows below survive).
-3. Transient overlays on top: battle flash `💥` (anchored in tile left column),
-   rival-move glyph (owner civilisation colour, `BOLD+UNDERLINED`), hover `▓`.
+3. Transient overlays on top: rival-move glyph (owner civilisation colour,
+   `BOLD+UNDERLINED`), hover `▓`.
+4. Battle flash `💥` last of all (anchored in the tile left column), so it
+   eclipses the arriving rival glyph too — the flash comes from the player's
+   own recent fight or from the replay's active `battle` frame.
 
 `App::draw` paints the `GameOver` overlay after the whole map/window pass, so a
 finished match sits above every phase and swallows all input. City tiles always

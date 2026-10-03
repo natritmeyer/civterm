@@ -16,4 +16,5 @@ pub mod splash;
 pub mod start_confirm;
 pub mod status_bar;
 pub mod theme;
+pub mod war_dialog;
 pub use app::App;

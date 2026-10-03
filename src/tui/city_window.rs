@@ -914,7 +914,7 @@ mod tests {
             UnitClass::Militia,
             city.location,
             PlayerId::new(0),
-            city.id(),
+            Some(city.id()),
             UnitId::new(0),
         );
         if fortified {
@@ -961,7 +961,7 @@ mod tests {
             UnitClass::Legion,
             Location::new(city.location.x + 1, city.location.y),
             PlayerId::new(0),
-            city.id(),
+            Some(city.id()),
             UnitId::new(0),
         );
         far.fortify();

@@ -225,6 +225,8 @@ impl App {
         self.research_dialog_rect = Cell::new(None);
         self.diplomacy = None;
         self.diplomacy_rect = Cell::new(None);
+        self.war_notice = None;
+        self.war_notice_rect = Cell::new(None);
         self.command_picker_open = false;
         self.command_picker_cursor = 0;
         self.command_picker_scroll = 0;

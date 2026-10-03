@@ -1,7 +1,8 @@
-use crate::game_engine::{Command, Event, Player, RivalMotion};
+use crate::game_engine::{Command, Event, Player, RivalMotion, RivalWar};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Location;
 use crate::model::cartography::generation::MapGenerator;
+#[cfg(test)]
 use crate::model::cities::CityId;
 use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::geography::Terrain;
@@ -31,6 +32,11 @@ pub struct Engine {
     /// `EndTurn`, in order, for the TUI to replay as an animation. Drained by
     /// `drain_rival_motion` once the round resolves; never persisted.
     pub(crate) motion: Vec<RivalMotion>,
+    /// Every war a rival civilization declared on the human during the rival
+    /// turns of the last `EndTurn`, in order. The TUI announces each with a
+    /// window once the round resolves; drained by `drain_rival_wars`, never
+    /// persisted.
+    pub(crate) rival_wars: Vec<RivalWar>,
 }
 
 impl Default for Engine {
@@ -71,6 +77,7 @@ impl Engine {
             events: Vec::new(),
             rng: Rng::new(seed),
             motion: Vec::new(),
+            rival_wars: Vec::new(),
         }
     }
 
@@ -104,7 +111,7 @@ impl Engine {
             let location = land.swap_remove(pick);
             let owner = PlayerId::new(index);
             self.game
-                .spawn_unit(UnitClass::Settler, location, owner, CityId::new(0));
+                .spawn_unit(UnitClass::Settler, location, owner, None);
         }
     }
 
@@ -135,7 +142,7 @@ impl Engine {
         unit_class: UnitClass,
         location: Location,
         owner: PlayerId,
-        home_city: CityId,
+        home_city: Option<CityId>,
     ) -> UnitId {
         self.game.spawn_unit(unit_class, location, owner, home_city)
     }

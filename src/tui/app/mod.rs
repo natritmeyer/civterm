@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -26,6 +27,7 @@ use super::save_load_prompt::{self, SaveLoadKind, SaveLoadPrompt};
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
 use super::status_bar::StatusBar;
+use super::war_dialog::{self, WarDialog};
 use crate::game_engine::event::Event as GameEvent;
 use crate::game_engine::{Engine, GameOutcome, GameView};
 use crate::model::advancements::Advancement;
@@ -99,6 +101,14 @@ struct DiplomacyState {
     origin: DiplomacyOrigin,
     choice: DiplomacyChoice,
     pending: Option<(UnitId, Direction)>,
+}
+
+/// The war-declaration window's live state: every rival that declared war on
+/// the human during the round just resolved, in order. Each is announced by
+/// its own window; acknowledging one moves on to the next, and the window
+/// closes once the queue empties.
+struct WarNoticeState {
+    queue: VecDeque<PlayerId>,
 }
 
 /// The save-or-load prompt's live state: which kind it is, the path typed so
@@ -181,6 +191,11 @@ pub struct App {
     diplomacy: Option<DiplomacyState>,
     /// The last-drawn diplomacy-dialog rectangle, for mouse hit-testing.
     diplomacy_rect: Cell<Option<Rect>>,
+    /// The open war-declaration window, if a rival has drawn the sword this
+    /// round; its queue holds every declaration still to be acknowledged.
+    war_notice: Option<WarNoticeState>,
+    /// The last-drawn war-declaration rectangle, for mouse hit-testing.
+    war_notice_rect: Cell<Option<Rect>>,
     /// The open save-or-load prompt, if one is showing.
     save_prompt: Option<SaveLoadState>,
     /// The last-drawn save-prompt rectangle, for mouse hit-testing.
@@ -264,6 +279,8 @@ impl App {
             research_dialog_rect: Cell::new(None),
             diplomacy: None,
             diplomacy_rect: Cell::new(None),
+            war_notice: None,
+            war_notice_rect: Cell::new(None),
             save_prompt: None,
             save_prompt_rect: Cell::new(None),
             quit_dialog: None,
@@ -529,6 +546,20 @@ impl App {
                     } else {
                         app.diplomacy_rect.set(None);
                     }
+                    // The war-declaration window floats above the map when a
+                    // rival drew the sword this round. The first unacknowledged
+                    // declaration is shown; confirming its OK button moves on
+                    // to the next.
+                    if let Some(notice) = &app.war_notice
+                        && let Some(rival) = notice.queue.front()
+                    {
+                        let rect = war_dialog::dialog_rect(area);
+                        let rival = engine.civilization_of(*rival);
+                        frame.render_widget(WarDialog::new(rival), rect);
+                        app.war_notice_rect.set(Some(rect));
+                    } else {
+                        app.war_notice_rect.set(None);
+                    }
                     // The command picker floats over the map when the player
                     // has asked the focused unit what it can do: fortify,
                     // stand sentry, begin (or cancel) an improvement.
@@ -649,6 +680,7 @@ fn window_is_open(app: &App) -> bool {
         || app.command_picker_open
         || app.research_dialog.is_some()
         || app.diplomacy.is_some()
+        || app.war_notice.is_some()
         || app.save_prompt.is_some()
         || app.quit_dialog.is_some()
 }

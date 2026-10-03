@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 617 passing unit
+Run `make build` after any change. Current test baseline: 634 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -57,11 +57,12 @@ a hard boundary; keep it by convention.
     - `movement.rs`, `combat.rs`, `cities.rs`, `diplomacy.rs`, `research.rs`,
       `turns.rs` — private modules, one `impl Engine` block each by concern
       (`combat.rs` owns `HIT_POINTS`).
-    - `rival_player_engine.rs` — `RivalMotion` (re-exported as
-      `game_engine::RivalMotion`) plus the rival AI: `run_rival_turn`,
-      `drain_rival_motion`, and the
-      research/production/settle/garrison helpers. The AI is deterministic —
-      it never draws from `self.rng`.
+    - `rival_player_engine.rs` — `RivalMotion`, `RivalWar` (re-exported as
+      `game_engine::RivalMotion`, `game_engine::RivalWar`) plus the rival AI:
+      `run_rival_turn`, `drain_rival_motion`, `drain_rival_wars`, and the
+      research/production/settle/garrison/warfare helpers. The AI's decisions
+      are deterministic — it never consults `self.rng`; only the combat a
+      fight initiates is resolved by the shared RNG.
     - `city_income.rs` — `CityIncome` (re-exported as
       `game_engine::CityIncome`, not a path under `game_view`).
     - `engine_tests.rs` — `#[cfg(test)] mod engine_tests;` in `mod.rs`.
@@ -119,6 +120,12 @@ a hard boundary; keep it by convention.
   homed units), or its last unit killed while it owns no cities. Test
   fixtures with zero units must NOT be eliminated. Eliminated players are
   skipped when the turn advances.
+- A unit's home city is `Option<CityId>`, never a placeholder id. A starting
+  settler founded nothing and is honestly `None`; only a city-raised unit is
+  `Some(city_id)`. This matters because a placeholder would collide with the
+  first real city founded (ids are allocated from 0), which both listed every
+  rival's settler in the new city's unit panel and made the conquest disband
+  sweep dissolve unrelated civilizations' units along with the fallen city.
 
 ## Conquest
 
@@ -156,15 +163,32 @@ a hard boundary; keep it by convention.
 - A settler never enters the crowd unless the map gives no alternative: a
   site is only ever chosen from explored tiles, so the frontier push keeps the
   rival's cities spreading outward while respecting every working grid.
-- Rival movement is recorded per step as `RivalMotion { unit, from, to }`
-  whenever a rival unit lands on a new tile — the plain move tail and
-  boarding only, gated `owner != human` so the player's own moves are never
-  recorded. The TUI drains the record (`drain_rival_motion`, oldest first)
-  after an EndTurn to replay it; the record is never persisted.
-- The AI is deterministic: it never draws from `self.rng`, so the combat RNG
-  stream is untouched and any given turn unfolds identically from the same
-  world. It respects the movement/reveal/transport/combat invariants because
-  every rival step goes out through the ordinary `move_unit` path.
+- Rival movement is recorded per step as `RivalMotion { unit, from, to,
+  battle }` whenever a rival unit lands on a new tile — **every** way it lands:
+  the plain move tail, boarding, a city capture and an attack alike, all through
+  the single `movement::record_rival_step` helper, gated `owner != human` so the
+  player's own moves are never recorded. A combat landing is recorded *before*
+  the fight resolves, because an attacker repelled there is about to leave the
+  game and the TUI still needs the landing to replay the attack. The TUI drains
+  the record (`drain_rival_motion`, oldest first) after an EndTurn to replay it;
+  the record is never persisted.
+- A rival fights only fights it expects to win: it declares war on the human
+  when one of its military units stands beside (any of the 8 neighbours, wrap
+  included) a human unit or city whose strongest defender its power outguns
+  (`attacker_power > defender_power`; an undefended city counts as a trivial
+  win), and it never attacks below `RIVAL_MINIMUM_WIN_CHANCE` (10%).
+  War is faction-wide: the first winnable encounter draws the whole rival into
+  it, and other units may then attack freely on the same and later turns.
+  Every declaration is recorded as a transient `RivalWar { rival }` that the
+  TUI drains (`drain_rival_wars`, oldest first) after an EndTurn and announces
+  with an OK window; the record is never persisted.
+- The AI's decisions are deterministic: it never consults `self.rng` when
+  choosing what to research, build, settle, march or fight — it sizes up
+  powers, not luck. The one place a rival's action touches `self.rng` is the
+  ordinary combat resolution shared with the player: when a rival attacks, the
+  fight is fought (and the RNG stream advanced) exactly as the human's would
+  be. Every rival step still goes out through the ordinary `move_unit` path,
+  so the movement/reveal/transport/combat invariants hold.
 
 ## Transport invariants
 
@@ -224,7 +248,9 @@ New features are judged for their save impact before they are built:
   letter ahead of the population.
 - Transient overlays (the battle flash, the rival-move replay) are painted in
   a final pass after tiles, markers and city-name labels, so they sit at the
-  top of the z-order over everything the map draws.
+  top of the z-order over everything the map draws. The flash goes last of all,
+  over the replayed rival glyph too, so an arriving attacker is eclipsed by the
+  💥 it triggered.
 - Wide (two-cell) glyphs such as 💥 must anchor in a tile's _left_ column; a
   wide glyph placed in the tile's right column spills a cell into the
   eastern neighbour. Tests assert the neighbour tile stays untouched.
@@ -232,7 +258,13 @@ New features are judged for their save impact before they are built:
   lifted off their game-state squares (`hidden_units` fed through
   `paint_tile`) so only the overlay paints them — a unit "in transit" must
   not be left drawn at its destination. The replay plays each step as two
-  300ms sub-phases (starting tile, then ending tile). A step whose **every
+  300ms sub-phases (starting tile, then ending tile). A step flagged `battle`
+  — one that ended in combat — erupts on arrival: the replay turns it into a
+  `BattleAnimation` over the destination tile
+  (`RivalMoveAnimation::active_battle`, whose clock starts at that frame's own
+  onset so a fight late in a long round still flashes), and combat is always
+  fought on the destination square, so the attacker marches off its own tile
+  first. A step whose **every
   endpoint** is unexplored by the human is dropped at the source (the TUI
   filters the drained motion by the human's discovery map), so a rival
   wandering the fog stays hidden; a step with at least one explored endpoint

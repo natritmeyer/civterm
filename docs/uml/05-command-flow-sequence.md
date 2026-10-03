@@ -3,7 +3,10 @@
 One keystroke/mouse action → one `Command` → `Engine::submit` → `Vec<Event>` →
 `App::record_events` + overlay triggers → next `GameScreen` frame. Shown here is
 the richest path: a combat move (`movement.rs` → `combat.rs`), including the
-city-capture early return and the reveal invariant.
+city-capture early return and the reveal invariant. A rival attack takes this
+same path (after its `declare_war`): its landing is recorded as a
+`RivalMotion { battle: true }` before the fight resolves, so the replay can
+flash the tile it struck.
 
 ```mermaid
 sequenceDiagram

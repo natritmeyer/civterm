@@ -145,6 +145,35 @@ impl App {
         self.diplomacy_rect = Cell::new(None);
     }
 
+    /// Acknowledge the war-declaration window currently showing: drop the
+    /// announced rival and close the window once no declaration remains.
+    pub(super) fn war_notice_confirm(&mut self) {
+        let Some(notice) = &mut self.war_notice else {
+            return;
+        };
+        notice.queue.pop_front();
+        if notice.queue.is_empty() {
+            self.war_notice = None;
+            self.war_notice_rect.set(None);
+        }
+    }
+
+    /// A click on the war-declaration window's OK button acknowledges it.
+    pub(super) fn handle_war_notice_mouse(&mut self, mouse: MouseEvent) {
+        let Some(panel) = self.war_notice_rect.get() else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        if war_dialog::ok_button_rect(panel).contains((mouse.column, mouse.row).into()) {
+            self.war_notice_confirm();
+        }
+    }
+
     /// Move the research dialog's cursor by `delta` rows.
     pub(super) fn move_research_cursor(&mut self, delta: isize) {
         let visible = self.research_visible_rows();

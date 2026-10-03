@@ -7,6 +7,7 @@ use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 use crate::model::geography::Terrain;
 use crate::model::units::{Unit, UnitClass, UnitId, UnitOrder};
+use std::cmp::Reverse;
 use strum::IntoEnumIterator;
 
 /// How many cities a rival civilization aims to grow before it stops producing
@@ -30,6 +31,14 @@ const CITY_FOOTPRINT_MAX_OVERLAP: usize = 3;
 /// settler would either kneel over and found inside the crowd or march forever.
 /// The best decent site is chosen before any frontier-push.
 const CITY_FOOTPRINT_ACCEPTABLE_OVERLAP: usize = 6;
+
+/// The lowest odds, as a percentage, at which a rival will initiate a fight
+/// against an enemy it faces. A rival picks its wars carefully — it only
+/// declares war when the encounter it would start is one it wins — but this
+/// floor is the absolute bar beneath which no attack at all is made, so a
+/// rival never throws its warriors at an engagement it almost certainly
+/// loses even mid-war.
+const RIVAL_MINIMUM_WIN_CHANCE: u32 = 10;
 
 /// The rival's preferred research ladder, cheapest useful goals first so a
 /// rival fields Bronze-gated troops early and then pursues its economy. When
@@ -57,14 +66,27 @@ const RIVAL_RESEARCH_PRIORITY: &[Advancement] = &[
 ];
 
 /// One step a rival civilization's unit took during its turn: the unit and the
-/// tiles it left and entered. Recorded per move so the TUI can replay rival
-/// movements as they happened (starting tile, then ending tile, per unit)
-/// instead of presenting the round's result as though matters had teleported.
+/// tiles it left and entered. Recorded per move — including the landings that
+/// end in a fight or a city capture — so the TUI can replay rival movements as
+/// they happened (starting tile, then ending tile, per unit) instead of
+/// presenting the round's result as though matters had teleported.
+/// `battle` marks the steps that ended in combat, so the replay can flash the
+/// explosion over the tile the fight was fought on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RivalMotion {
     pub unit: UnitId,
     pub from: Location,
     pub to: Location,
+    /// Whether this step's landing resolved a fight rather than a plain move.
+    pub battle: bool,
+}
+
+/// A war a rival civilization declared on the human during its turn. The TUI
+/// announces each one with a window once the round resolves back to the
+/// player; `rival` is the rival that drew the sword. Never persisted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RivalWar {
+    pub rival: PlayerId,
 }
 
 impl Engine {
@@ -75,15 +97,25 @@ impl Engine {
         std::mem::take(&mut self.motion)
     }
 
+    /// Drain the record of every war a rival declared on the human during the
+    /// last `EndTurn`, oldest first. The TUI announces these once the round
+    /// resolves back to the human's view.
+    pub fn drain_rival_wars(&mut self) -> Vec<RivalWar> {
+        std::mem::take(&mut self.rival_wars)
+    }
+
     /// Play a rival civilization's turn: choose a research project, keep its
-    /// cities' production belts filled, and direct the settlers and military
-    /// still in the field. Every unit move goes out through the ordinary
-    /// `move_unit` path so the movement, reveal, transport and combat
-    /// invariants hold, and each step is recorded for the TUI's replay.
+    /// cities' production belts filled, direct the settlers and military
+    /// still in the field, and fight the wars it can win. Every unit move
+    /// goes out through the ordinary `move_unit` path so the movement,
+    /// reveal, transport and combat invariants hold, and each step is
+    /// recorded for the TUI's replay.
     ///
-    /// The AI is deliberately deterministic: it never draws from `self.rng`,
-    /// so the combat RNG stream is untouched and any given turn unfolds
-    /// identically from the same world.
+    /// The AI's decisions are deliberately deterministic: it never consults
+    /// `self.rng` when choosing what to build, settle, march or fight — only
+    /// the combat a fight touches is resolved by the shared RNG, exactly as
+    /// it is for the human, so any given turn unfolds identically from the
+    /// same world.
     pub(super) fn run_rival_turn(&mut self) {
         self.rival_research();
         self.rival_production();
@@ -229,6 +261,7 @@ impl Engine {
             }
         }
         self.rival_garrison(ai);
+        self.rival_warfare(ai);
     }
 
     fn rival_settle(&mut self, unit_id: UnitId) {
@@ -497,6 +530,99 @@ impl Engine {
                     .expect("closer destination exists");
                 Self::chebyshev(destination, goal, map_w)
             })
+    }
+
+    /// A rival's army fights when it has the local advantage: every idle,
+    /// land-borne warrior standing beside a human unit or city sizes up the
+    /// fight it would pick against the strongest defender there. A fight the
+    /// unit would not win, or whose odds fall under `RIVAL_MINIMUM_WIN_CHANCE`,
+    /// is left alone. The first winnable encounter makes the rival declare
+    /// war on the human (a `RivalWar` the TUI announces) and then step onto
+    /// the target through the ordinary `move_unit` path, so combat, reveal
+    /// and conquest work exactly as they do for the player.
+    fn rival_warfare(&mut self, ai: PlayerId) {
+        let human = PlayerId::new(0);
+        let unit_ids = self.game.owned_units(ai);
+        for unit_id in unit_ids {
+            let ready = self.owned_unit(unit_id).is_some_and(|unit| {
+                Self::is_military(unit)
+                    && !unit.is_transported()
+                    && unit.order() == UnitOrder::Idle
+                    && unit.moves_remaining() > 0
+            });
+            if !ready {
+                continue;
+            }
+            let Some(direction) = self.rival_best_attack(human, unit_id) else {
+                continue;
+            };
+            if !self.game.at_war(ai, human) {
+                self.declare_war(human);
+                self.rival_wars.push(RivalWar { rival: ai });
+            }
+            self.move_unit(unit_id, direction);
+        }
+    }
+
+    /// The direction of the human presence the unit would beat, if any: an
+    /// adjacent tile holding a human unit or city. The unit attacks only when
+    /// its own power outweighs the strongest defender there — an undefended
+    /// city counts as a trivial win — and only when the odds clear
+    /// `RIVAL_MINIMUM_WIN_CHANCE`, so a rival never throws its warriors at a
+    /// fight it almost certainly loses. Deterministic: the target with the
+    /// widest power margin wins; ties break on the weaker defender, then on
+    /// `Direction` scan order.
+    fn rival_best_attack(&self, human: PlayerId, unit_id: UnitId) -> Option<Direction> {
+        let unit = self.owned_unit(unit_id)?;
+        Direction::iter()
+            .enumerate()
+            .filter_map(|(index, direction)| {
+                let target = self.game.map.destination(unit.location, direction)?;
+                let human_here = self.game.units.iter().any(|occupied| {
+                    occupied.location == target
+                        && occupied.owner() == human
+                        && !occupied.is_transported()
+                }) || self
+                    .game
+                    .cities
+                    .iter()
+                    .any(|city| city.location == target && city.owner() == human);
+                if !human_here {
+                    return None;
+                }
+                let defender = self
+                    .game
+                    .units
+                    .iter()
+                    .filter(|occupied| occupied.location == target && occupied.owner() == human)
+                    .filter(|occupied| !occupied.is_transported())
+                    .map(|occupied| self.defender_power(occupied))
+                    .max()
+                    .unwrap_or(0);
+                let attacker = self.attacker_power(unit);
+                if attacker <= defender {
+                    return None;
+                }
+                if Self::win_chance_percent(attacker, defender) < RIVAL_MINIMUM_WIN_CHANCE {
+                    return None;
+                }
+                let margin = attacker.saturating_sub(defender);
+                Some((index, margin, defender, direction))
+            })
+            .min_by_key(|&(index, margin, defender, _)| (Reverse(margin), defender, index))
+            .map(|(_, _, _, direction)| direction)
+    }
+
+    /// The odds, as a whole percentage, that a fight whose two sides bring
+    /// `attacker` and `defender` power goes to the attacker: the attacker
+    /// wins the share of dice rolls equal to its power, so that share is its
+    /// chance of finishing the defender off first.
+    pub(super) fn win_chance_percent(attacker: u32, defender: u32) -> u32 {
+        let total = attacker + defender;
+        if total == 0 {
+            return 100;
+        }
+        attacker * 100 / total
     }
 
     /// Chebyshev distance between two world tiles, wrapping east/west.

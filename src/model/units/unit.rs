@@ -11,7 +11,12 @@ pub struct Unit {
     pub location: Location,
     id: UnitId,
     owner: PlayerId,
-    home_city: CityId,
+    /// The city this unit was raised in and is homed to, if any. A starting
+    /// settler founded nothing, so it belongs to no city and stands homeless
+    /// (`None`) until it does — never a placeholder id, which would collide
+    /// with the first real city founded and so read as "raised there".
+    #[serde(default)]
+    home_city: Option<CityId>,
     order: UnitOrder,
     veteran: bool,
     moves_remaining: u8,
@@ -28,7 +33,7 @@ impl Unit {
         unit_class: UnitClass,
         location: Location,
         owner: PlayerId,
-        home_city: CityId,
+        home_city: Option<CityId>,
         id: UnitId,
     ) -> Self {
         Unit {
@@ -53,7 +58,8 @@ impl Unit {
         self.owner
     }
 
-    pub fn home_city(&self) -> CityId {
+    /// The city this unit is homed to, if it belongs to one.
+    pub fn home_city(&self) -> Option<CityId> {
         self.home_city
     }
 
@@ -144,6 +150,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_unit_may_be_homeless() {
+        // A starting settler has founded nothing, so it belongs to no city.
+        // It must say so honestly rather than hold a placeholder id that would
+        // collide with the first real city founded and read as "raised there".
+        let unit = Unit::new(
+            UnitClass::Settler,
+            Location::new(0, 0),
+            PlayerId::new(0),
+            None,
+            UnitId::new(0),
+        );
+        assert_eq!(unit.home_city(), None);
+    }
+
+    #[test]
     fn unit_is_created_with_class_location_owner_and_home_city() {
         let location = Location::new(1, 7);
         let home_city = CityId::new(4);
@@ -152,13 +173,13 @@ mod tests {
             UnitClass::Settler,
             location,
             PlayerId::new(0),
-            home_city,
+            Some(home_city),
             id,
         );
         assert_eq!(unit.unit_class, UnitClass::Settler);
         assert_eq!(unit.location, location);
         assert_eq!(unit.owner(), PlayerId::new(0));
-        assert_eq!(unit.home_city(), home_city);
+        assert_eq!(unit.home_city(), Some(home_city));
         assert_eq!(unit.id(), id);
     }
 
@@ -168,7 +189,7 @@ mod tests {
             UnitClass::Settler,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         assert_eq!(unit.order(), UnitOrder::Idle);
@@ -180,7 +201,7 @@ mod tests {
             UnitClass::Legion,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         unit.fortify();
@@ -193,7 +214,7 @@ mod tests {
             UnitClass::Legion,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         unit.sentry();
@@ -206,7 +227,7 @@ mod tests {
             UnitClass::Settler,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         unit.work(TerrainImprovement::Road);
@@ -224,7 +245,7 @@ mod tests {
             UnitClass::Settler,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         unit.fortify();
@@ -238,7 +259,7 @@ mod tests {
             UnitClass::Settler,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         unit.fortify();
@@ -252,7 +273,7 @@ mod tests {
             UnitClass::Legion,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         assert!(!unit.is_veteran());
@@ -264,7 +285,7 @@ mod tests {
             UnitClass::Chariot,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         assert_eq!(unit.moves_remaining(), 3);
@@ -276,7 +297,7 @@ mod tests {
             UnitClass::Chariot,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         unit.spend_moves(2);
@@ -293,7 +314,7 @@ mod tests {
             UnitClass::Chariot,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         unit.spend_turn();
@@ -306,7 +327,7 @@ mod tests {
             UnitClass::Legion,
             Location::new(0, 0),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         unit.promote();
@@ -319,7 +340,7 @@ mod tests {
             UnitClass::Legion,
             Location::new(2, 3),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         assert!(!unit.is_transported());
@@ -332,7 +353,7 @@ mod tests {
             UnitClass::Settler,
             Location::new(1, 1),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         unit.fortify();
@@ -350,7 +371,7 @@ mod tests {
             UnitClass::Legion,
             Location::new(1, 1),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(0),
         );
         unit.board(UnitId::new(4));

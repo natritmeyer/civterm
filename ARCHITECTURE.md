@@ -48,19 +48,32 @@ to its internal log, and hands the batch back for the UI to display.
 The turn loop (`turns.rs`):
 1. `end_turn` resolves the **whole round** back to the human: each rival
    civilization takes its own turn in player order (`run_rival_turn` in
-   `rival_player_engine.rs` — research, production, settle, garrison), then control returns
+   `rival_player_engine.rs` — research, production, settle, garrison,
+    warfare), then control returns
    to the human and the global `turn` increments once. The human's turn then
    begins again fresh (`begin_turn` restores moves, or advances frenetic
    terrain work and applies finished improvements, then processes the human's
    cities and research).
-2. The rival AI is deterministic — it never draws from `self.rng`, so the
-   combat RNG stream is untouched — and every rival step goes out through the
-   ordinary `move_unit` path, so it respects the movement/reveal/transport/
-   combat invariants.
-3. Rival unit landings are recorded per step as `RivalMotion { unit, from,
-   to }` (the plain move tail and boarding only, gated `owner != human`). The
-   TUI drains the record after an EndTurn and replays it as animation; the
-   record is never persisted or saved.
+2. The rival AI's decisions are deterministic — it never consults `self.rng`
+   to choose what to research, build, settle, march or fight; the one place a
+   rival's action touches the RNG is the ordinary combat resolution shared
+   with the player. Every rival step goes out through the ordinary
+   `move_unit` path, so it respects the movement/reveal/transport/combat
+   invariants.
+3. Rival unit landings are recorded per step as `RivalMotion { unit, from, to,
+   battle }` — every way a rival lands on a new tile (the plain move tail,
+   boarding, a city capture and an attack alike), gated `owner != human`. The
+   TUI drains the record after an EndTurn and replays it as animation; a
+   `battle` step flashes 💥 over the attacked tile on arrival; the record is
+   never persisted or saved.
+4. A rival attacks only fights it expects to win: it declares war on the
+   human when one of its military units stands beside (any of the 8
+   neighbours, wrap included) a human unit or city whose strongest defender
+   its power outguns (`attacker_power > defender_power`; an undefended city
+   is a trivial win), and it never attacks below `RIVAL_MINIMUM_WIN_CHANCE`
+   (10%). Each declaration is recorded as a transient `RivalWar { rival }`;
+   the TUI drains it (`drain_rival_wars`) after an EndTurn and announces it
+   in an OK window, and it is never persisted or saved.
 
 Eliminated civilizations are **skipped**, never swept; a player is eliminated
 only by an actual loss (last city captured, or last unit killed while owning
@@ -73,7 +86,8 @@ no cities).
   `cartography/generation/`. The world wraps east/west and clamps north/south.
 - Entities use small index-backed ID types (`UnitId`, `CityId`, `PlayerId`)
   resolved by linear scan against flat `Vec`s — no hash maps, no RNG-backed
-  UUIDs. Ownership runs `unit/home_city` → `city` → `player`.
+  UUIDs. Ownership runs `unit/home_city` → `city` → `player`, where
+  `home_city` is optional: a starting settler is homed to no city at all.
 - Every player keeps a fog-of-war bitmap of explored tiles. A unit landing on
   a tile reveals a radius-1 neighbourhood (`Game::DISCOVERY_RADIUS`); cities
   reveal their 21-tile working footprint. **Any** code path that moves a unit

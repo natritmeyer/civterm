@@ -54,12 +54,15 @@ impl BattleAnimation {
 pub(crate) const RIVAL_MOVE_PHASE: Duration = Duration::from_millis(300);
 
 /// One movement step a rival unit took during its AI turn: the unit and the
-/// tiles it left and entered. Frames are replayed in order.
+/// tiles it left and entered. Frames are replayed in order. `battle` marks a
+/// step that ended in a fight, so the replay flashes the explosion over the
+/// attacked tile as the unit arrives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RivalMoveFrame {
     pub(crate) unit_id: UnitId,
     pub(crate) from: Location,
     pub(crate) to: Location,
+    pub(crate) battle: bool,
 }
 
 /// The full rival-move animation for one round: a sequence of per-step frames
@@ -81,9 +84,7 @@ impl RivalMoveAnimation {
     /// The unit IDs that should be hidden from their game-state position: all
     /// units whose frames have not yet fully played out.
     pub(crate) fn hidden_units(&self, now: Duration) -> HashSet<UnitId> {
-        let elapsed = now.saturating_sub(self.start);
-        let frame_ms = RIVAL_MOVE_PHASE.as_millis() as u32 * 2;
-        let active_idx = (elapsed.as_millis() as u32 / frame_ms) as usize;
+        let active_idx = self.active_index(now);
         self.frames
             .iter()
             .enumerate()
@@ -92,17 +93,42 @@ impl RivalMoveAnimation {
             .collect()
     }
 
+    /// The index of the frame playing at the given clock.
+    fn active_index(&self, now: Duration) -> usize {
+        let elapsed = now.saturating_sub(self.start);
+        (elapsed.as_millis() as u32 / (RIVAL_MOVE_PHASE.as_millis() as u32 * 2)) as usize
+    }
+
     /// The active frame and whether we are in the "from" sub-phase (first
     /// half) or "to" sub-phase (second half). `None` once the animation has
     /// expired.
     pub(crate) fn active_frame(&self, now: Duration) -> Option<(&RivalMoveFrame, bool)> {
+        let idx = self.active_index(now);
+        let frame = self.frames.get(idx)?;
         let elapsed = now.saturating_sub(self.start);
         let frame_ms = RIVAL_MOVE_PHASE.as_millis() as u32 * 2;
-        let idx = (elapsed.as_millis() as u32 / frame_ms) as usize;
-        let frame = self.frames.get(idx)?;
         let in_from_phase =
             (elapsed.as_millis() as u32 % frame_ms) < RIVAL_MOVE_PHASE.as_millis() as u32;
         Some((frame, in_from_phase))
+    }
+
+    /// The explosion to flash for a rival attack the replay has just reached:
+    /// the attacked tile, once the attacker has arrived on it (the "to"
+    /// sub-phase — combat is always fought on the destination square, so the
+    /// attacker marches out of its own tile first, then the tile it struck
+    /// erupts). `None` for a plain step, for the arrival half of any step, and
+    /// once the animation has expired. The returned flash's clock starts at the
+    /// frame's own onset, keeping the explosion a pure function of the clock
+    /// however late in the replay the fight happened.
+    pub(crate) fn active_battle(&self, now: Duration) -> Option<BattleAnimation> {
+        let (frame, in_from_phase) = self.active_frame(now)?;
+        if in_from_phase || !frame.battle {
+            return None;
+        }
+        Some(BattleAnimation {
+            location: frame.to,
+            start: self.start + RIVAL_MOVE_PHASE * 2 * self.active_index(now) as u32,
+        })
     }
 }
 
@@ -228,7 +254,13 @@ impl<'a> GameScreen<'a> {
         // been drawn, so it sits on top of the whole map — tiles, units,
         // markers and city labels. When the animation is running, this holds
         // the painted tile's left column; the two-column-wide 💥 covers the
-        // tile from there.
+        // tile from there. The flash is either the player's own recent fight
+        // or the rival attack the replay has just arrived at; the player's own
+        // takes precedence while both could be live.
+        let flash = self.battle_animation.or_else(|| {
+            self.rival_animation
+                .and_then(|animation| animation.active_battle(self.now))
+        });
         let mut flash_cell: Option<(u16, u16)> = None;
 
         // Rival units replaying their round are lifted off their game-state
@@ -266,7 +298,7 @@ impl<'a> GameScreen<'a> {
                     city_labels.push((cx, cy + 1, name));
                 }
 
-                if let Some(animation) = self.battle_animation
+                if let Some(animation) = flash
                     && src_x % map_w == animation.location.x as usize
                     && src_y == animation.location.y as usize
                     && animation.glyph(self.now).is_some()
@@ -279,24 +311,6 @@ impl<'a> GameScreen<'a> {
         // Second pass: city name labels sit on top of the map.
         for (tile_cx, row_y, name) in city_labels {
             draw_city_label(buf, tile_cx, row_y, &name);
-        }
-
-        // Third and final pass: the battle explosion, anchored in the tile's
-        // left column so the wide glyph covers exactly the defended tile, with
-        // the tile's right column blanked beneath it. Painted last, it is at
-        // the top of the z-order and nothing the map draws can cover it.
-        if let Some((cx, cy)) = flash_cell
-            && let Some(animation) = self.battle_animation
-            && let Some(glyph) = animation.glyph(self.now)
-        {
-            if let Some(cell) = buf.cell_mut((cx, cy)) {
-                cell.set_symbol(glyph);
-            }
-            if TILE_WIDTH > 1
-                && let Some(cell) = buf.cell_mut((cx + 1, cy))
-            {
-                cell.set_symbol(" ");
-            }
         }
 
         // The rival-movement replay draws the actively moving unit on top of
@@ -322,6 +336,25 @@ impl<'a> GameScreen<'a> {
                     cell.set_symbol(&first_letter(unit.unit_class).to_string());
                     cell.set_style(style);
                 }
+            }
+        }
+
+        // Third and final pass: the battle explosion, anchored in the tile's
+        // left column so the wide glyph covers exactly the struck tile, with
+        // the tile's right column blanked beneath it. Painted last — over the
+        // replayed rival glyph too — so it is at the top of the z-order and
+        // nothing the map draws can cover it.
+        if let Some((cx, cy)) = flash_cell
+            && let Some(animation) = flash
+            && let Some(glyph) = animation.glyph(self.now)
+        {
+            if let Some(cell) = buf.cell_mut((cx, cy)) {
+                cell.set_symbol(glyph);
+            }
+            if TILE_WIDTH > 1
+                && let Some(cell) = buf.cell_mut((cx + 1, cy))
+            {
+                cell.set_symbol(" ");
             }
         }
     }

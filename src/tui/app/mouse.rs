@@ -42,6 +42,12 @@ impl App {
             self.handle_diplomacy_mouse(mouse);
             return;
         }
+        // The war-declaration window floats above everything and captures all
+        // mouse input while it is open.
+        if self.war_notice_rect.get().is_some() {
+            self.handle_war_notice_mouse(mouse);
+            return;
+        }
         // The research dialog floats above everything and captures all mouse
         // input while it is open.
         if self.research_dialog_rect.get().is_some() {

@@ -2,10 +2,11 @@
 
 Source: `src/game_engine/*.rs`. Facade `mod.rs` re-exports `Engine`,
 `GameView`, `Command`, `Player`, `Event`, `MoveError`, `SettleError`,
-`Exploration`, `CityIncome`, `RivalMotion`, `GameOutcome`,
+`Exploration`, `CityIncome`, `RivalMotion`, `RivalWar`, `GameOutcome`,
 `DEFAULT_MAP_WIDTH/HEIGHT`. One `impl Engine` block per concern file
 (`movement.rs`, `combat.rs`, `cities.rs`, `diplomacy.rs`, `research.rs`,
-`turns.rs`, `outcome.rs`).
+`turns.rs`, `outcome.rs`; the rival AI lives in `rival_player_engine.rs`,
+which owns `RivalMotion` and `RivalWar`).
 
 ```mermaid
 classDiagram
@@ -16,11 +17,13 @@ classDiagram
         +Vec~Event~ events
         +Rng rng
         +Vec~RivalMotion~ motion
+        +Vec~RivalWar~ rival_wars
         +new(w, h, first, rest)
         +new_random(w, h, first, rest)
         +with_seed(w, h, first, rest, seed)
         +submit(cmd) Vec~Event~
         +drain_rival_motion() Vec~RivalMotion~
+        +drain_rival_wars() Vec~RivalWar~
         +run_rival_turn()
         +game_outcome() Option~GameOutcome~
     }
@@ -126,6 +129,10 @@ classDiagram
         +UnitId unit
         +Location from
         +Location to
+        +bool battle
+    }
+    class RivalWar {
+        +PlayerId rival
     }
     class Exploration {
         +new(w, h)
@@ -173,6 +180,7 @@ classDiagram
     Engine *-- Game : 1 owns
     Engine *-- Event : 0..* log
     Engine *-- RivalMotion : 0..* transient replay
+    Engine *-- RivalWar : 0..* transient declarations
     Engine ..|> GameView : implements
     Game *-- Player : 1..* players
     Game *-- Unit : 0..* units
@@ -191,6 +199,7 @@ classDiagram
     SaveData ..> Engine : capture() clones
     RivalMotion ..> UnitId : unit
     RivalMotion ..> Location : from/to
+    RivalWar ..> PlayerId : rival
 ```
 
 ## Dispatch table (`Engine::submit` → concern module)
@@ -202,6 +211,6 @@ classDiagram
 | `FoundCity` / `SetProductionTarget` | `cities.rs` | `Game::add_city`, `auto_assign_work`, `player.can_build` |
 | `DeclareWar` / `MakePeace` | `diplomacy.rs` | `Game::declare_war` / `make_peace` |
 | `SetResearchTarget` | `research.rs` | `Game::can_research`, `set_research_target` |
-| `EndTurn` | `turns.rs` + `rival_player_engine.rs` | `advance_to_next_player`, `begin_turn`, `run_rival_turn`, `drain_rival_motion` |
+| `EndTurn` | `turns.rs` + `rival_player_engine.rs` | `advance_to_next_player`, `begin_turn`, `run_rival_turn`, `drain_rival_motion`, `drain_rival_wars` |
 
-`Engine.motion` is transient: rebuilt fresh in `into_loaded`, never serialized into `SaveData`.
+`Engine.motion` and `Engine.rival_wars` are transient: rebuilt fresh in `into_loaded`, never serialized into `SaveData`.

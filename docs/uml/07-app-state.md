@@ -3,7 +3,8 @@
 Source: `src/tui/app/mod.rs` (`Phase`), `setup.rs`, `playing.rs`, `dialogs.rs`,
 `pickers.rs`, `mouse.rs`. `App::draw` matches `phase`; `handle_key` dispatches
 per phase. `Playing` keeps modal priority: save prompt swallows everything, then
-research → diplomacy → command picker → production picker → rival replay.
+research → war notice → diplomacy → command picker → production picker →
+rival replay.
 
 ```mermaid
 stateDiagram-v2
@@ -42,6 +43,9 @@ stateDiagram-v2
         Exploring --> DiplomacyOpen : first contact / peaceful-block
         DiplomacyOpen --> Exploring : DeclareWar (+retry move) / MakePeace / cancel
 
+        Exploring --> WarNoticeOpen : EndTurn → drain_rival_wars()
+        WarNoticeOpen --> Exploring : Enter / Space / Esc (OK); next queued war reopens
+
         Exploring --> SavePromptOpen : S (save) 
         SavePromptOpen --> Exploring : save_game() / cancel
 
@@ -60,13 +64,15 @@ stateDiagram-v2
    EndTurn outcome overlay, no `Phase` change. Save prompt and game-over never both open.
 3. `quit_dialog` open → quit dialog keys/mouse only.
 4. `research_dialog` → research keys only.
-5. `diplomacy` → diplomacy keys only.
-6. `command_picker_open` → command picker keys only.
-7. `production_picker_open` → production picker keys only.
-8. `rival_animation` active → swallows game input (modals still capture), pans camera.
-9. Otherwise: unit keys (`arrows/hjkl/yubn`, `Tab` cycle, `space` sentry-wait),
-   `v` found city, `w` command window, `c` cancel order, `e` toggle events, `?` help,
-   `S` save, `Enter` end turn, `Esc` deselect/close.
+5. `war_notice` → Enter/Space/Esc acknowledges (clicks the OK button) and
+   pops the next queued `RivalWar` declaration, if any.
+6. `diplomacy` → diplomacy keys only.
+7. `command_picker_open` → command picker keys only.
+8. `production_picker_open` → production picker keys only.
+9. `rival_animation` active → swallows game input (modals still capture), pans camera.
+10. Otherwise: unit keys (`arrows/hjkl/yubn`, `Tab` cycle, `space` sentry-wait),
+    `v` found city, `w` command window, `c` cancel order, `e` toggle events, `?` help,
+    `S` save, `Enter` end turn, `Esc` deselect/close.
 
 `SaveLoadPrompt` renders topmost in every phase (`draw` paints it last).
 Default save path is `civterm.civ`.

@@ -112,7 +112,9 @@ impl Engine {
                         let city = self.game.cities.iter().find(|c| c.id() == city_id).unwrap();
                         let location = city.location;
                         let has_barracks = city.improvements().contains(&CityImprovement::Barracks);
-                        let unit = self.game.spawn_unit(unit_class, location, owner, city_id);
+                        let unit = self
+                            .game
+                            .spawn_unit(unit_class, location, owner, Some(city_id));
                         if has_barracks
                             && let Some(index) = self.game.units.iter().position(|u| u.id() == unit)
                         {

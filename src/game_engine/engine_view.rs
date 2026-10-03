@@ -74,7 +74,7 @@ impl GameView for Engine {
         self.game
             .units
             .iter()
-            .filter(|unit| unit.home_city() == city)
+            .filter(|unit| unit.home_city() == Some(city))
             .collect()
     }
 

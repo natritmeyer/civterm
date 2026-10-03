@@ -196,7 +196,7 @@ fn hover_view() -> FakeView {
             UnitClass::Settler,
             Location::new(10, 4),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
             UnitId::new(7),
         )),
         explored: true,
@@ -363,7 +363,7 @@ fn the_hovered_tile_is_shaded_while_its_neighbours_are_not() {
         crate::model::units::UnitClass::Militia,
         crate::model::cartography::Location::new(0, 0),
         crate::model::civilizations::PlayerId::new(0),
-        crate::model::cities::CityId::new(0),
+        Some(crate::model::cities::CityId::new(0)),
         crate::model::units::UnitId::new(7),
     );
     let view = FakeView {
@@ -428,7 +428,7 @@ fn the_idle_unit_flash_is_pinned_off_while_disabled() {
             crate::model::units::UnitClass::Militia,
             crate::model::cartography::Location::new(0, 0),
             crate::model::civilizations::PlayerId::new(0),
-            crate::model::cities::CityId::new(0),
+            Some(crate::model::cities::CityId::new(0)),
             crate::model::units::UnitId::new(7),
         )),
         explored: true,
@@ -561,7 +561,7 @@ fn city_and_unit_view() -> FakeView {
         crate::model::units::UnitClass::Militia,
         crate::model::cartography::Location::new(2, 2),
         crate::model::civilizations::PlayerId::new(0),
-        crate::model::cities::CityId::new(0),
+        Some(crate::model::cities::CityId::new(0)),
         crate::model::units::UnitId::new(1),
     ));
     view
@@ -586,7 +586,7 @@ fn a_unit_in_a_city_stands_on_the_citys_owner_colour() {
         crate::model::units::UnitClass::Militia,
         crate::model::cartography::Location::new(2, 2),
         crate::model::civilizations::PlayerId::new(0),
-        crate::model::cities::CityId::new(0),
+        Some(crate::model::cities::CityId::new(0)),
         crate::model::units::UnitId::new(1),
     ));
     let (plain_cell, plain_name) = painted_cell(&plain, None, false);
@@ -653,7 +653,7 @@ fn a_captured_city_changes_colour_beneath_the_conquering_unit() {
         crate::model::units::UnitClass::Militia,
         crate::model::cartography::Location::new(2, 2),
         crate::model::civilizations::PlayerId::new(0),
-        crate::model::cities::CityId::new(2),
+        Some(crate::model::cities::CityId::new(2)),
         crate::model::units::UnitId::new(3),
     ));
     let (occupied, _) = painted_cell(&foreign, None, false);
@@ -727,7 +727,7 @@ fn a_selected_idle_unit_in_a_foreign_city_blinks_against_the_occupation() {
         crate::model::units::UnitClass::Militia,
         crate::model::cartography::Location::new(2, 2),
         crate::model::civilizations::PlayerId::new(0),
-        crate::model::cities::CityId::new(2),
+        Some(crate::model::cities::CityId::new(2)),
         crate::model::units::UnitId::new(3),
     ));
     let idle = crate::model::units::UnitId::new(3);
@@ -760,7 +760,7 @@ fn a_selected_idle_unit_on_open_ground_keeps_its_letter_off_phase() {
         crate::model::units::UnitClass::Militia,
         crate::model::cartography::Location::new(2, 2),
         crate::model::civilizations::PlayerId::new(0),
-        crate::model::cities::CityId::new(0),
+        Some(crate::model::cities::CityId::new(0)),
         crate::model::units::UnitId::new(1),
     ));
     let idle = crate::model::units::UnitId::new(1);
@@ -790,7 +790,7 @@ fn a_unit_letter_wears_its_civilisations_colour() {
         crate::model::units::UnitClass::Militia,
         crate::model::cartography::Location::new(2, 2),
         crate::model::civilizations::PlayerId::new(0),
-        crate::model::cities::CityId::new(0),
+        Some(crate::model::cities::CityId::new(0)),
         crate::model::units::UnitId::new(1),
     ));
 
@@ -819,7 +819,7 @@ fn a_unit_in_its_own_city_keeps_terrain_text_for_contrast() {
         crate::model::units::UnitClass::Militia,
         crate::model::cartography::Location::new(2, 2),
         crate::model::civilizations::PlayerId::new(0),
-        crate::model::cities::CityId::new(0),
+        Some(crate::model::cities::CityId::new(0)),
         crate::model::units::UnitId::new(1),
     ));
 
@@ -842,7 +842,7 @@ fn the_flash_keeps_the_letter_legible_on_its_own_flag() {
         crate::model::units::UnitClass::Militia,
         crate::model::cartography::Location::new(2, 2),
         crate::model::civilizations::PlayerId::new(0),
-        crate::model::cities::CityId::new(0),
+        Some(crate::model::cities::CityId::new(0)),
         crate::model::units::UnitId::new(1),
     ));
     let idle = crate::model::units::UnitId::new(1);
@@ -1684,7 +1684,7 @@ fn a_unit_on_an_unexplored_tile_stays_hidden() {
         crate::model::units::UnitClass::Knight,
         crate::model::cartography::Location::new(0, 0),
         crate::model::civilizations::PlayerId::new(0),
-        crate::model::cities::CityId::new(0),
+        Some(crate::model::cities::CityId::new(0)),
         crate::model::units::UnitId::new(0),
     );
     let view = FakeView {
@@ -1774,11 +1774,13 @@ fn rival_move_animation_active_frame_follows_phase_timing() {
                 unit_id: UnitId::new(1),
                 from: Location::new(2, 2),
                 to: Location::new(3, 2),
+                battle: false,
             },
             RivalMoveFrame {
                 unit_id: UnitId::new(2),
                 from: Location::new(5, 5),
                 to: Location::new(6, 5),
+                battle: false,
             },
         ],
     };
@@ -1830,11 +1832,13 @@ fn rival_move_animation_hidden_units() {
                 unit_id: UnitId::new(1),
                 from: Location::new(2, 2),
                 to: Location::new(3, 2),
+                battle: false,
             },
             RivalMoveFrame {
                 unit_id: UnitId::new(2),
                 from: Location::new(5, 5),
                 to: Location::new(6, 5),
+                battle: false,
             },
         ],
     };
@@ -1862,7 +1866,7 @@ fn paint_tile_suppresses_a_hidden_unit() {
         crate::model::units::UnitClass::Militia,
         crate::model::cartography::Location::new(2, 2),
         crate::model::civilizations::PlayerId::new(1),
-        crate::model::cities::CityId::new(0),
+        Some(crate::model::cities::CityId::new(0)),
         crate::model::units::UnitId::new(9),
     ));
     // Unhidden: the unit's class letter is drawn.
@@ -1890,7 +1894,7 @@ fn rival_replay_draws_the_moving_unit_over_the_map() {
         crate::model::units::UnitClass::Militia,
         Location::new(2, 2),
         crate::model::civilizations::PlayerId::new(1),
-        crate::model::cities::CityId::new(0),
+        Some(crate::model::cities::CityId::new(0)),
         UnitId::new(9),
     ));
     let animation = RivalMoveAnimation {
@@ -1899,6 +1903,7 @@ fn rival_replay_draws_the_moving_unit_over_the_map() {
             unit_id: UnitId::new(9),
             from: Location::new(2, 2),
             to: Location::new(3, 2),
+            battle: false,
         }],
     };
     let left = LEFT_COLUMN_WIDTH;
@@ -1985,4 +1990,130 @@ fn rival_replay_draws_the_moving_unit_over_the_map() {
             " "
         );
     }
+}
+
+/// A rival attack is a battle landing: the replay flashes the tile the rival
+/// struck, but only once the attacker has arrived on it — combat is fought on
+/// the destination square, so the attacker marches off its own tile first.
+#[test]
+fn a_replay_battle_frame_flashes_the_attacked_tile_on_arrival() {
+    use super::{RivalMoveAnimation, RivalMoveFrame};
+    use crate::model::cartography::Location;
+    use crate::model::units::UnitId;
+
+    let mut view = fake_view();
+    view.explored = false;
+    view.unit = Some(crate::model::units::Unit::new(
+        crate::model::units::UnitClass::Legion,
+        Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(1),
+        Some(crate::model::cities::CityId::new(0)),
+        UnitId::new(9),
+    ));
+    let animation = RivalMoveAnimation {
+        start: Duration::ZERO,
+        frames: vec![RivalMoveFrame {
+            unit_id: UnitId::new(9),
+            from: Location::new(2, 2),
+            to: Location::new(3, 2),
+            battle: true,
+        }],
+    };
+    let attacked_left = LEFT_COLUMN_WIDTH + (3 * TILE_WIDTH) as u16;
+    let draw_at = |now| {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    GameScreen::new(&view, None, (0, 0), None, None, now, false, &[], None)
+                        .with_rival_animation(Some(&animation)),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    };
+
+    // Mid-march, the attacker is still on its own tile: nothing has exploded.
+    let buf = draw_at(Duration::from_millis(100));
+    assert_eq!(buf.cell((attacked_left, 2)).unwrap().symbol(), " ");
+
+    // On arrival the struck tile erupts, its right column is cleared and the
+    // eastern neighbour is untouched.
+    let buf = draw_at(Duration::from_millis(400));
+    assert_eq!(
+        buf.cell((attacked_left, 2)).unwrap().symbol(),
+        "💥",
+        "the arrival on the attacked tile flashes"
+    );
+    assert_eq!(
+        buf.cell((attacked_left + 1, 2)).unwrap().symbol(),
+        " ",
+        "the wide glyph covers exactly the attacked tile"
+    );
+    assert_eq!(
+        buf.cell((attacked_left + 2, 2)).unwrap().symbol(),
+        " ",
+        "the eastern neighbour is not painted over"
+    );
+}
+
+/// The flash follows the frame, not the clock: a battle landing late in a long
+/// replay still explodes, because the flash's clock starts at that frame's own
+/// onset rather than at the beginning of the animation.
+#[test]
+fn a_late_battle_frame_still_flashes_its_own_tile() {
+    use super::{RIVAL_MOVE_PHASE, RivalMoveAnimation, RivalMoveFrame};
+    use crate::model::cartography::Location;
+    use crate::model::units::UnitId;
+
+    let phase_ms = RIVAL_MOVE_PHASE.as_millis() as u64;
+    let frame_ms = phase_ms * 2;
+    let animation = RivalMoveAnimation {
+        start: Duration::ZERO,
+        frames: vec![
+            RivalMoveFrame {
+                unit_id: UnitId::new(1),
+                from: Location::new(2, 2),
+                to: Location::new(3, 2),
+                battle: false,
+            },
+            RivalMoveFrame {
+                unit_id: UnitId::new(2),
+                from: Location::new(5, 5),
+                to: Location::new(6, 5),
+                battle: true,
+            },
+        ],
+    };
+
+    // A plain step never flashes, not even on arrival.
+    assert!(animation.active_battle(Duration::from_millis(0)).is_none());
+    assert!(
+        animation
+            .active_battle(Duration::from_millis(phase_ms))
+            .is_none()
+    );
+    // The battle step flashes only on arrival, and only on its own tile.
+    assert!(
+        animation
+            .active_battle(Duration::from_millis(frame_ms + 1))
+            .is_none(),
+        "the attacker is still on its own tile mid-march"
+    );
+    let flash = animation
+        .active_battle(Duration::from_millis(frame_ms + phase_ms + 1))
+        .expect("the second frame's arrival flashes");
+    assert_eq!(flash.location, Location::new(6, 5));
+    assert_eq!(
+        flash.start,
+        Duration::from_millis(frame_ms),
+        "the flash's clock is the frame's own onset, so it lasts the frame"
+    );
+    // Nothing once the replay is over.
+    assert!(
+        animation
+            .active_battle(Duration::from_millis(frame_ms * 2))
+            .is_none()
+    );
 }

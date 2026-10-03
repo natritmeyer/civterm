@@ -670,7 +670,7 @@ fn clicking_a_city_next_to_a_spent_unit_still_opens_the_city_window() {
             UnitClass::Settler,
             Location::new(nx as u16, ny as u16),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
         );
         let index = engine
             .game
@@ -1034,7 +1034,7 @@ fn clicking_unfortify_returns_a_garrison_to_the_command_loop() {
         UnitClass::Militia,
         city_location,
         PlayerId::new(0),
-        city_id,
+        Some(city_id),
     );
     {
         let engine = app.engine.as_mut().unwrap();
@@ -1720,7 +1720,7 @@ fn app_with_distant_settler() -> App {
         UnitClass::Settler,
         Location::new(5, 25),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     app.engine = Some(engine);
     let settler = app.engine.as_ref().unwrap().player_units()[0].id();
@@ -1795,7 +1795,7 @@ fn app_with_settlers_at(tiles: &[(u16, u16)]) -> (App, Vec<UnitId>) {
                 UnitClass::Settler,
                 Location::new(*x, *y),
                 PlayerId::new(0),
-                CityId::new(0),
+                Some(CityId::new(0)),
             )
         })
         .collect();
@@ -1845,7 +1845,7 @@ fn tab_skips_fortified_sentried_and_loaded_units() {
             UnitClass::Trireme,
             Location::new(7, 1),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
         );
         // The settler at (5,1) rides the ship: no field agency of its own,
         // and the ship itself has already sailed this turn.
@@ -1874,7 +1874,7 @@ fn tab_skips_fortified_sentried_and_loaded_units() {
         UnitClass::Settler,
         Location::new(9, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     app.handle_key(key(KeyCode::Tab));
     assert_eq!(app.selected_unit, Some(extra));
@@ -1928,7 +1928,7 @@ fn a_unit_with_movement_left_keeps_the_focus() {
         UnitClass::Cavalry,
         Location::new(7, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     for _ in 0..4 {
         app.handle_key(key(KeyCode::Tab));
@@ -2224,7 +2224,7 @@ fn app_with_adjacent_enemy() -> Option<(App, UnitId, Direction, Location)> {
         UnitClass::Militia,
         enemy_tile,
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     Some((app, settler_id, direction, enemy_tile))
 }
@@ -2268,7 +2268,7 @@ fn app_with_adjacent_foreigner() -> Option<(App, UnitId, Direction, Location, Lo
         UnitClass::Militia,
         enemy_tile,
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     Some((app, settler_id, direction, enemy_tile, home))
 }
@@ -2330,7 +2330,7 @@ fn app_with_unknown_neighbor() -> Option<(App, UnitId, Direction, Location)> {
         UnitClass::Militia,
         far_tile,
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     Some((app, settler_id, direction, meet_tile))
 }
@@ -2895,7 +2895,7 @@ fn clicking_a_city_tile_prefers_the_city_window_over_a_unit_on_it() {
         UnitClass::Militia,
         city_location,
         PlayerId::new(0),
-        city_id,
+        Some(city_id),
     );
     app.selected_unit = Some(garrison);
     app.open_command_picker();
@@ -2922,7 +2922,7 @@ fn the_command_picker_offers_unfortify_for_a_fortified_garrison() {
         UnitClass::Militia,
         city_location,
         PlayerId::new(0),
-        city_id,
+        Some(city_id),
     );
     {
         let engine = app.engine.as_mut().unwrap();
@@ -3062,7 +3062,7 @@ fn app_with_marching_rival(reveal: Option<(Location, u8)>) -> App {
         UnitClass::Settler,
         Location::new(1, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.cities.push(City::new(
         "Ulundi",
@@ -3074,7 +3074,7 @@ fn app_with_marching_rival(reveal: Option<(Location, u8)>) -> App {
         UnitClass::Legion,
         Location::new(4, 1),
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     if let Some((origin, radius)) = reveal {
         engine.game.players[0].reveal_tiles_at(origin, radius);
@@ -3142,6 +3142,7 @@ fn game_keys_are_idle_while_the_rival_replay_runs() {
             unit_id,
             from: Location::new(1, 0),
             to: Location::new(2, 0),
+            battle: false,
         }],
     });
 
@@ -3176,6 +3177,7 @@ fn the_rival_replay_pans_the_camera_to_the_moving_unit() {
             unit_id,
             from: Location::new((width - 20) as u16, 5),
             to: Location::new((width - 19) as u16, 5),
+            battle: false,
         }],
     });
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -3193,6 +3195,7 @@ fn the_rival_replay_pans_the_camera_to_the_moving_unit() {
             unit_id,
             from: Location::new(24, 24),
             to: Location::new(25, 24),
+            battle: false,
         }],
     });
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -3257,6 +3260,74 @@ fn a_rival_step_arriving_in_sight_is_replayed() {
             .unwrap()
             .location,
         "the replayed arrival is where the legion now stands"
+    );
+}
+
+/// The rival's attack reaches the player as a battle frame, so the replay
+/// flashes the explosion over the tile the fight was fought on.
+#[test]
+fn a_rival_attack_replays_as_a_battle_frame() {
+    let mut app = App::new();
+    app.phase = Phase::Playing;
+    let mut engine = Engine::new(
+        5,
+        3,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    // The human keeps a city, so control wraps back to them and the round
+    // ends with the human's discovery map in play.
+    engine.game.cities.push(City::new(
+        "London",
+        Location::new(4, 2),
+        PlayerId::new(0),
+        CityId::new(0),
+    ));
+    engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(0, 0),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(1)),
+    );
+    // The human has spied the fight, so the attack is replayed rather than
+    // staying in the fog.
+    engine.game.players[0].reveal_tiles_at(Location::new(0, 0), 2);
+    app.engine = Some(engine);
+
+    app.end_turn(); // the rival's turn resolves
+
+    let animation = app
+        .rival_animation
+        .as_ref()
+        .expect("the rival's attack is replayed");
+    let frame = animation
+        .frames
+        .iter()
+        .find(|frame| frame.battle)
+        .expect("the attack is replayed as a battle, so the tile it struck flashes");
+    assert_eq!(
+        frame.to,
+        Location::new(0, 0),
+        "the fight is fought on the tile the rival attacked"
+    );
+    assert!(
+        app.war_notice.is_some(),
+        "and the war is still announced by its own window"
     );
 }
 

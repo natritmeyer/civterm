@@ -81,7 +81,7 @@ impl Game {
         unit_class: UnitClass,
         location: Location,
         owner: PlayerId,
-        home_city: CityId,
+        home_city: Option<CityId>,
     ) -> UnitId {
         let id = UnitId::new(self.next_unit_id);
         self.next_unit_id += 1;
@@ -103,7 +103,7 @@ impl Game {
         let mut doomed: Vec<UnitId> = self
             .units
             .iter()
-            .filter(|unit| unit.home_city() == city_id)
+            .filter(|unit| unit.home_city() == Some(city_id))
             .map(|unit| unit.id())
             .collect();
         // A unit aboard a doomed carrier goes down with it. Cargo is never
@@ -467,8 +467,18 @@ mod tests {
     #[test]
     fn spawn_unit_allocates_ids_that_resolve_in_the_list() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        let first = game.spawn_unit(UnitClass::Settler, Location::new(0, 0), player(), home());
-        let second = game.spawn_unit(UnitClass::Legion, Location::new(1, 0), player(), home());
+        let first = game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
+        let second = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(1, 0),
+            player(),
+            Some(home()),
+        );
         assert_eq!(first, UnitId::new(0));
         assert_eq!(second, UnitId::new(1));
         assert_eq!(game.units.len(), 2);
@@ -481,9 +491,24 @@ mod tests {
     #[test]
     fn removing_a_unit_does_not_disturb_other_ids() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        let first = game.spawn_unit(UnitClass::Legion, Location::new(0, 0), player(), home());
-        let middle = game.spawn_unit(UnitClass::Legion, Location::new(1, 0), player(), home());
-        let third = game.spawn_unit(UnitClass::Diplomat, Location::new(2, 0), player(), home());
+        let first = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
+        let middle = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(1, 0),
+            player(),
+            Some(home()),
+        );
+        let third = game.spawn_unit(
+            UnitClass::Diplomat,
+            Location::new(2, 0),
+            player(),
+            Some(home()),
+        );
         assert_eq!(
             game.remove_unit(middle).unwrap().unit_class,
             UnitClass::Legion
@@ -512,7 +537,7 @@ mod tests {
             UnitClass::Settler,
             Location::new(2, 2),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
         );
         assert!(game.players[0].explored_at(1, 1));
         assert!(game.players[0].explored_at(2, 2));
@@ -630,13 +655,23 @@ mod tests {
     #[test]
     fn disbanding_units_sorted_by_home_city_removes_only_those() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        let first = game.spawn_unit(UnitClass::Legion, Location::new(0, 0), player(), home());
-        let second = game.spawn_unit(UnitClass::Legion, Location::new(1, 0), player(), home());
+        let first = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
+        let second = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(1, 0),
+            player(),
+            Some(home()),
+        );
         let other = game.spawn_unit(
             UnitClass::Diplomat,
             Location::new(2, 0),
             player(),
-            CityId::new(1),
+            Some(CityId::new(1)),
         );
         assert_eq!(game.disband_units_homed_to(home()), 2);
         assert_eq!(game.units.len(), 1);
@@ -652,7 +687,7 @@ mod tests {
             UnitClass::Legion,
             Location::new(0, 0),
             player(),
-            CityId::new(1),
+            Some(CityId::new(1)),
         );
         assert_eq!(game.disband_units_homed_to(home()), 0);
         assert_eq!(game.units.len(), 1);
@@ -661,13 +696,18 @@ mod tests {
     #[test]
     fn disbanding_a_homed_carrier_also_dissolves_its_cargo() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        let trireme = game.spawn_unit(UnitClass::Trireme, Location::new(0, 0), player(), home());
+        let trireme = game.spawn_unit(
+            UnitClass::Trireme,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
         // Cargo homed elsewhere: it would survive were it not aboard the ship.
         let cargo = game.spawn_unit(
             UnitClass::Legion,
             Location::new(0, 0),
             player(),
-            CityId::new(1),
+            Some(CityId::new(1)),
         );
         game.units
             .iter_mut()
@@ -687,13 +727,23 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        game.spawn_unit(UnitClass::Legion, Location::new(0, 0), player(), home());
-        game.spawn_unit(UnitClass::Militia, Location::new(0, 1), player(), home());
+        game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
+        game.spawn_unit(
+            UnitClass::Militia,
+            Location::new(0, 1),
+            player(),
+            Some(home()),
+        );
         let rival = game.spawn_unit(
             UnitClass::Phalanx,
             Location::new(1, 1),
             PlayerId::new(1),
-            home(),
+            Some(home()),
         );
         assert_eq!(game.remove_units_owned_by(player()), 2);
         assert_eq!(game.units.len(), 1);
@@ -703,9 +753,24 @@ mod tests {
     #[test]
     fn syncing_cargo_tracks_transported_units_to_their_carrier() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        let trireme = game.spawn_unit(UnitClass::Trireme, Location::new(0, 0), player(), home());
-        let first = game.spawn_unit(UnitClass::Legion, Location::new(8, 8), player(), home());
-        let second = game.spawn_unit(UnitClass::Legion, Location::new(8, 8), player(), home());
+        let trireme = game.spawn_unit(
+            UnitClass::Trireme,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
+        let first = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(8, 8),
+            player(),
+            Some(home()),
+        );
+        let second = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(8, 8),
+            player(),
+            Some(home()),
+        );
         game.units
             .iter_mut()
             .find(|unit| unit.id() == first)
@@ -722,7 +787,12 @@ mod tests {
         assert_eq!(game.units[1].location, Location::new(1, 1));
         assert_eq!(game.units[2].location, Location::new(1, 1));
         // An unrelated unit stays where it was.
-        let stranger = game.spawn_unit(UnitClass::Phalanx, Location::new(2, 0), player(), home());
+        let stranger = game.spawn_unit(
+            UnitClass::Phalanx,
+            Location::new(2, 0),
+            player(),
+            Some(home()),
+        );
         game.sync_cargo(trireme);
         assert_eq!(
             game.units
@@ -738,7 +808,12 @@ mod tests {
     #[test]
     fn syncing_cargo_is_a_no_op_for_an_unknown_carrier() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        let unit = game.spawn_unit(UnitClass::Legion, Location::new(0, 0), player(), home());
+        let unit = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
         game.sync_cargo(UnitId::new(99));
         assert_eq!(game.units.len(), 1);
         assert!(game.units.iter().any(|u| u.id() == unit));
@@ -747,9 +822,24 @@ mod tests {
     #[test]
     fn disbanding_cargo_dissolves_only_units_aboard_the_sunken_ship() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        let trireme = game.spawn_unit(UnitClass::Trireme, Location::new(0, 0), player(), home());
-        let cargo = game.spawn_unit(UnitClass::Legion, Location::new(0, 0), player(), home());
-        let other = game.spawn_unit(UnitClass::Phalanx, Location::new(1, 0), player(), home());
+        let trireme = game.spawn_unit(
+            UnitClass::Trireme,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
+        let cargo = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
+        let other = game.spawn_unit(
+            UnitClass::Phalanx,
+            Location::new(1, 0),
+            player(),
+            Some(home()),
+        );
         game.units
             .iter_mut()
             .find(|unit| unit.id() == cargo)
@@ -765,7 +855,12 @@ mod tests {
     #[test]
     fn disbanding_cargo_with_nobody_aboard_disbands_nothing() {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
-        let trireme = game.spawn_unit(UnitClass::Trireme, Location::new(0, 0), player(), home());
+        let trireme = game.spawn_unit(
+            UnitClass::Trireme,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
         assert_eq!(game.disband_cargo_of(trireme), 0);
         assert_eq!(game.units.len(), 1);
     }
@@ -778,13 +873,23 @@ mod tests {
             Player::new(Civilization::English),
             vec![Player::new(Civilization::Zulu)],
         );
-        let mine_first = game.spawn_unit(UnitClass::Settler, Location::new(0, 0), player(), home());
-        let mine_second = game.spawn_unit(UnitClass::Legion, Location::new(1, 0), player(), home());
+        let mine_first = game.spawn_unit(
+            UnitClass::Settler,
+            Location::new(0, 0),
+            player(),
+            Some(home()),
+        );
+        let mine_second = game.spawn_unit(
+            UnitClass::Legion,
+            Location::new(1, 0),
+            player(),
+            Some(home()),
+        );
         let theirs = game.spawn_unit(
             UnitClass::Diplomat,
             Location::new(2, 0),
             PlayerId::new(1),
-            CityId::new(0),
+            Some(CityId::new(0)),
         );
         assert_eq!(game.owned_units(player()), vec![mine_first, mine_second]);
         assert_eq!(game.owned_units(PlayerId::new(1)), vec![theirs]);

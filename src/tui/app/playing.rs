@@ -25,6 +25,18 @@ impl App {
             self.handle_research_dialog_key(key);
             return false;
         }
+        // While the war-declaration window is open it captures the keyboard:
+        // enter or space acknowledges a rival's declaration of war, and the
+        // next one takes its place until the queue empties.
+        if self.war_notice.is_some() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
+                    self.war_notice_confirm();
+                }
+                _ => {}
+            }
+            return false;
+        }
         // While the diplomacy window is open it captures the keyboard: the
         // player may only choose to declare war or remain at peace.
         if self.diplomacy.is_some() {
@@ -255,6 +267,7 @@ impl App {
     fn modal_open(&self) -> bool {
         self.research_dialog.is_some()
             || self.diplomacy.is_some()
+            || self.war_notice.is_some()
             || self.command_picker_open
             || self.production_picker_open
             || self.save_prompt.is_some()
@@ -420,6 +433,7 @@ impl App {
     fn hover_blocked(&self) -> bool {
         self.research_dialog_rect.get().is_some()
             || self.diplomacy_rect.get().is_some()
+            || self.war_notice_rect.get().is_some()
             || self.command_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
             || self.moused_window.get().is_some()
@@ -503,11 +517,19 @@ impl App {
                     unit_id: step.unit,
                     from: step.from,
                     to: step.to,
+                    battle: step.battle,
                 })
                 .collect();
             self.rival_animation = (!frames.is_empty()).then(|| RivalMoveAnimation {
                 start: self.started_at.elapsed(),
                 frames,
+            });
+            // A rival that declared war on the human this round is announced
+            // by a window the player acknowledges; more than one war queues
+            // up one after the other.
+            let wars = engine.drain_rival_wars();
+            self.war_notice = (!wars.is_empty()).then(|| WarNoticeState {
+                queue: wars.into_iter().map(|war| war.rival).collect(),
             });
             // An advancement completes at the start of the human's turn: once
             // play wraps back to player zero, their research has advanced and

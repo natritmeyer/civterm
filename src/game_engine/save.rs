@@ -6,6 +6,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::game_engine::Engine;
+#[cfg(test)]
+use crate::game_engine::RivalWar;
 use crate::game_engine::event::Event;
 use crate::game_engine::game::Game;
 use crate::model::civilizations::PlayerId;
@@ -64,6 +66,7 @@ impl SaveData {
                 events: self.events,
                 rng: self.rng,
                 motion: Vec::new(),
+                rival_wars: Vec::new(),
             },
             competition: self.competition,
             difficulty: self.difficulty,
@@ -189,6 +192,78 @@ mod tests {
     }
 
     #[test]
+    fn a_homeless_starting_settler_survives_save_and_load() {
+        let engine = engine();
+        // A starting settler is homed to no city. That absent reference is the
+        // whole point: a placeholder id would be indistinguishable from a real
+        // city once the first one is founded, so the loaded unit must still
+        // read as homeless, not as homed to whatever took that id.
+        let settler = engine.player_units()[0].id();
+        assert_eq!(
+            engine
+                .game
+                .units
+                .iter()
+                .find(|u| u.id() == settler)
+                .unwrap()
+                .home_city(),
+            None
+        );
+
+        let data = SaveData::capture(&engine, Competition::new(2), Difficulty::Hard);
+        let json = serde_json::to_string(&data).unwrap();
+        let loaded = serde_json::from_str::<SaveData>(&json)
+            .unwrap()
+            .into_loaded()
+            .unwrap();
+
+        assert_eq!(
+            loaded
+                .engine
+                .game
+                .units
+                .iter()
+                .find(|u| u.id() == settler)
+                .unwrap()
+                .home_city(),
+            None,
+            "a homeless settler loads homeless"
+        );
+        assert_eq!(loaded.engine.game, engine.game);
+    }
+
+    #[test]
+    fn a_save_written_before_home_cities_were_optional_still_loads() {
+        // Older builds stored a bare city id for every unit. Such a file must
+        // keep loading: serde reads the number as `Some(id)`, and `#[serde(
+        // default)]` covers a unit whose field is missing altogether.
+        let engine = engine();
+        let settler = engine.player_units()[0].id();
+        let data = SaveData::capture(&engine, Competition::new(2), Difficulty::Hard);
+        let json = serde_json::to_string(&data)
+            .unwrap()
+            .replace("\"home_city\":null", "\"home_city\":0");
+
+        let loaded = serde_json::from_str::<SaveData>(&json)
+            .unwrap()
+            .into_loaded()
+            .unwrap();
+
+        assert_eq!(
+            loaded
+                .engine
+                .game
+                .units
+                .iter()
+                .find(|u| u.id() == settler)
+                .unwrap()
+                .home_city(),
+            Some(CityId::new(0)),
+            "the old bare id reads as a real home city"
+        );
+    }
+
+    #[test]
     fn save_game_and_load_game_write_and_read_a_file() {
         let engine = engine();
         let path = std::env::temp_dir().join(format!("civterm-save-{}.civ", std::process::id()));
@@ -226,13 +301,13 @@ mod tests {
             UnitClass::Trireme,
             Location::new(1, 1),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
         );
         let legion = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(0, 1),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
         );
         let board = engine.submit(Command::Move {
             unit: legion,
@@ -289,6 +364,26 @@ mod tests {
                 .iter()
                 .all(|unit| unit.id() != legion),
             "the map still omits the transported unit"
+        );
+    }
+
+    /// The rival's war declarations are transient: they are announced to the
+    /// player as the round resolves, then drained, so a saved game must
+    /// rebuild them empty rather than carry a stale (or re-announced) war
+    /// across a save/load round trip.
+    #[test]
+    fn rival_war_declarations_do_not_survive_save_and_load() {
+        let mut engine = engine();
+        engine.rival_wars.push(RivalWar {
+            rival: PlayerId::new(1),
+        });
+        let data = SaveData::capture(&engine, Competition::new(1), Difficulty::Normal);
+        let restored: SaveData =
+            serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap();
+        let mut loaded = restored.into_loaded().unwrap();
+        assert!(
+            loaded.engine.drain_rival_wars().is_empty(),
+            "the war record is rebuilt fresh on load, never replayed"
         );
     }
 

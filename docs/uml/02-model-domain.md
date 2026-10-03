@@ -105,7 +105,7 @@ classDiagram
         +new(class, loc, owner, home, id)
         +id() UnitId
         +owner() PlayerId
-        +home_city() CityId
+        +home_city() Option~CityId~
         +order() UnitOrder
         +moves_remaining() int
         +aboard() Option~UnitId~
@@ -290,7 +290,7 @@ classDiagram
     UnitOrder ..> TerrainImprovement : Improving payload
     Unit ..> UnitId : id + aboard carrier
     Unit ..> PlayerId : owner
-    Unit ..> CityId : home_city
+    Unit ..> CityId : home_city (0..1, a starting settler is homeless)
     Unit ..> Location : location copy
     City *-- CityImprovement : 0..* owned
     City *-- ProductionTarget : 0..1 active

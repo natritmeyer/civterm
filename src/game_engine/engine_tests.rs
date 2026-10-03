@@ -69,7 +69,7 @@ fn test_engine() -> Engine {
         UnitClass::Settler,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine
 }
@@ -193,7 +193,7 @@ fn two_player_engine() -> Engine {
         UnitClass::Settler,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine
 }
@@ -306,7 +306,7 @@ fn commanding_another_players_unit_is_rejected() {
         UnitClass::Legion,
         Location::new(2, 0),
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::Fortify { unit: legion });
     assert_eq!(events[0].message(), "No such unit");
@@ -463,7 +463,7 @@ fn work_command_is_limited_to_settlers() {
         UnitClass::Legion,
         location,
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::Work {
         unit: legion,
@@ -494,7 +494,7 @@ fn an_order_consumes_the_units_turn() {
         UnitClass::Cavalry,
         Location::new(0, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     assert_eq!(engine.game.units[1].moves_remaining(), 3);
     engine.submit(Command::Sentry { unit: cavalry });
@@ -543,7 +543,7 @@ fn unfortify_leaves_any_other_order_alone() {
         UnitClass::Cavalry,
         Location::new(0, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::Sentry { unit: cavalry });
     assert_eq!(engine.game.units[1].order(), UnitOrder::Sentried);
@@ -585,7 +585,7 @@ fn unsentry_leaves_any_other_order_alone() {
         UnitClass::Cavalry,
         Location::new(0, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::Fortify { unit: cavalry });
     assert_eq!(engine.game.units[1].order(), UnitOrder::Fortified);
@@ -615,7 +615,7 @@ fn moving_a_unit_reveals_tiles_around_its_new_location() {
         UnitClass::Settler,
         Location::new(0, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     assert!(engine.explored(1, 1));
     assert!(!engine.explored(4, 4));
@@ -635,7 +635,7 @@ fn moving_only_reveals_for_the_units_owner() {
         UnitClass::Settler,
         Location::new(1, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.map.tile_at_mut(Location::new(2, 0)).terrain = Terrain::Grassland;
     engine.submit(Command::Move {
@@ -688,13 +688,13 @@ fn a_rivals_garrison_march_is_recorded_for_the_replay_and_drains_once() {
         UnitClass::Settler,
         Location::new(1, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let legion = engine.game.spawn_unit(
         UnitClass::Legion,
         Location::new(4, 1),
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.cities.push(City::new(
         "Ulundi",
@@ -743,6 +743,249 @@ fn a_rivals_garrison_march_is_recorded_for_the_replay_and_drains_once() {
     );
 }
 
+/// A rival legion beside a human militia it outguns: on its turn it declares
+/// war — a `RivalWar` the TUI announces — and steps onto the militia through
+/// the ordinary move path, so the two sides are at war and the fight is
+/// fought. The map is plain grassland so no terrain bonus skews the powers.
+#[test]
+fn a_rival_declares_war_and_attacks_an_adjacent_fight_it_would_win() {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(0, 0),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+
+    let events = engine.submit(Command::EndTurn);
+
+    let human = PlayerId::new(0);
+    let zulu = PlayerId::new(1);
+    assert!(
+        engine.game.at_war(human, zulu),
+        "the winning rival declares war"
+    );
+    assert_eq!(
+        engine.drain_rival_wars(),
+        vec![RivalWar { rival: zulu }],
+        "one war against the human is recorded for the window"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.message().contains("Zulu declares war on English")),
+        "the declaration reaches the log"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.message().contains("attacks Unit")),
+        "the war begins with an actual attack through the move path"
+    );
+    assert_eq!(
+        engine.drain_rival_motion(),
+        vec![RivalMotion {
+            unit: UnitId::new(1),
+            from: Location::new(1, 0),
+            to: Location::new(0, 0),
+            battle: true,
+        }],
+        "the attack is recorded as a battle landing so the replay can flash \
+         the explosion over the tile it struck"
+    );
+    assert!(
+        engine.drain_rival_wars().is_empty(),
+        "draining the record empties it until the next round"
+    );
+}
+
+/// A rival militia next to a human legion it cannot beat stands down: no war
+/// is declared and the unit stays put rather than throw itself away.
+#[test]
+fn a_rival_does_not_declare_war_on_a_fight_it_would_lose() {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(0, 0),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    let militia = engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+
+    engine.submit(Command::EndTurn);
+
+    assert!(
+        !engine.game.at_war(PlayerId::new(1), PlayerId::new(0)),
+        "no war is declared against a stronger neighbour"
+    );
+    assert!(
+        engine.drain_rival_wars().is_empty(),
+        "no rival war is announced"
+    );
+    let stationed = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == militia)
+        .expect("the weaker militia survives");
+    assert_eq!(
+        stationed.location,
+        Location::new(1, 0),
+        "the militia does not step onto a fight it would lose"
+    );
+}
+
+/// An undefended, grown human city next to a rival legion falls the moment
+/// the rival draws the sword: the war is on and the city flips to the rival.
+#[test]
+fn a_rival_takes_an_undefended_adjacent_human_city() {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    let mut london = City::new(
+        "London",
+        Location::new(0, 0),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    london.grow();
+    engine.game.cities.push(london);
+    engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(1)),
+    );
+
+    engine.submit(Command::EndTurn);
+
+    let zulu = PlayerId::new(1);
+    assert!(engine.game.at_war(zulu, PlayerId::new(0)));
+    let city = engine
+        .game
+        .cities
+        .iter()
+        .find(|city| city.location == Location::new(0, 0))
+        .expect("the captured city exists");
+    assert_eq!(city.owner(), zulu, "the city transfers to the conqueror");
+    assert_eq!(
+        engine.drain_rival_wars(),
+        vec![RivalWar { rival: zulu }],
+        "the war that preceded the conquest is announced"
+    );
+}
+
+/// A landing is recorded however the move ended — a plain step, a city capture
+/// and an attack alike — so the replay shows the round as it unfolded. Only
+/// the attack carries the flag that makes the replay flash the tile.
+#[test]
+fn a_rival_capture_is_recorded_as_a_plain_landing_not_a_battle() {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    let mut london = City::new(
+        "London",
+        Location::new(0, 0),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    london.grow();
+    engine.game.cities.push(london);
+    engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(1)),
+    );
+
+    engine.submit(Command::EndTurn);
+
+    assert_eq!(
+        engine.drain_rival_motion(),
+        vec![RivalMotion {
+            unit: UnitId::new(0),
+            from: Location::new(1, 0),
+            to: Location::new(0, 0),
+            battle: false,
+        }],
+        "taking a city is a march onto the tile, not a fight to flash"
+    );
+}
+
+/// The rival's attack floor is a real percentage of the odds: an even fight
+/// is 50%, the human's own 10%-floor binds beneath it, and a trivial win
+/// against an empty tile counts as certain.
+#[test]
+fn the_rival_win_chance_is_the_attackers_share_of_the_power() {
+    assert_eq!(Engine::win_chance_percent(30, 0), 100);
+    assert_eq!(Engine::win_chance_percent(30, 30), 50);
+    assert_eq!(Engine::win_chance_percent(10, 90), 10);
+    assert_eq!(Engine::win_chance_percent(1, 99), 1);
+}
+
 /// Zulu cities planted at `left` and `right`, their settler already standing
 /// on the terrain the AI will pick, and the whole map explored. Returns the
 /// engine with the human passed for the turn.
@@ -766,13 +1009,13 @@ fn rival_settlement_engine(left: Location, right: Location, settler: Location) -
         UnitClass::Settler,
         Location::new(14, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Settler,
         settler,
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine
         .game
@@ -910,7 +1153,7 @@ fn frontier_settlement_engine(capital: Location, settler: Location) -> Engine {
         UnitClass::Settler,
         Location::new(14, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.cities.push(City::new(
         "Angkor",
@@ -922,7 +1165,7 @@ fn frontier_settlement_engine(capital: Location, settler: Location) -> Engine {
         UnitClass::Settler,
         settler,
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     engine.game.players[1].reveal_tiles_surrounding_city_at(capital);
     engine
@@ -1021,13 +1264,13 @@ fn a_rival_settler_will_not_crowd_a_human_city() {
         UnitClass::Settler,
         Location::new(14, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Settler,
         Location::new(6, 0),
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.cities.push(City::new(
         "Londinium",
@@ -1094,13 +1337,13 @@ fn a_rival_settler_will_not_crowd_another_rivals_city() {
         UnitClass::Settler,
         Location::new(14, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Settler,
         Location::new(6, 0),
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.cities.push(City::new(
         "Tenochtitlan",
@@ -1152,7 +1395,7 @@ fn difficult_terrain_slows_a_fast_unit_to_one_tile_at_a_time() {
         UnitClass::Cavalry,
         Location::new(0, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.map.tile_at_mut(Location::new(0, 0)).terrain = Terrain::Grassland;
     engine.game.map.tile_at_mut(Location::new(1, 0)).terrain = Terrain::Forest;
@@ -1190,7 +1433,7 @@ fn a_slow_unit_can_enter_difficult_terrain_at_cost_of_its_movement() {
         UnitClass::Settler,
         Location::new(0, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.map.tile_at_mut(Location::new(1, 0)).terrain = Terrain::Forest;
     // A settler has 1 move; entering the forest still happens because the
@@ -1218,12 +1461,26 @@ fn moves_are_restored_at_the_beginning_of_the_owners_turn() {
 
 #[test]
 fn each_players_units_reset_when_their_turn_begins() {
-    let mut engine = two_player_engine();
+    // Width 5 so the wrapped distances keep the rival's legion out of reach
+    // of the human's settler: the AI only draws the sword on a fight it can
+    // win, and this test is about restored moves, not combat.
+    let mut engine = Engine::new(
+        5,
+        2,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(1, 1),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
     let zulu_warrior = engine.game.spawn_unit(
         UnitClass::Legion,
         Location::new(0, 0),
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
     engine.submit(Command::Move {
@@ -1268,7 +1525,7 @@ fn a_naval_unit_can_enter_water() {
         UnitClass::Trireme,
         Location::new(1, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::Move {
         unit: UnitId::new(1),
@@ -1285,7 +1542,7 @@ fn a_naval_unit_cannot_enter_land() {
         UnitClass::Trireme,
         Location::new(2, 0),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Grassland;
     let events = engine.submit(Command::Move {
@@ -1343,7 +1600,7 @@ fn a_settler_founds_a_city() {
         UnitClass::Settler,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::FoundCity {
         unit: settler,
@@ -1373,7 +1630,7 @@ fn founding_a_city_reveals_tiles_around_it_for_its_owner() {
         UnitClass::Settler,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::FoundCity {
         unit: settler,
@@ -1392,7 +1649,7 @@ fn founding_a_city_reveals_its_footprint_but_not_the_corners() {
         UnitClass::Settler,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::FoundCity {
         unit: settler,
@@ -1411,7 +1668,7 @@ fn non_settlers_cannot_found_cities() {
         UnitClass::Legion,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::FoundCity {
         unit: UnitId::new(1),
@@ -1448,7 +1705,7 @@ fn a_city_cannot_be_founded_where_a_city_already_exists() {
         UnitClass::Settler,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::FoundCity {
         unit: settler,
@@ -1490,13 +1747,13 @@ fn attacker_defeats_the_target_and_takes_its_tile() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let militia = engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -1537,7 +1794,7 @@ fn an_at_war_unit_moving_onto_an_undefended_enemy_city_captures_it() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(2),
+        Some(CityId::new(2)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -1574,7 +1831,7 @@ fn capturing_a_city_reveals_the_tiles_around_it_for_the_conqueror() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(2),
+        Some(CityId::new(2)),
     );
     // The legion's starting reveal (radius 1 around (2, 2)) stops at
     // column 3; the ring east of the conquered city is still dark.
@@ -1601,13 +1858,13 @@ fn a_winning_attacker_reveals_the_tiles_it_advances_onto() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let militia = engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     assert!(!engine.explored(4, 2));
     engine.submit(Command::Move {
@@ -1641,21 +1898,21 @@ fn capturing_a_city_disbands_units_homed_to_it() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(2),
+        Some(CityId::new(2)),
     );
     // A Zulu unit homed to the captured city (id 0) sits elsewhere on the map.
     let lost_phalanx = engine.game.spawn_unit(
         UnitClass::Phalanx,
         Location::new(0, 0),
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     // An unrelated Zulu unit homed to a different city survives.
     let other_phalanx = engine.game.spawn_unit(
         UnitClass::Phalanx,
         Location::new(0, 1),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -1683,7 +1940,7 @@ fn capturing_a_civilizations_last_city_removes_it_from_play() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(9),
+        Some(CityId::new(9)),
     );
     // A surviving Zulu unit lies elsewhere on the map: losing the last
     // city still ends the civilization.
@@ -1691,7 +1948,7 @@ fn capturing_a_civilizations_last_city_removes_it_from_play() {
         UnitClass::Phalanx,
         Location::new(0, 0),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -1727,7 +1984,7 @@ fn losing_a_city_but_keeping_another_leaves_the_civilization_in_play() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(9),
+        Some(CityId::new(9)),
     );
     engine.submit(Command::Move {
         unit: legion,
@@ -1754,14 +2011,14 @@ fn annihilating_a_cityless_civilization_removes_it_from_play() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     // Zulu has no cities and sits on the map with a single militia.
     let militia = engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -1787,20 +2044,20 @@ fn a_settler_with_no_cities_survives_the_loss_of_other_units() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     // Zulu has no cities but a militia *and* a settler still in the field.
     engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let settler = engine.game.spawn_unit(
         UnitClass::Settler,
         Location::new(0, 0),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     engine.submit(Command::Move {
         unit: legion,
@@ -1834,7 +2091,7 @@ fn an_eliminated_civilization_is_skipped_when_the_turn_advances() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(9),
+        Some(CityId::new(9)),
     );
     // Capture Zulu's only city; play moves on to the surviving rival, then
     // the round returns to English with the turn advanced. Zulu never takes
@@ -1873,7 +2130,7 @@ fn winning_a_fight_on_a_city_tile_captures_the_city() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(9),
+        Some(CityId::new(9)),
     );
     // A militia's meagre defence keeps the fight short; the win then advances
     // the legion onto the city tile, where the city is now his.
@@ -1881,7 +2138,7 @@ fn winning_a_fight_on_a_city_tile_captures_the_city() {
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -1926,7 +2183,7 @@ fn conquering_a_population_one_city_destroys_it() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(9),
+        Some(CityId::new(9)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -1969,7 +2226,7 @@ fn razing_a_population_one_city_leaves_a_surviving_civilization_in_play() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(9),
+        Some(CityId::new(9)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -2007,7 +2264,7 @@ fn a_unit_at_peace_with_the_city_owner_cannot_move_into_the_city() {
         UnitClass::Legion,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -2046,19 +2303,19 @@ fn the_strongest_defender_on_the_target_tile_absorbs_the_attack() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let settler = engine.game.spawn_unit(
         UnitClass::Settler,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let phalanx = engine.game.spawn_unit(
         UnitClass::Phalanx,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -2093,19 +2350,19 @@ fn equal_defence_is_broken_in_favour_of_the_higher_unit_id() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let stronger_id = engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -2130,13 +2387,13 @@ fn a_repelled_attacker_is_removed_but_the_target_survives() {
         UnitClass::Militia,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let knight = engine.game.spawn_unit(
         UnitClass::Knight,
         Location::new(2, 3),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let events = engine.submit(Command::Move {
         unit: militia,
@@ -2170,13 +2427,13 @@ fn moving_onto_a_friendly_unit_is_a_plain_move() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let phalanx = engine.game.spawn_unit(
         UnitClass::Phalanx,
         Location::new(3, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -2203,14 +2460,14 @@ fn attacker_power_is_base_attack_scaled_by_ten() {
         UnitClass::Militia,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     assert_eq!(engine.attacker_power(&engine.game.units[0]), 10);
     engine.game.spawn_unit(
         UnitClass::Legion,
         Location::new(2, 3),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     assert_eq!(engine.attacker_power(&engine.game.units[1]), 30);
 }
@@ -2222,7 +2479,7 @@ fn veteran_attacks_at_half_again_power() {
         UnitClass::Militia,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.units[0].promote();
     assert_eq!(engine.attacker_power(&engine.game.units[0]), 15);
@@ -2242,13 +2499,13 @@ fn defender_power_applies_terrain_city_and_veteran_bonuses() {
         UnitClass::Militia,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(2, 3),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     assert_eq!(engine.defender_power(&engine.game.units[0]), 10);
     assert_eq!(engine.defender_power(&engine.game.units[1]), 20);
@@ -2276,7 +2533,7 @@ fn city_walls_double_defense_on_a_city_tile() {
         UnitClass::Militia,
         Location::new(2, 2),
         PlayerId::new(1),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     assert_eq!(engine.defender_power(&engine.game.units[0]), 15);
     engine.game.cities[0].add_improvement(CityImprovement::CityWalls);
@@ -2297,13 +2554,13 @@ fn movement_onto_a_peaceful_tile_is_blocked() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -2339,13 +2596,13 @@ fn declaring_war_makes_enemy_tiles_attackable() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let militia = engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let war_events = engine.submit(Command::DeclareWar {
         opponent: PlayerId::new(1),
@@ -2416,19 +2673,19 @@ fn combat_only_engages_players_we_are_at_war_with() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let ally = engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let enemy = engine.game.spawn_unit(
         UnitClass::Knight,
         Location::new(3, 2),
         PlayerId::new(2),
-        CityId::new(2),
+        Some(CityId::new(2)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -2467,13 +2724,13 @@ fn making_peace_registers_and_blocks_movement_again() {
         UnitClass::Legion,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 2),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     engine.submit(Command::DeclareWar {
         opponent: PlayerId::new(1),
@@ -2535,13 +2792,13 @@ fn moving_adjacent_to_a_foreign_unit_establishes_first_contact() {
         UnitClass::Legion,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 1),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     assert!(!engine.game.have_met(PlayerId::new(0), PlayerId::new(1)));
     let events = engine.submit(Command::Move {
@@ -2582,7 +2839,7 @@ fn first_contact_with_a_foreign_city_makes_peace() {
         UnitClass::Legion,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine
         .game
@@ -2612,13 +2869,13 @@ fn a_pair_only_meets_once() {
         UnitClass::Legion,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Militia,
         Location::new(3, 1),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     engine.submit(Command::Move {
         unit: legion,
@@ -2651,7 +2908,7 @@ fn a_civilization_does_not_meet_itself() {
         UnitClass::Legion,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::Move {
         unit: legion,
@@ -2696,7 +2953,7 @@ fn a_city_produces_units() {
         UnitClass::Settler,
         Location::new(3, 3),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::FoundCity {
         unit: UnitId::new(0),
@@ -2747,7 +3004,7 @@ fn a_barracks_trains_produced_units_as_veterans() {
         UnitClass::Settler,
         Location::new(3, 3),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::FoundCity {
         unit: UnitId::new(0),
@@ -2828,13 +3085,13 @@ fn production_choices_hide_improvements_the_city_already_owns() {
         UnitClass::Settler,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Settler,
         Location::new(4, 4),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::FoundCity {
         unit: UnitId::new(0),
@@ -2864,7 +3121,7 @@ fn research_engine() -> Engine {
         UnitClass::Settler,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::FoundCity {
         unit: UnitId::new(0),
@@ -2969,7 +3226,7 @@ fn a_city_starves_without_food() {
         UnitClass::Settler,
         Location::new(2, 2),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::FoundCity {
         unit: UnitId::new(0),
@@ -3079,7 +3336,7 @@ fn a_city_automatically_works_its_highest_yield_tile() {
         UnitClass::Settler,
         Location::new(3, 3),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::FoundCity {
         unit: UnitId::new(0),
@@ -3105,7 +3362,7 @@ fn capturing_a_city_harvests_more_tiles_as_it_grows() {
         UnitClass::Settler,
         Location::new(3, 3),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::FoundCity {
         unit: UnitId::new(0),
@@ -3137,13 +3394,13 @@ fn a_land_unit_boards_a_friendly_trireme_waiting_in_water() {
         UnitClass::Trireme,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let knight = engine.game.spawn_unit(
         UnitClass::Knight,
         Location::new(0, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::Move {
         unit: knight,
@@ -3174,25 +3431,25 @@ fn every_naval_transport_carries_two_units_and_rejects_a_third() {
             transport,
             Location::new(1, 1),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
         );
         let first = engine.game.spawn_unit(
             UnitClass::Knight,
             Location::new(0, 1),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
         );
         let second = engine.game.spawn_unit(
             UnitClass::Militia,
             Location::new(0, 1),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
         );
         let third = engine.game.spawn_unit(
             UnitClass::Legion,
             Location::new(0, 1),
             PlayerId::new(0),
-            CityId::new(0),
+            Some(CityId::new(0)),
         );
         for boarder in [first, second, third] {
             engine.submit(Command::Move {
@@ -3247,13 +3504,13 @@ fn a_land_unit_cannot_board_an_enemy_trireme_across_the_water() {
         UnitClass::Trireme,
         Location::new(1, 1),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let knight = engine.game.spawn_unit(
         UnitClass::Knight,
         Location::new(0, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let events = engine.submit(Command::Move {
         unit: knight,
@@ -3280,13 +3537,13 @@ fn a_trireme_carries_its_cargo_across_the_sea_and_back_to_land() {
         UnitClass::Trireme,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let knight = engine.game.spawn_unit(
         UnitClass::Knight,
         Location::new(0, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     // Aboard on the western shore; the trireme then sails the strait.
     engine.submit(Command::Move {
@@ -3339,13 +3596,13 @@ fn a_transported_unit_cannot_be_instructed_while_at_sea() {
         UnitClass::Trireme,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let knight = engine.game.spawn_unit(
         UnitClass::Knight,
         Location::new(0, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::Move {
         unit: knight,
@@ -3393,13 +3650,13 @@ fn a_transported_settler_cannot_found_a_city_from_the_sea() {
         UnitClass::Trireme,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.game.spawn_unit(
         UnitClass::Settler,
         Location::new(0, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::Move {
         unit: UnitId::new(1),
@@ -3426,13 +3683,13 @@ fn a_trireme_lost_at_sea_dissolves_its_cargo_which_never_defends() {
         UnitClass::Trireme,
         Location::new(2, 1),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     let knight = engine.game.spawn_unit(
         UnitClass::Knight,
         Location::new(2, 1),
         PlayerId::new(1),
-        CityId::new(1),
+        Some(CityId::new(1)),
     );
     // Board the Zulu cargo directly; only the current player can `submit`, so
     // the English frigate below is the one that does the attacking.
@@ -3447,7 +3704,7 @@ fn a_trireme_lost_at_sea_dissolves_its_cargo_which_never_defends() {
         UnitClass::Frigate,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     // An enemy frigate sinks both the trireme and its cargo at once; the
     // ferried knight never fights.
@@ -3470,13 +3727,13 @@ fn a_transported_unit_has_no_map_square_of_its_own() {
         UnitClass::Trireme,
         Location::new(1, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     let knight = engine.game.spawn_unit(
         UnitClass::Knight,
         Location::new(0, 1),
         PlayerId::new(0),
-        CityId::new(0),
+        Some(CityId::new(0)),
     );
     engine.submit(Command::Move {
         unit: knight,
@@ -3551,4 +3808,106 @@ fn a_surviving_rival_keeps_the_match_open() {
 fn a_single_human_player_is_not_automatically_a_victory() {
     let engine = Engine::new(20, 12, Player::new(Civilization::English), Vec::new());
     assert_eq!(engine.game_outcome(), None);
+}
+
+#[test]
+fn a_starting_settler_is_homeless_so_the_first_city_lists_only_its_own_units() {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![
+            Player::new(Civilization::Zulu),
+            Player::new(Civilization::Roman),
+        ],
+    );
+    engine.populate_starting_world();
+    // Every civilization opens with a settler founded by no city, so the id
+    // the first real city will take is still unclaimed.
+    assert!(
+        engine
+            .game
+            .units
+            .iter()
+            .all(|unit| unit.home_city().is_none()),
+        "starting settlers are homed to no city"
+    );
+
+    let settler = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.owner() == PlayerId::new(0))
+        .unwrap()
+        .id();
+    engine.submit(Command::FoundCity {
+        unit: settler,
+        name: "London".to_string(),
+    });
+
+    // The city window lists only units homed to this city, never a rival's.
+    let city = engine
+        .game
+        .cities
+        .iter()
+        .find(|c| c.owner() == PlayerId::new(0))
+        .unwrap();
+    let homed = engine.home_units(city.id());
+    assert!(
+        homed.iter().all(|unit| unit.owner() == city.owner()),
+        "a city's unit list holds only its own civilization's units"
+    );
+}
+
+#[test]
+fn conquering_a_first_city_does_not_disband_rivals_starting_settlers() {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![
+            Player::new(Civilization::Zulu),
+            Player::new(Civilization::Roman),
+        ],
+    );
+    engine.populate_starting_world();
+    let settler = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.owner() == PlayerId::new(0))
+        .unwrap()
+        .id();
+    engine.submit(Command::FoundCity {
+        unit: settler,
+        name: "London".to_string(),
+    });
+    let city_id = engine
+        .game
+        .cities
+        .iter()
+        .find(|c| c.owner() == PlayerId::new(0))
+        .unwrap()
+        .id();
+    let before = engine.game.units.len();
+
+    // The conquest sweep dissolves the fallen city's own units, and no more:
+    // rivals' homeless settlers were never homed there to begin with.
+    let disbanded = engine.game.disband_units_homed_to(city_id);
+
+    assert_eq!(
+        disbanded, 0,
+        "the first city is the newest id, so it has homed units to disband"
+    );
+    assert_eq!(engine.game.units.len(), before);
+    assert!(
+        engine
+            .game
+            .units
+            .iter()
+            .filter(|u| u.owner() != PlayerId::new(0))
+            .count()
+            >= 2,
+        "both rival starting settlers survive the fall of an unrelated city"
+    );
 }
