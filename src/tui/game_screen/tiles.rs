@@ -1,6 +1,6 @@
 use super::*;
 use crate::model::cartography::Tile;
-use crate::model::cities::CityId;
+use crate::model::cities::{CityId, MAX_POPULATION};
 use crate::model::civilizations::Civilization;
 use crate::model::geography::Terrain;
 use crate::model::units::{UnitClass, UnitId, UnitOrder};
@@ -121,7 +121,11 @@ pub(crate) fn paint_tile(
         None
     };
     let (symbol, style, city_name) = if world_y >= map_h {
-        (' ', Style::default().bg(Color::Rgb(6, 6, 22)), None)
+        (
+            " ".to_string(),
+            Style::default().bg(Color::Rgb(6, 6, 22)),
+            None,
+        )
     } else {
         let tile = view.tile(map_x, world_y);
         let explored = view.explored(map_x, world_y);
@@ -166,7 +170,7 @@ pub(crate) fn paint_tile(
         {
             // A city with no unit on its tile shows its population on a
             // background of the owning civilization's colour.
-            (population_digit(city.population()), Some(city.name.clone()))
+            (population_text(city.population()), Some(city.name.clone()))
         } else if explored && let Some(u) = visible_unit {
             // A unit always shows its class letter ahead of the terrain, even
             // when it stands on a city tile; the city keeps its name label
@@ -180,18 +184,18 @@ pub(crate) fn paint_tile(
                 && !flashing
                 && let Some(city) = city
             {
-                population_digit(city.population())
+                population_text(city.population())
             } else {
-                first_letter(u.unit_class)
+                first_letter(u.unit_class).to_string()
             };
             (symbol, city_name)
         } else if explored {
-            (terrain.as_char(), None)
+            (terrain.as_char().to_string(), None)
         } else {
             // Unexplored tiles are blank fog: the terrain letter, units and
             // cities on them must never show, even when the terminal's text
             // selection inverts the colours.
-            (' ', None)
+            (" ".to_string(), None)
         };
 
         // A visible city's tile always wears its owner's civilization colour,
@@ -246,19 +250,28 @@ pub(crate) fn paint_tile(
         (symbol, style, city_name)
     };
 
-    let symbol = if hovered { '▓' } else { symbol };
+    let symbol = if hovered { "▓".to_string() } else { symbol };
     if let Some(cell) = buf.cell_mut((x, y)) {
-        cell.set_symbol(&symbol.to_string());
+        // Only the first character lands in the tile's left column; a second
+        // goes to the column below it below. set_symbol stores the string it is
+        // given verbatim, so handing it the whole two-digit size would paint both
+        // digits into one cell and let the renderer spill them east.
+        cell.set_symbol(&symbol.chars().next().unwrap_or(' ').to_string());
         cell.set_style(style);
     }
     // The spare column carries the improvement watermark (≈ irrigation, + road,
     // ⛏ mine) on explored tiles; fog and the below-map gutter stay blank, and
-    // hovering the tile hatches the whole tile.
+    // hovering the tile hatches the whole tile. A two-digit population is the one
+    // thing that needs the column for itself: its digits stay inside the tile, so
+    // they never spill into the neighbour to the east.
     if TILE_WIDTH > 1
         && let Some(cell) = buf.cell_mut((x + 1, y))
     {
         if hovered {
             cell.set_symbol("▓");
+            cell.set_style(style);
+        } else if let Some(second) = symbol.chars().nth(1) {
+            cell.set_symbol(&second.to_string());
             cell.set_style(style);
         } else if let Some((glyph, color)) = marker {
             cell.set_symbol(&glyph.to_string());
@@ -276,13 +289,13 @@ pub(crate) fn first_letter(unit_class: UnitClass) -> char {
     format!("{unit_class:?}").chars().next().unwrap_or('?')
 }
 
-/// The digit shown on a city tile: its population, clipped to a single char.
-pub(crate) fn population_digit(population: u32) -> char {
-    if population >= 10 {
-        '9'
-    } else {
-        char::from_digit(population, 10).unwrap_or('0')
-    }
+/// The population shown on a city tile: one digit for a small city, two from
+/// ten upwards. A tile is two columns wide, so a two-digit size takes both and
+/// the improvement watermark stands down. The cap is a layout guard as much
+/// as a rule: a save written before cities were capped can carry a bigger
+/// number, and three digits would spill into the neighbouring tile.
+pub(crate) fn population_text(population: u32) -> String {
+    population.min(MAX_POPULATION).to_string()
 }
 
 /// The yellow used for city labels.

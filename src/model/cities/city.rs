@@ -3,6 +3,10 @@ use crate::model::cities::{CityId, CityImprovement, CityTick, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 use serde::{Deserialize, Serialize};
 
+/// The largest a city can ever be. Growth stops here rather than running on,
+/// which is also why the map's city tile can afford two digits for it.
+pub const MAX_POPULATION: u32 = 99;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct City {
     pub name: String,
@@ -54,8 +58,9 @@ impl City {
         self.population
     }
 
+    /// Grows the city by one, stopping at [`MAX_POPULATION`].
     pub fn grow(&mut self) {
-        self.population += 1;
+        self.population = self.population.saturating_add(1).min(MAX_POPULATION);
     }
 
     pub fn shrink(&mut self) {
@@ -273,6 +278,27 @@ mod tests {
         city.grow();
         city.grow();
         assert_eq!(city.population(), 3);
+    }
+
+    #[test]
+    fn a_city_stops_growing_at_the_maximum_population() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        for _ in 0..500 {
+            city.grow();
+        }
+        assert_eq!(city.population(), MAX_POPULATION);
+    }
+
+    #[test]
+    fn the_maximum_population_is_two_digits() {
+        // The map's city tile is two columns wide; a third digit would spill
+        // into the neighbouring tile, so the cap is what keeps the tile honest.
+        assert_eq!(MAX_POPULATION.to_string().chars().count(), 2);
     }
 
     #[test]

@@ -937,6 +937,95 @@ fn a_city_with_no_unit_shows_its_population() {
     assert_eq!(name.as_deref(), Some("London"));
 }
 
+/// A city of ten or more needs both of its tile's columns for the digits:
+/// one per column, the second one no longer clipped away.
+#[test]
+fn a_large_city_shows_both_of_its_population_digits() {
+    let view = city_of_population(12);
+    let buf = painted_buffer(&view, None, false);
+    assert_eq!(buf.cell((0, 0)).unwrap().symbol(), "1");
+    assert_eq!(
+        buf.cell((1, 0)).unwrap().symbol(),
+        "2",
+        "the second digit takes the tile's spare column"
+    );
+}
+
+/// The cap is the widest number a city tile can hold. At the maximum the tile
+/// reads 99, and the second digit stays inside the tile instead of bleeding
+/// into the neighbour to the east.
+#[test]
+fn a_city_at_the_cap_shows_ninety_nine_without_spilling() {
+    let cap = crate::model::cities::MAX_POPULATION;
+    let view = city_of_population(cap);
+    let buf = painted_buffer(&view, None, false);
+    assert_eq!(buf.cell((0, 0)).unwrap().symbol(), "9");
+    assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "9");
+    assert_eq!(
+        buf.cell((2, 0)).unwrap().symbol(),
+        " ",
+        "the eastern neighbour keeps its own column"
+    );
+}
+
+/// A city past the cap cannot happen through growth, but a save written before
+/// cities were capped can still carry one. The tile clamps rather than spilling
+/// a third digit into the next tile.
+#[test]
+fn an_oversized_city_from_an_older_save_is_clamped_on_the_tile() {
+    let view = city_of_population(250);
+    let buf = painted_buffer(&view, None, false);
+    assert_eq!(buf.cell((0, 0)).unwrap().symbol(), "9");
+    assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "9");
+    assert_eq!(buf.cell((2, 0)).unwrap().symbol(), " ");
+}
+
+/// The improvement watermark shares the spare column, so a two-digit
+/// population outranks it: the digits win and the mark stands down.
+#[test]
+fn a_large_city_takes_the_spare_column_from_the_watermark() {
+    let mut view = city_of_population(12);
+    view.tile = crate::model::cartography::Tile::new(Terrain::Grassland);
+    view.tile.build_road().unwrap();
+    let buf = painted_buffer(&view, None, false);
+    assert_eq!(
+        buf.cell((1, 0)).unwrap().symbol(),
+        "2",
+        "the population outranks the road watermark"
+    );
+}
+
+/// A small city still leaves the spare column free for the watermark, so the
+/// two-digit case does not cost the improvement its mark.
+#[test]
+fn a_small_city_still_carries_its_watermark() {
+    let mut view = city_of_population(4);
+    view.tile = crate::model::cartography::Tile::new(Terrain::Grassland);
+    view.tile.build_road().unwrap();
+    let buf = painted_buffer(&view, None, false);
+    assert_eq!(buf.cell((0, 0)).unwrap().symbol(), "4");
+    assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "+");
+}
+
+/// Builds a one-tile view whose only city has the given population, grown
+/// through the model's own cap rather than assigned, so the fixture cannot
+/// drift from the rule it is checking.
+fn city_of_population(population: u32) -> FakeView {
+    let mut city = crate::model::cities::City::new(
+        "London",
+        crate::model::cartography::Location::new(2, 2),
+        crate::model::civilizations::PlayerId::new(0),
+        crate::model::cities::CityId::new(0),
+    );
+    // A new city starts at one, so reaching the target is one short.
+    for _ in 1..population {
+        city.grow();
+    }
+    let mut view = fake_view();
+    view.city = Some(city);
+    view
+}
+
 #[test]
 fn event_log_renders_a_box_in_the_top_right_when_enabled() {
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();

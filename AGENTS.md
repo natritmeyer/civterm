@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 671 passing unit
+Run `make build` after any change. Current test baseline: 678 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -311,7 +311,7 @@ New features are judged for their save impact before they are built:
   occupying unit, so a captured city flips colour the instant it falls
   rather than waiting for the victor to move off.
 - A unit fortifying on a city tile is hidden on the map: it has stowed itself
-  as the city's garrison, so the tile keeps showing its population digit (and
+  as the city's garrison, so the tile keeps showing its population (and
   the city's name label) as if unoccupied. Any other unit still paints its
   letter ahead of the population.
 - Transient overlays (the battle flash, the rival-move replay) are painted in
@@ -319,6 +319,17 @@ New features are judged for their save impact before they are built:
   top of the z-order over everything the map draws. The flash goes last of all,
   over the replayed rival glyph too, so an arriving attacker is eclipsed by the
   💥 it triggered.
+- A city tile shows its population, and `MAX_POPULATION` (99) caps it: the
+  number the map must be able to draw is what bounds the rule, not the other
+  way round. `population_text` hands back one digit for a small city and two
+  from ten upwards, and the tile's spare column is the second digit's home, so
+  a two-digit city takes the improvement watermark's place for itself (a small
+  city still keeps it). The left column still holds exactly one character:
+  ratatui's `set_symbol` stores its argument verbatim, so handing it the whole
+  two-digit size would paint both digits into one cell and let the renderer
+  spill them east. The cap doubles as a layout guard, since a save written
+  before cities were capped can carry a bigger number and a third digit would
+  land in the neighbouring tile.
 - Wide (two-cell) glyphs such as 💥 must anchor in a tile's _left_ column; a
   wide glyph placed in the tile's right column spills a cell into the
   eastern neighbour. Tests assert the neighbour tile stays untouched.
