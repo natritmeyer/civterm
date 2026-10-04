@@ -1,3 +1,4 @@
+use crate::game_engine::cities::BuildComplete;
 use crate::game_engine::{Command, Event, Player, RivalMotion, RivalWar};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Location;
@@ -37,6 +38,10 @@ pub struct Engine {
     /// window once the round resolves; drained by `drain_rival_wars`, never
     /// persisted.
     pub(crate) rival_wars: Vec<RivalWar>,
+    /// Every city of the player's that finished building during the last
+    /// round, in order. The TUI announces each with a window once the round
+    /// resolves; drained by `drain_build_completions`, never persisted.
+    pub(crate) builds: Vec<BuildComplete>,
 }
 
 impl Default for Engine {
@@ -78,6 +83,7 @@ impl Engine {
             rng: Rng::new(seed),
             motion: Vec::new(),
             rival_wars: Vec::new(),
+            builds: Vec::new(),
         }
     }
 

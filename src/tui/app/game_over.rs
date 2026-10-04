@@ -44,6 +44,11 @@ impl App {
         self.quit_dialog_rect = Cell::new(None);
         self.save_prompt = None;
         self.save_prompt_rect = Cell::new(None);
+        // A build the player's cities finished in the very round the match
+        // ended is not worth announcing over the victory screen, and its queue
+        // would outlive the game it belonged to.
+        self.build_notice = None;
+        self.build_notice_rect = Cell::new(None);
         // The battle flash is a transient map overlay, never a panel: it may
         // linger (hidden) beneath the end screen, and clearing it here would
         // erase the very flash the killing blow just started.

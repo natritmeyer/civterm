@@ -7,6 +7,7 @@ use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
+use super::build_complete_dialog::{self, BuildCompleteDialog};
 use super::city_window::{self, CityWindow};
 use super::civ_selector::CivSelector;
 use super::command_picker::{self, CommandPicker};
@@ -29,7 +30,7 @@ use super::start_confirm::StartConfirm;
 use super::status_bar::StatusBar;
 use super::war_dialog::{self, WarDialog};
 use crate::game_engine::event::Event as GameEvent;
-use crate::game_engine::{Engine, GameOutcome, GameView};
+use crate::game_engine::{BuildComplete, Engine, GameOutcome, GameView};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Direction;
 use crate::model::cities::CityId;
@@ -114,6 +115,22 @@ struct DiplomacyState {
 /// closes once the queue empties.
 struct WarNoticeState {
     queue: VecDeque<PlayerId>,
+}
+
+/// The build-completion window's live state: every one of the player's cities
+/// that finished a unit or improvement during the round just resolved, in the
+/// order the cities were processed.
+///
+/// The queue drives a loop: OK moves on to the next city, while "New Order"
+/// hands the player that city's own window instead and parks the queue until
+/// the city window closes — otherwise closing that window would silently
+/// abandon the other cities still waiting to be announced.
+struct BuildNoticeState {
+    queue: VecDeque<BuildComplete>,
+    /// True while the player is inside a city window opened from this notice.
+    /// The queue is kept intact but the notice neither draws nor takes input,
+    /// so the city window owns the screen until it closes.
+    suspended: bool,
 }
 
 /// The save-or-load prompt's live state: which kind it is, the path typed so
@@ -201,6 +218,12 @@ pub struct App {
     war_notice: Option<WarNoticeState>,
     /// The last-drawn war-declaration rectangle, for mouse hit-testing.
     war_notice_rect: Cell<Option<Rect>>,
+    /// The open build-completion window, if one of the player's cities
+    /// finished building this round; its queue holds every completion still to
+    /// be announced.
+    build_notice: Option<BuildNoticeState>,
+    /// The last-drawn build-completion rectangle, for mouse hit-testing.
+    build_notice_rect: Cell<Option<Rect>>,
     /// The open save-or-load prompt, if one is showing.
     save_prompt: Option<SaveLoadState>,
     /// The last-drawn save-prompt rectangle, for mouse hit-testing.
@@ -293,6 +316,8 @@ impl App {
             diplomacy_rect: Cell::new(None),
             war_notice: None,
             war_notice_rect: Cell::new(None),
+            build_notice: None,
+            build_notice_rect: Cell::new(None),
             save_prompt: None,
             save_prompt_rect: Cell::new(None),
             quit_dialog: None,
@@ -574,6 +599,20 @@ impl App {
                     } else {
                         app.war_notice_rect.set(None);
                     }
+                    // The build-completion window floats over the map when one of the
+                    // player's cities finished building this round. It is
+                    // suspended while the player is inside a city window it
+                    // opened, so it only paints when it is the active modal.
+                    if let Some(done) = app.current_build_notice() {
+                        let rect = build_complete_dialog::dialog_rect(area);
+                        frame.render_widget(
+                            BuildCompleteDialog::new(done.city_name.clone(), done.target),
+                            rect,
+                        );
+                        app.build_notice_rect.set(Some(rect));
+                    } else {
+                        app.build_notice_rect.set(None);
+                    }
                     // The command picker floats over the map when the player
                     // has asked the focused unit what it can do: fortify,
                     // stand sentry, begin (or cancel) an improvement.
@@ -695,6 +734,9 @@ fn window_is_open(app: &App) -> bool {
         || app.research_dialog.is_some()
         || app.diplomacy.is_some()
         || app.war_notice.is_some()
+        // A suspended build notice is not on screen — the city window it opened
+        // is — so only a notice actually showing counts as a window.
+        || app.current_build_notice().is_some()
         || app.save_prompt.is_some()
         || app.quit_dialog.is_some()
 }

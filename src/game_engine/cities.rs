@@ -6,7 +6,26 @@ use crate::model::cities::{CityId, CityImprovement, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 use crate::model::units::UnitId;
 
+/// A city of the player's that finished building during the last round: which
+/// city it was, what it finished, and the name to show for it. The TUI queues
+/// one window per city once the round resolves back to the human, so it can
+/// both announce the completion and open that city's window to set the next
+/// order. The name is snapshotted here because a city's name outlives nothing —
+/// the city itself may be gone by the time the window is answered.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BuildComplete {
+    pub city: CityId,
+    pub city_name: String,
+    pub target: ProductionTarget,
+}
+
 impl Engine {
+    /// Drain the record of every city of the player's that finished building
+    /// during the last round, in the order the cities were processed. The TUI
+    /// walks this queue one window at a time.
+    pub fn drain_build_completions(&mut self) -> Vec<BuildComplete> {
+        std::mem::take(&mut self.builds)
+    }
     pub(super) fn found_city(&mut self, unit: UnitId, name: String) {
         let (owner, location) = match self.ensure_can_found(unit) {
             Ok(legal) => legal,
@@ -107,6 +126,15 @@ impl Engine {
                 )));
             }
             if let Some(target) = result.completed {
+                // Only the human's completions are worth a window: a rival's
+                // city finishing a unit is news, not a decision for the player.
+                if owner == PlayerId::new(0) {
+                    self.builds.push(BuildComplete {
+                        city: city_id,
+                        city_name: city_name.clone(),
+                        target,
+                    });
+                }
                 match target {
                     ProductionTarget::Unit(unit_class) => {
                         let city = self.game.cities.iter().find(|c| c.id() == city_id).unwrap();

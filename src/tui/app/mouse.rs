@@ -48,6 +48,12 @@ impl App {
             self.handle_war_notice_mouse(mouse);
             return;
         }
+        // The build-completion window floats above the map: its buttons are the
+        // only thing a click can act on until the queue empties.
+        if self.build_notice_rect.get().is_some() {
+            self.handle_build_notice_mouse(mouse);
+            return;
+        }
         // The research dialog floats above everything and captures all mouse
         // input while it is open.
         if self.research_dialog_rect.get().is_some() {
@@ -141,15 +147,28 @@ impl App {
         true
     }
 
+    /// Open a city's window, dismissing whatever the map was showing. Used by
+    /// a click on a city tile and by the build-completion window's "New Order"
+    /// button, so both routes leave the same state behind.
+    pub(super) fn open_city_window(&mut self, city: CityId) {
+        self.selected_city = Some(city);
+        self.city_window_scroll = 0;
+        self.close_command_picker();
+    }
+
     /// Dismiss the open city window and anything floating over it: clears the
     /// selection and the improvement-list scroll, and closes the production
     /// picker if it was up.
-    fn close_city_window(&mut self) {
+    ///
+    /// Closing a window the build-completion notice opened resumes the notice,
+    /// so the remaining cities still waiting to be announced are not lost.
+    pub(super) fn close_city_window(&mut self) {
         self.selected_city = None;
         self.city_window_scroll = 0;
         if self.production_picker_open {
             self.close_production_picker();
         }
+        self.resume_build_notice();
     }
 
     /// A left press over the map pane begins a click-or-drag gesture. Presses
@@ -316,8 +335,7 @@ impl App {
         // own unit tile selects that unit and opens its command window; any
         // other tile just clears the city selection.
         if let Some(city) = clicked_city {
-            self.selected_city = Some(city);
-            self.close_command_picker();
+            self.open_city_window(city);
         } else if let Some(unit) = clicked_unit {
             self.selected_city = None;
             self.selected_unit = Some(unit);

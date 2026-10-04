@@ -59,6 +59,11 @@ impl App {
             let events = engine.submit(Command::SetResearchTarget { advancement });
             self.record_events(events);
         }
+        // A research choice can share a round with one or more finished builds.
+        // Those windows were parked behind this dialog, so they come back now
+        // rather than being dropped: the player still gets told about every
+        // city that finished.
+        self.resume_build_notice();
     }
 
     pub(super) fn handle_diplomacy_key(&mut self, key: KeyEvent) {
@@ -156,6 +161,125 @@ impl App {
             self.war_notice = None;
             self.war_notice_rect.set(None);
         }
+    }
+
+    /// Queue the build-completion windows for a finished round: one per city
+    /// of the player's that finished a unit or improvement. Each is announced
+    /// in turn, so a player with three cities building gets three windows
+    /// rather than one that silently swallows two.
+    pub(super) fn open_build_notices(&mut self, builds: Vec<BuildComplete>) {
+        if builds.is_empty() {
+            return;
+        }
+        self.build_notice = Some(BuildNoticeState {
+            queue: builds.into(),
+            suspended: false,
+        });
+        // The window floats over the map; drop any stale overlay so the player
+        // is never asked about a build and a map selection at once.
+        self.selected_city = None;
+        self.city_window_scroll = 0;
+        self.moused_window = Cell::new(None);
+        self.command_picker_open = false;
+        self.command_picker_rect = Cell::new(None);
+        self.production_picker_open = false;
+        self.picker_rect = Cell::new(None);
+    }
+
+    /// Acknowledge the build-completion window showing: drop the city it
+    /// announced and close the window once no city is left waiting.
+    pub(super) fn build_notice_confirm(&mut self) {
+        let Some(notice) = &mut self.build_notice else {
+            return;
+        };
+        notice.queue.pop_front();
+        if notice.queue.is_empty() {
+            self.build_notice = None;
+            self.build_notice_rect.set(None);
+        }
+    }
+
+    /// Open the announced city's own window so the player can set what it
+    /// builds next, and park the notice until that window closes. If the city
+    /// is gone — it could have been lost in the same round that finished its
+    /// building — the notice simply moves on rather than opening nothing.
+    pub(super) fn build_notice_new_order(&mut self) {
+        let Some(notice) = &mut self.build_notice else {
+            return;
+        };
+        let Some(done) = notice.queue.pop_front() else {
+            return;
+        };
+        let city = done.city;
+        let opens = self
+            .engine
+            .as_ref()
+            .is_some_and(|engine| engine.city(city).is_some());
+        if !opens {
+            self.close_build_notice_if_empty();
+            return;
+        }
+        notice.suspended = true;
+        self.build_notice_rect.set(None);
+        self.open_city_window(city);
+    }
+
+    /// Close the notice outright when its queue has run out.
+    fn close_build_notice_if_empty(&mut self) {
+        let empty = self
+            .build_notice
+            .as_ref()
+            .is_none_or(|notice| notice.queue.is_empty());
+        if empty {
+            self.build_notice = None;
+            self.build_notice_rect.set(None);
+        }
+    }
+
+    /// The city the build-completion window is currently announcing, if the
+    /// window is on screen. A suspended notice is deliberately excluded: the
+    /// city window it opened owns the screen instead.
+    pub(super) fn current_build_notice(&self) -> Option<&BuildComplete> {
+        let notice = self.build_notice.as_ref()?;
+        if notice.suspended {
+            return None;
+        }
+        notice.queue.front()
+    }
+
+    /// A click on the build-completion window: OK moves on to the next city,
+    /// "New Order" opens this city's window instead.
+    pub(super) fn handle_build_notice_mouse(&mut self, mouse: MouseEvent) {
+        let Some(panel) = self.build_notice_rect.get() else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        let position = (mouse.column, mouse.row).into();
+        if build_complete_dialog::ok_button_rect(panel).contains(position) {
+            self.build_notice_confirm();
+        } else if build_complete_dialog::new_order_button_rect(panel).contains(position) {
+            self.build_notice_new_order();
+        }
+    }
+
+    /// Resume a build-completion notice parked by "New Order": the city window
+    /// it opened has closed, so the loop carries on with the next city. The
+    /// notice is cleared outright once its queue has emptied, since a park with
+    /// nothing behind it has nothing left to return to.
+    pub(super) fn resume_build_notice(&mut self) {
+        let Some(notice) = &mut self.build_notice else {
+            return;
+        };
+        if !notice.suspended {
+            return;
+        }
+        notice.suspended = false;
+        self.close_build_notice_if_empty();
     }
 
     /// A click on the war-declaration window's OK button acknowledges it.

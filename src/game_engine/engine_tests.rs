@@ -3911,3 +3911,215 @@ fn conquering_a_first_city_does_not_disband_rivals_starting_settlers() {
         "both rival starting settlers survive the fall of an unrelated city"
     );
 }
+
+/// Pave `radius` tiles around `center` with forest (2 resources a tile) and
+/// re-assign the city's work onto them, so a fixture city's production belt
+/// actually fills within a few turns. Without this a build test measures the
+/// random map instead of the feature.
+fn forest_around(engine: &mut Engine, center: Location, radius: i32) {
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            let (Ok(x), Ok(y)) = (
+                u16::try_from(center.x as i32 + dx),
+                u16::try_from(center.y as i32 + dy),
+            ) else {
+                continue;
+            };
+            engine.game.map.tile_at_mut(Location::new(x, y)).terrain = Terrain::Forest;
+        }
+    }
+    // Work is re-assigned after the terrain is laid, so the city picks up the
+    // forest tiles rather than whatever the generator left behind.
+    let id = engine
+        .game
+        .cities
+        .iter()
+        .find(|city| city.location == center)
+        .expect("fixture city exists")
+        .id();
+    engine.game.auto_assign_work(id);
+}
+
+/// A city that finishes building hands the TUI a record naming the city and
+/// what it finished, so the window can offer a next order for the right city.
+#[test]
+fn a_city_finishing_a_unit_is_recorded_for_the_build_notice() {
+    let mut engine = Engine::new(
+        DEFAULT_MAP_WIDTH,
+        DEFAULT_MAP_HEIGHT,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.populate_starting_world();
+    let city = engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(4, 4));
+    engine.game.auto_assign_work(city);
+    forest_around(&mut engine, Location::new(4, 4), 3);
+    engine.submit(Command::SetProductionTarget {
+        city,
+        target: ProductionTarget::Unit(UnitClass::Militia),
+    });
+
+    // Militia costs 10 resources; a turn's worth from the city's worked tiles
+    // may not be enough, so run until the belt fills. The loop is bounded so a
+    // map that yields nothing still fails the assertion rather than hanging.
+    let mut finished = None;
+    for _ in 0..30 {
+        engine.submit(Command::EndTurn);
+        let builds = engine.drain_build_completions();
+        if let Some(done) = builds.into_iter().next() {
+            finished = Some(done);
+            break;
+        }
+    }
+
+    let done = finished.expect("the city eventually finishes its militia");
+    assert_eq!(done.city, city, "the record names the city that finished");
+    assert_eq!(done.city_name, "London");
+    assert_eq!(done.target, ProductionTarget::Unit(UnitClass::Militia));
+    assert!(
+        engine.drain_build_completions().is_empty(),
+        "draining the record empties it until the next round"
+    );
+}
+
+/// An improvement completes through the same belt, and is reported the same
+/// way so one window can announce either kind of build.
+#[test]
+fn a_city_finishing_an_improvement_is_recorded_for_the_build_notice() {
+    let mut engine = Engine::new(
+        DEFAULT_MAP_WIDTH,
+        DEFAULT_MAP_HEIGHT,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.populate_starting_world();
+    let city = engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(4, 4));
+    engine.game.auto_assign_work(city);
+    forest_around(&mut engine, Location::new(4, 4), 3);
+    // Granary needs Pottery, which the city has not researched yet; Barracks
+    // is the cheapest improvement with no prerequisite, so the fixture stays
+    // about the notice rather than about research prerequisites.
+    engine.submit(Command::SetProductionTarget {
+        city,
+        target: ProductionTarget::Improvement(CityImprovement::Barracks),
+    });
+
+    let mut finished = None;
+    for _ in 0..30 {
+        engine.submit(Command::EndTurn);
+        if let Some(done) = engine.drain_build_completions().into_iter().next() {
+            finished = Some(done);
+            break;
+        }
+    }
+
+    let done = finished.expect("the city eventually finishes the barracks");
+    assert_eq!(
+        done.target,
+        ProductionTarget::Improvement(CityImprovement::Barracks)
+    );
+    let improvement = engine.game.cities[city.index()].improvements();
+    assert!(
+        improvement.contains(&CityImprovement::Barracks),
+        "the improvement really was built: {improvement:?}"
+    );
+}
+
+/// Several cities finishing in the same round are queued in the order the
+/// cities were processed, so the windows run one after another rather than
+/// overwriting each other.
+#[test]
+fn several_cities_finishing_in_one_round_are_all_recorded() {
+    let mut engine = Engine::new(
+        DEFAULT_MAP_WIDTH,
+        DEFAULT_MAP_HEIGHT,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.populate_starting_world();
+    let human = PlayerId::new(0);
+    let first = engine.game.add_city(human, "London", Location::new(4, 4));
+    let second = engine.game.add_city(human, "York", Location::new(8, 8));
+    forest_around(&mut engine, Location::new(4, 4), 3);
+    forest_around(&mut engine, Location::new(8, 8), 3);
+    for city in [first, second] {
+        engine.game.auto_assign_work(city);
+        engine.submit(Command::SetProductionTarget {
+            city,
+            target: ProductionTarget::Unit(UnitClass::Militia),
+        });
+    }
+
+    let mut recorded = Vec::new();
+    for _ in 0..30 {
+        engine.submit(Command::EndTurn);
+        let builds = engine.drain_build_completions();
+        if !builds.is_empty() {
+            recorded = builds;
+            break;
+        }
+    }
+
+    assert!(
+        recorded.len() >= 2,
+        "both cities are recorded: {:?}",
+        recorded.iter().map(|b| &b.city_name).collect::<Vec<_>>()
+    );
+    let names: Vec<&str> = recorded
+        .iter()
+        .map(|done| done.city_name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["London", "York"],
+        "in the order the cities were processed"
+    );
+}
+
+/// A rival city finishing a build is news, not a decision: only the player's
+/// own cities earn a window.
+#[test]
+fn a_rival_city_finishing_a_build_is_not_announced_to_the_player() {
+    let mut engine = Engine::new(
+        DEFAULT_MAP_WIDTH,
+        DEFAULT_MAP_HEIGHT,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.populate_starting_world();
+    let rival_city = engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(20, 20));
+    engine.game.cities[rival_city.index()]
+        .set_production(ProductionTarget::Unit(UnitClass::Militia));
+
+    let human_city = engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(4, 4));
+    engine.game.cities[human_city.index()]
+        .set_production(ProductionTarget::Unit(UnitClass::Militia));
+
+    let recorded: Vec<String> = (0..40)
+        .flat_map(|_| {
+            engine.submit(Command::EndTurn);
+            engine
+                .drain_build_completions()
+                .into_iter()
+                .map(|done| done.city_name)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        !recorded.iter().any(|name| name == "Umgungundlovu"),
+        "a rival's completion is never announced: {recorded:?}"
+    );
+    assert!(
+        recorded.iter().all(|name| name == "London"),
+        "only the player's cities are announced: {recorded:?}"
+    );
+}

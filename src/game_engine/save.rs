@@ -67,6 +67,7 @@ impl SaveData {
                 rng: self.rng,
                 motion: Vec::new(),
                 rival_wars: Vec::new(),
+                builds: Vec::new(),
             },
             competition: self.competition,
             difficulty: self.difficulty,
@@ -132,7 +133,7 @@ pub fn load_game(path: impl AsRef<Path>) -> Result<LoadedGame, SaveError> {
 mod tests {
     use super::*;
     use crate::game_engine::command::Command;
-    use crate::game_engine::{GameView, Player};
+    use crate::game_engine::{BuildComplete, GameView, Player};
     use crate::model::cartography::{Direction, Location};
     use crate::model::cities::{CityId, ProductionTarget};
     use crate::model::civilizations::{Civilization, PlayerId};
@@ -384,6 +385,31 @@ mod tests {
         assert!(
             loaded.engine.drain_rival_wars().is_empty(),
             "the war record is rebuilt fresh on load, never replayed"
+        );
+    }
+
+    /// The build-completion queue is transient for the same reason: each entry
+    /// has already been announced to the player (or is about to be) on screen,
+    /// so carrying it across a save/load would re-announce a build the player
+    /// has seen, or lose one they never did.
+    #[test]
+    fn build_completions_do_not_survive_save_and_load() {
+        let mut engine = engine();
+        let city = engine
+            .game
+            .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+        engine.builds.push(BuildComplete {
+            city,
+            city_name: "London".to_string(),
+            target: ProductionTarget::Unit(UnitClass::Militia),
+        });
+        let data = SaveData::capture(&engine, Competition::new(1), Difficulty::Normal);
+        let restored: SaveData =
+            serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap();
+        let mut loaded = restored.into_loaded().unwrap();
+        assert!(
+            loaded.engine.drain_build_completions().is_empty(),
+            "the build queue is rebuilt fresh on load, never replayed"
         );
     }
 

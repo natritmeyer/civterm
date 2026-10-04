@@ -3602,3 +3602,459 @@ fn the_pinned_seed_leaves_the_starting_city_a_passable_neighbour() {
         "the pinned world rings its city with at least one passable tile"
     );
 }
+
+/// A fixture `BuildComplete` record, as the engine would hand over after a
+/// round in which the named city finished building `target`.
+fn build(city: CityId, city_name: &str, target: ProductionTarget) -> BuildComplete {
+    BuildComplete {
+        city,
+        city_name: city_name.to_string(),
+        target,
+    }
+}
+
+/// An app with `count` player cities, each given a distinct name so the notice
+/// queue can be checked by name rather than by id.
+fn app_with_cities(count: usize) -> (App, Vec<CityId>) {
+    let mut app = App::new();
+    at_start(&mut app);
+    app.handle_key(key(KeyCode::Char('s')));
+    let names = ["London", "York", "Norwich", "Bristol"];
+    let ids = {
+        let engine = app.engine.as_mut().unwrap();
+        let human = crate::model::civilizations::PlayerId::new(0);
+        (0..count)
+            .map(|index| {
+                let location =
+                    crate::model::cartography::Location::new(10 + (index as u16) * 4, 10);
+                engine.game.add_city(human, names[index], location)
+            })
+            .collect()
+    };
+    (app, ids)
+}
+
+#[test]
+fn a_completed_build_opens_a_window_naming_the_city_and_target() {
+    let (mut app, cities) = app_with_cities(1);
+    app.open_build_notices(vec![build(
+        cities[0],
+        "London",
+        ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+    )]);
+
+    let notice = app.current_build_notice().expect("a window is up");
+    assert_eq!(notice.city, cities[0]);
+    assert_eq!(notice.city_name, "London");
+
+    // The window is modal: game keys do not leak through to the map.
+    app.handle_key(key(KeyCode::Char('w')));
+    assert!(
+        !app.command_picker_open,
+        "the map stays inert behind the window"
+    );
+}
+
+#[test]
+fn ok_on_a_build_window_moves_on_to_the_next_city() {
+    let (mut app, cities) = app_with_cities(2);
+    app.open_build_notices(vec![
+        build(
+            cities[0],
+            "London",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[1],
+            "York",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+    ]);
+
+    assert_eq!(app.current_build_notice().unwrap().city_name, "London");
+    app.build_notice_confirm();
+    assert_eq!(
+        app.current_build_notice().unwrap().city_name,
+        "York",
+        "acknowledging the first window shows the next city"
+    );
+    app.build_notice_confirm();
+    assert!(
+        app.current_build_notice().is_none(),
+        "the window closes once the queue empties"
+    );
+}
+
+#[test]
+fn ok_is_reachable_from_the_keyboard() {
+    let (mut app, cities) = app_with_cities(2);
+    app.open_build_notices(vec![
+        build(
+            cities[0],
+            "London",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[1],
+            "York",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+    ]);
+
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(app.current_build_notice().unwrap().city_name, "York");
+    app.handle_key(key(KeyCode::Char(' ')));
+    assert!(app.current_build_notice().is_none());
+}
+
+#[test]
+fn new_order_opens_the_announced_city_window_and_parks_the_queue() {
+    let (mut app, cities) = app_with_cities(2);
+    app.open_build_notices(vec![
+        build(
+            cities[0],
+            "London",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[1],
+            "York",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+    ]);
+
+    app.handle_key(key(KeyCode::Char('n')));
+
+    assert_eq!(
+        app.selected_city,
+        Some(cities[0]),
+        "the announced city's own window opens"
+    );
+    assert!(
+        app.current_build_notice().is_none(),
+        "the parked window yields the screen to the city window"
+    );
+    assert!(
+        app.build_notice.is_some(),
+        "the remaining city is still queued"
+    );
+}
+
+#[test]
+fn closing_the_city_window_returns_to_the_loop_at_the_next_city() {
+    let (mut app, cities) = app_with_cities(2);
+    app.open_build_notices(vec![
+        build(
+            cities[0],
+            "London",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[1],
+            "York",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+    ]);
+    app.build_notice_new_order();
+    assert_eq!(app.selected_city, Some(cities[0]));
+
+    // Give the city a next order the way the player would, then close.
+    app.handle_key(key(KeyCode::Esc));
+
+    assert_eq!(app.selected_city, None, "the city window is closed");
+    assert_eq!(
+        app.current_build_notice()
+            .map(|done| done.city_name.as_str()),
+        Some("York"),
+        "the loop carries on where it left off rather than being abandoned"
+    );
+}
+
+#[test]
+fn the_loop_survives_several_cities_each_taking_a_new_order() {
+    let (mut app, cities) = app_with_cities(3);
+    app.open_build_notices(vec![
+        build(
+            cities[0],
+            "London",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[1],
+            "York",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[2],
+            "Norwich",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+    ]);
+
+    let mut visited = Vec::new();
+    for expected in [&cities[0], &cities[1], &cities[2]] {
+        assert_eq!(app.current_build_notice().map(|d| d.city), Some(*expected));
+        visited.push(app.current_build_notice().unwrap().city_name.clone());
+        app.build_notice_new_order();
+        assert_eq!(app.selected_city, Some(*expected));
+        app.handle_key(key(KeyCode::Esc));
+    }
+
+    assert_eq!(visited, vec!["London", "York", "Norwich"]);
+    assert!(
+        app.current_build_notice().is_none(),
+        "the loop ends once every city has been answered"
+    );
+    assert!(app.build_notice.is_none(), "no stale queue is left behind");
+}
+
+#[test]
+fn a_build_window_for_a_city_that_no_longer_exists_moves_on() {
+    let (mut app, cities) = app_with_cities(2);
+    let ghost = cities[0];
+    // Capture the city out from under the queued notice.
+    app.engine
+        .as_mut()
+        .unwrap()
+        .game
+        .cities
+        .retain(|city| city.id() != ghost);
+    app.open_build_notices(vec![
+        build(
+            ghost,
+            "London",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[1],
+            "York",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+    ]);
+
+    app.build_notice_new_order();
+
+    assert_eq!(
+        app.selected_city, None,
+        "no window opens for a city that is gone"
+    );
+    assert_eq!(
+        app.current_build_notice().map(|d| d.city_name.as_str()),
+        Some("York"),
+        "the notice moves on to the next city instead of stalling"
+    );
+}
+
+#[test]
+fn clicking_ok_and_new_order_drive_the_same_loop_as_the_keys() {
+    let (mut app, cities) = app_with_cities(2);
+    let area = Rect::new(0, 0, 120, 40);
+    app.open_build_notices(vec![
+        build(
+            cities[0],
+            "London",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[1],
+            "York",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+    ]);
+    let panel = crate::tui::build_complete_dialog::dialog_rect(area);
+    app.build_notice_rect.set(Some(panel));
+
+    let new_order = crate::tui::build_complete_dialog::new_order_button_rect(panel);
+    app.handle_mouse(mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        new_order.x + 1,
+        new_order.y,
+    ));
+    assert_eq!(app.selected_city, Some(cities[0]));
+
+    app.handle_key(key(KeyCode::Esc));
+    app.build_notice_rect.set(Some(panel));
+    let ok = crate::tui::build_complete_dialog::ok_button_rect(panel);
+    app.handle_mouse(mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        ok.x + 1,
+        ok.y,
+    ));
+    assert!(
+        app.current_build_notice().is_none(),
+        "OK clicked on the last city closes the window"
+    );
+}
+
+/// The window is modal, so it must not be possible to wander off into the
+/// menu or the map while completions are still unacknowledged — the queue
+/// would then follow the player to a screen it does not belong on. Answering
+/// the queue releases the keyboard again.
+#[test]
+fn the_build_window_is_modal_until_the_queue_is_answered() {
+    let (mut app, cities) = app_with_cities(1);
+    app.open_build_notices(vec![build(
+        cities[0],
+        "London",
+        ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+    )]);
+
+    app.handle_key(key(KeyCode::Char('q')));
+    assert!(
+        matches!(app.phase, Phase::Playing),
+        "the game keys do not reach the quit path behind the window"
+    );
+
+    app.handle_key(key(KeyCode::Enter));
+    assert!(
+        app.current_build_notice().is_none(),
+        "the queue is answered"
+    );
+    app.handle_key(key(KeyCode::Char('q')));
+    assert!(
+        matches!(app.phase, Phase::Playing),
+        "`q` now opens the quit dialog instead"
+    );
+    assert!(app.quit_dialog.is_some());
+}
+
+/// The window's state is not enough — it has to reach the screen. Rendering the
+/// app with a queued completion must actually paint the city name, what it
+/// finished, and both buttons, and remember its rectangle for hit-testing.
+#[test]
+fn a_completed_build_is_drawn_over_the_map_with_both_buttons() {
+    let (mut app, cities) = app_with_cities(1);
+    app.open_build_notices(vec![build(
+        cities[0],
+        "London",
+        ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+    )]);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    let panel = app
+        .build_notice_rect
+        .get()
+        .expect("the drawn window is remembered for hit-testing");
+    let screen = (0..panel.height)
+        .map(|i| {
+            (panel.x..panel.right())
+                .map(|x| buf.cell((x, panel.y + i)).unwrap().symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(screen.contains("London"), "the city is named: {screen}");
+    assert!(screen.contains("Militia"), "the unit is named: {screen}");
+    assert!(screen.contains("OK"), "OK is offered: {screen}");
+    assert!(
+        screen.contains("New Order"),
+        "New Order is offered: {screen}"
+    );
+}
+
+/// While the player is inside the city window opened by "New Order", the notice
+/// is parked: it must not paint over the city they are ordering.
+#[test]
+fn the_parked_build_window_does_not_paint_over_the_city_window() {
+    let (mut app, cities) = app_with_cities(2);
+    app.open_build_notices(vec![
+        build(
+            cities[0],
+            "London",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[1],
+            "York",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+    ]);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+    assert!(app.build_notice_rect.get().is_some(), "drawn while queued");
+
+    app.build_notice_new_order();
+    terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+
+    assert!(
+        app.build_notice_rect.get().is_none(),
+        "a parked notice is not on screen, so the city window owns it"
+    );
+    let buf = terminal.backend().buffer().clone();
+    let panel = crate::tui::build_complete_dialog::dialog_rect(Rect::new(0, 0, 120, 40));
+    let screen = (0..panel.height)
+        .map(|i| {
+            (panel.x..panel.right())
+                .map(|x| buf.cell((x, panel.y + i)).unwrap().symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(
+        !screen.contains("Build complete"),
+        "the window is gone from the screen: {screen}"
+    );
+    assert!(
+        !screen.contains("York"),
+        "the next city is not announced until the city window closes: {screen}"
+    );
+}
+
+/// A city finishing a build and a tech completing can come out of the same
+/// round. The research dialog captures the keyboard and draws first, so the
+/// build queue must be parked behind it and picked up once the choice is made
+/// — not discarded, which would lose every city the player never heard about.
+#[test]
+fn a_research_dialog_parks_the_build_queue_instead_of_dropping_it() {
+    let (mut app, cities) = app_with_cities(2);
+    app.open_build_notices(vec![
+        build(
+            cities[0],
+            "London",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[1],
+            "York",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+    ]);
+    // The same thing the EndTurn path does when a round advances a technology.
+    app.research_dialog = Some(ResearchDialogState {
+        discovered: crate::model::advancements::Advancement::Wheel,
+        choices: Vec::new(),
+        cursor: 0,
+        scroll: 0,
+    });
+    if let Some(notice) = &mut app.build_notice {
+        notice.suspended = true;
+    }
+
+    // Parked: the queue survives, but nothing is on screen to answer.
+    assert!(app.build_notice.is_some(), "the queue is not discarded");
+    assert!(app.current_build_notice().is_none(), "but it is parked");
+
+    app.research_dialog_confirm();
+
+    assert!(
+        app.research_dialog.is_none(),
+        "the research choice is answered"
+    );
+    let shown = app.current_build_notice().expect("the loop resumes");
+    assert_eq!(
+        shown.city_name, "London",
+        "at the first city that finished, not past it"
+    );
+    app.build_notice_confirm();
+    assert_eq!(
+        app.current_build_notice()
+            .expect("the loop continues")
+            .city_name,
+        "York",
+        "no city is skipped by the detour through research"
+    );
+}

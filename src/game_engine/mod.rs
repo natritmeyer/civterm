@@ -22,6 +22,7 @@ mod turns;
 #[cfg(test)]
 mod engine_tests;
 
+pub use cities::BuildComplete;
 pub use city_income::CityIncome;
 pub use command::Command;
 pub use engine::{DEFAULT_MAP_HEIGHT, DEFAULT_MAP_WIDTH, Engine};

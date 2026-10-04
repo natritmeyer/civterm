@@ -67,11 +67,16 @@ stateDiagram-v2
 4. `research_dialog` → research keys only.
 5. `war_notice` → Enter/Space/Esc acknowledges (clicks the OK button) and
    pops the next queued `RivalWar` declaration, if any.
-6. `diplomacy` → diplomacy keys only.
-7. `command_picker_open` → command picker keys only.
-8. `production_picker_open` → production picker keys only.
-9. `rival_animation` active → swallows game input (modals still capture), pans camera.
-10. Otherwise: unit keys (`arrows/hjkl/yubn`, `Tab` cycle, `space` sentry-wait),
+6. `build_notice` (not suspended) → Enter/Space/Esc acknowledges (OK, moves to
+   the next city that finished), `n` opens that city's own window instead.
+   A window opened this way parks the notice, as does the `research_dialog`
+   when the same round advances a technology; closing the city window, or
+   confirming the research choice, resumes the loop.
+8. `diplomacy` → diplomacy keys only.
+9. `command_picker_open` → command picker keys only.
+10. `production_picker_open` → production picker keys only.
+11. `rival_animation` active → swallows game input (modals still capture), pans camera.
+12. Otherwise: unit keys (`arrows/hjkl/yubn`, `Tab` cycle, `space` sentry-wait),
     `v` found city, `w` command window, `c` cancel order, `e` toggle events, `?` help,
     `S` save, `Enter` end turn, `Esc` deselect/close.
 

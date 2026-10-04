@@ -37,6 +37,23 @@ impl App {
             }
             return false;
         }
+        // While a build-completion window is up it captures the keyboard: enter
+        // or space moves on to the next city that finished, and `n` opens this
+        // city's window instead so the player can set its next order. Either
+        // way the queue advances by one city, and the loop resumes when a city
+        // window opened this way closes.
+        if self.current_build_notice().is_some() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
+                    self.build_notice_confirm();
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.build_notice_new_order();
+                }
+                _ => {}
+            }
+            return false;
+        }
         // While the diplomacy window is open it captures the keyboard: the
         // player may only choose to declare war or remain at peace.
         if self.diplomacy.is_some() {
@@ -86,8 +103,7 @@ impl App {
             }
             KeyCode::Esc => {
                 if self.selected_city.is_some() {
-                    self.selected_city = None;
-                    self.city_window_scroll = 0;
+                    self.close_city_window();
                 } else if self.show_help {
                     self.show_help = false;
                 } else {
@@ -434,6 +450,7 @@ impl App {
         self.research_dialog_rect.get().is_some()
             || self.diplomacy_rect.get().is_some()
             || self.war_notice_rect.get().is_some()
+            || self.build_notice_rect.get().is_some()
             || self.command_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
             || self.moused_window.get().is_some()
@@ -496,6 +513,7 @@ impl App {
     pub(super) fn end_turn(&mut self) {
         self.unit_advance_deadline = None;
         let human = PlayerId::new(0);
+        let mut builds = Vec::new();
         let (events, discovered, wrapped) = if let Some(engine) = &mut self.engine {
             let advances_before = engine.player_advances(human);
             let events = engine.submit(Command::EndTurn);
@@ -531,6 +549,11 @@ impl App {
             self.war_notice = (!wars.is_empty()).then(|| WarNoticeState {
                 queue: wars.into_iter().map(|war| war.rival).collect(),
             });
+            // A city that finished building this round is announced by a
+            // window offering OK (move to the next such city) or New Order
+            // (open that city's window to set its next target). Each is shown
+            // in turn, so several finishing cities queue up one after another.
+            builds = engine.drain_build_completions();
             // An advancement completes at the start of the human's turn: once
             // play wraps back to player zero, their research has advanced and
             // a discovery leaves them with no research in progress. Offer the
@@ -545,6 +568,9 @@ impl App {
             (Vec::new(), None, false)
         };
         self.record_events(events);
+        // The build-completion windows are queued once the engine borrow has
+        // ended, since opening one touches the map overlays too.
+        self.open_build_notices(builds);
         // The research dialog only belongs to a live turn: a round that just
         // ended the match (usually the final rivals' death) must not pile a
         // research choice on top of the victory screen.
@@ -573,6 +599,16 @@ impl App {
             self.command_picker_open = false;
             self.command_picker_scroll = 0;
             self.command_picker_rect = Cell::new(None);
+            // A research choice and a build announcement can both come out of
+            // the same round: a city finishes a unit and the accumulated
+            // science crosses a threshold. Research captures the keyboard and
+            // is drawn first, so the build queue is *parked* behind it rather
+            // than dropped -- dropping it would silently lose every city the
+            // player was never told about. `research_dialog_confirm` resumes it.
+            if let Some(notice) = &mut self.build_notice {
+                notice.suspended = true;
+            }
+            self.build_notice_rect = Cell::new(None);
         }
         self.select_first_unit();
     }

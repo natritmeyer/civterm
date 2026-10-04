@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 643 passing unit
+Run `make build` after any change. Current test baseline: 665 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -213,15 +213,46 @@ a hard boundary; keep it by convention.
   `Game::disband_cargo_of`, and `disband_units_homed_to` sweeps cargo
   aboard a doomed ship. No unit may reference a missing carrier.
 
+## City build-completion notice
+
+- A city that finishes a unit or an improvement hands the TUI a
+  `BuildComplete { city, city_name, target }`, pushed onto the transient
+  `Engine.builds` by `process_cities` and drained by
+  `drain_build_completions`. Only the human's cities are recorded: a rival
+  city finishing a build is news, not a decision for the player. The name is
+  snapshotted because the city itself may be gone by the time the window is
+  answered.
+- The windows are a **loop**, not a stack: every city that finished gets its
+  own window, one after another, oldest first. `OK` pops the front and shows
+  the next (closing the window once the queue empties); `New Order` pops it
+  too and opens *that* city's window instead.
+- `New Order` sets `BuildNoticeState::suspended`, which parks the queue: the
+  notice neither draws nor takes input, so the city window owns the screen.
+  `close_city_window` calls `resume_build_notice`, so closing the city window
+  returns to the loop at the next city rather than abandoning the rest.
+  Suspending is not the same as dropping the queue — dropping it silently
+  loses every city the player never saw announced.
+- A suspended notice is therefore excluded from `window_is_open`, from the
+  draw pass and from `handle_playing_key`; only a notice actually showing
+  counts. Both the queue and its rectangle are cleared when a new game starts
+  (`reset_setup`) and when the match ends (`check_game_over`), so a stale
+  window can never follow the player to the menu or onto the victory screen.
+- A round can advance a technology *and* finish a build. Research captures the
+  keyboard and draws first, so the queue is parked (suspended) behind the
+  research dialog and `research_dialog_confirm` resumes it — parking, not
+  dropping, for the same reason `New Order` parks rather than drops.
+- The notice is modal while it shows, exactly like the war-declaration window:
+  `q` does not reach the quit path until the queue is answered.
+
 ## Save and load impact
 
 New features are judged for their save impact before they are built:
 
 - Ask first what state a feature introduces and whether it must survive a
   save/load round trip. Transient state — e.g. `Engine.motion` (the rival
-  replay record), the battle flash, UI-only selection — is rebuilt fresh
-  (`Engine::into_loaded` re-initialises it) and must never be pushed into
-  `SaveData`.
+  replay record), `Engine.builds` (the build-completion queue), the battle
+  flash, UI-only selection — is rebuilt fresh (`Engine::into_loaded`
+  re-initialises it) and must never be pushed into `SaveData`.
 - Engine-level state is threaded by hand: `SaveData::capture` copies it and
   `SaveData::into_loaded` restores it. Adding a field to `Engine` (or to
   anything it owns that is not already inside `game: Game`) means updating
@@ -251,6 +282,11 @@ New features are judged for their save impact before they are built:
   stops at the edge rather than wrapping, silently dropping every unit after the
   first. Every row is clamped to the panel's `bottom`, and a list too tall for
   the space reports `+N more` rather than overdrawing the map pane.
+- Cargo appears in the tile info panel, marked `Aboard:` / `aboard`, so the
+  manifest of a ship is visible without opening it. It stays out of
+  `GameView::units_at`, which is what the map painter reads: a land unit's
+  letter on a hull's tile would misreport the fleet. `cargo_at` reports it
+  separately and the panel asks for both.
 - A city tile always wears its owning civilization's colour, even beneath an
   occupying unit, so a captured city flips colour the instant it falls
   rather than waiting for the victor to move off.

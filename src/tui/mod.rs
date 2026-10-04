@@ -1,4 +1,5 @@
 pub mod app;
+pub mod build_complete_dialog;
 pub mod city_window;
 pub mod civ_selector;
 pub mod command_picker;
