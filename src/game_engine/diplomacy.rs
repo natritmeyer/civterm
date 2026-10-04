@@ -20,11 +20,15 @@ impl Engine {
             return;
         }
         self.game.declare_war(self.current_player_index, opponent);
-        self.events.push(Event::new(format!(
-            "{:?} declares war on {:?}",
-            self.game.players[self.current_player_index.index()].civilization,
-            self.game.players[opponent.index()].civilization
-        )));
+        self.events.push(Event::between(
+            self.current_player_index,
+            opponent,
+            format!(
+                "{:?} declares war on {:?}",
+                self.game.players[self.current_player_index.index()].civilization,
+                self.game.players[opponent.index()].civilization
+            ),
+        ));
     }
     pub(super) fn make_peace(&mut self, opponent: PlayerId) {
         if opponent == self.current_player_index {
@@ -41,11 +45,15 @@ impl Engine {
             return;
         }
         self.game.make_peace(self.current_player_index, opponent);
-        self.events.push(Event::new(format!(
-            "{:?} makes peace with {:?}",
-            self.game.players[self.current_player_index.index()].civilization,
-            self.game.players[opponent.index()].civilization
-        )));
+        self.events.push(Event::between(
+            self.current_player_index,
+            opponent,
+            format!(
+                "{:?} makes peace with {:?}",
+                self.game.players[self.current_player_index.index()].civilization,
+                self.game.players[opponent.index()].civilization
+            ),
+        ));
     }
     pub(super) fn meet_contacts_within(&mut self, location: Location, owner: PlayerId) {
         let width = self.game.map.width;
@@ -78,11 +86,15 @@ impl Engine {
                 continue;
             }
             self.game.make_peace(owner, other);
-            self.events.push(Event::new(format!(
-                "{:?} and {:?} meet for the first time",
-                self.game.players[owner.index()].civilization,
-                self.game.players[other.index()].civilization
-            )));
+            self.events.push(Event::between(
+                owner,
+                other,
+                format!(
+                    "{:?} and {:?} meet for the first time",
+                    self.game.players[owner.index()].civilization,
+                    self.game.players[other.index()].civilization
+                ),
+            ));
         }
     }
 }

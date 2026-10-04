@@ -133,7 +133,7 @@ pub fn load_game(path: impl AsRef<Path>) -> Result<LoadedGame, SaveError> {
 mod tests {
     use super::*;
     use crate::game_engine::command::Command;
-    use crate::game_engine::{BuildComplete, GameView, Player};
+    use crate::game_engine::{BuildComplete, Event, GameView, Player};
     use crate::model::cartography::{Direction, Location};
     use crate::model::cities::{CityId, ProductionTarget};
     use crate::model::civilizations::{Civilization, PlayerId};
@@ -410,6 +410,20 @@ mod tests {
         assert!(
             loaded.engine.drain_build_completions().is_empty(),
             "the build queue is rebuilt fresh on load, never replayed"
+        );
+    }
+
+    /// `Event` carries a `#[serde(default)]` `about`, so a file written
+    /// before events learned whose story they tell still loads — the old events
+    /// default to `Everyone` and stay visible rather than silently vanishing.
+    #[test]
+    fn events_from_an_older_build_still_load_and_stay_visible() {
+        let old_event: Event =
+            serde_json::from_str(r#"{"message":"Roman begins turn 3"}"#).unwrap();
+        assert_eq!(old_event.message(), "Roman begins turn 3");
+        assert!(
+            old_event.is_about(PlayerId::new(0)),
+            "an event written before attribution defaults to visible"
         );
     }
 

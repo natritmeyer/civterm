@@ -9,11 +9,14 @@ impl Engine {
     /// progress at the player level.
     pub(super) fn process_research(&mut self, owner: PlayerId) {
         if let Some(advancement) = self.game.advance_research(owner) {
-            self.events.push(Event::new(format!(
-                "{:?} discover {:?}",
-                self.game.players[owner.index()].civilization,
-                advancement
-            )));
+            self.events.push(Event::for_player(
+                owner,
+                format!(
+                    "{:?} discover {:?}",
+                    self.game.players[owner.index()].civilization,
+                    advancement
+                ),
+            ));
         }
     }
     pub(super) fn set_research_target(&mut self, advancement: Advancement) {
@@ -32,10 +35,13 @@ impl Engine {
             return;
         }
         self.game.set_research_target(owner, advancement);
-        self.events.push(Event::new(format!(
-            "{:?} begin researching {:?}",
-            self.game.players[owner.index()].civilization,
-            advancement
-        )));
+        self.events.push(Event::for_player(
+            owner,
+            format!(
+                "{:?} begin researching {:?}",
+                self.game.players[owner.index()].civilization,
+                advancement
+            ),
+        ));
     }
 }

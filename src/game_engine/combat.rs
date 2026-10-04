@@ -28,11 +28,15 @@ impl Engine {
         let defender_id = self.game.units[defender_idx].id();
         let attacker_owner = self.game.units[attacker_idx].owner();
         let defender_owner = self.game.units[defender_idx].owner();
-        self.events.push(Event::new(format!(
-            "Unit {} attacks Unit {}",
-            attacker_id.index(),
-            defender_id.index()
-        )));
+        self.events.push(Event::between(
+            attacker_owner,
+            defender_owner,
+            format!(
+                "Unit {} attacks Unit {}",
+                attacker_id.index(),
+                defender_id.index()
+            ),
+        ));
 
         let attacker_power = self.attacker_power(&self.game.units[attacker_idx]);
         let defender_power = self.defender_power(&self.game.units[defender_idx]);
@@ -43,10 +47,13 @@ impl Engine {
             self.game.remove_unit(defender_id);
             let lost_cargo = self.game.disband_cargo_of(defender_id);
             if lost_cargo > 0 {
-                self.events.push(Event::new(format!(
-                    "{lost_cargo} transported units are lost with Unit {}",
-                    defender_id.index()
-                )));
+                self.events.push(Event::for_player(
+                    defender_owner,
+                    format!(
+                        "{lost_cargo} transported units are lost with Unit {}",
+                        defender_id.index()
+                    ),
+                ));
             }
             let tile_is_clear = !self.game.units.iter().any(|unit| {
                 !unit.is_transported()
@@ -69,11 +76,15 @@ impl Engine {
                 attacker_unit.promote();
             }
             self.game.sync_cargo(attacker_id);
-            self.events.push(Event::new(format!(
-                "Unit {} defeats Unit {}",
-                attacker_id.index(),
-                defender_id.index()
-            )));
+            self.events.push(Event::between(
+                attacker_owner,
+                defender_owner,
+                format!(
+                    "Unit {} defeats Unit {}",
+                    attacker_id.index(),
+                    defender_id.index()
+                ),
+            ));
             // Winning the fight on a city tile conquers the now-undefended
             // city for the attacker: the conqueror stands inside a city that
             // has just fallen to them, so it flips colour the instant the
@@ -92,16 +103,23 @@ impl Engine {
             self.game.remove_unit(attacker_id);
             let lost_cargo = self.game.disband_cargo_of(attacker_id);
             if lost_cargo > 0 {
-                self.events.push(Event::new(format!(
-                    "{lost_cargo} transported units are lost with Unit {}",
-                    attacker_id.index()
-                )));
+                self.events.push(Event::for_player(
+                    attacker_owner,
+                    format!(
+                        "{lost_cargo} transported units are lost with Unit {}",
+                        attacker_id.index()
+                    ),
+                ));
             }
-            self.events.push(Event::new(format!(
-                "Unit {} repels Unit {}",
-                defender_id.index(),
-                attacker_id.index()
-            )));
+            self.events.push(Event::between(
+                attacker_owner,
+                defender_owner,
+                format!(
+                    "Unit {} repels Unit {}",
+                    defender_id.index(),
+                    attacker_id.index()
+                ),
+            ));
             self.eliminate_if_annihilated(attacker_owner);
         }
     }
@@ -142,9 +160,11 @@ impl Engine {
         let loser = self.game.players[old_owner.index()].civilization;
         if overrun {
             self.game.cities.retain(|c| c.id() != city_id);
-            self.events.push(Event::new(format!(
-                "{conqueror:?} destroy {city_name} (formerly {loser:?}'s)"
-            )));
+            self.events.push(Event::between(
+                self.current_player_index,
+                old_owner,
+                format!("{conqueror:?} destroy {city_name} (formerly {loser:?}'s)"),
+            ));
         } else {
             self.game
                 .cities
@@ -152,14 +172,18 @@ impl Engine {
                 .find(|c| c.id() == city_id)
                 .unwrap()
                 .change_owner(self.current_player_index);
-            self.events.push(Event::new(format!(
-                "{conqueror:?} capture {city_name} (formerly {loser:?}'s)"
-            )));
+            self.events.push(Event::between(
+                self.current_player_index,
+                old_owner,
+                format!("{conqueror:?} capture {city_name} (formerly {loser:?}'s)"),
+            ));
         }
         if disbanded > 0 {
-            self.events.push(Event::new(format!(
-                "{disbanded} units disband with the loss of {city_name}"
-            )));
+            self.events.push(Event::between(
+                self.current_player_index,
+                old_owner,
+                format!("{disbanded} units disband with the loss of {city_name}"),
+            ));
         }
         self.eliminate_if_cityless(old_owner);
     }
@@ -207,12 +231,15 @@ impl Engine {
         self.game.players[player.index()].mark_eliminated();
         let civilization = self.game.players[player.index()].civilization;
         let disbanded = self.game.remove_units_owned_by(player);
-        self.events
-            .push(Event::new(format!("{civilization:?} has been eliminated")));
+        self.events.push(Event::for_player(
+            player,
+            format!("{civilization:?} has been eliminated"),
+        ));
         if disbanded > 0 {
-            self.events.push(Event::new(format!(
-                "{disbanded} units disband with the loss of {civilization:?}"
-            )));
+            self.events.push(Event::for_player(
+                player,
+                format!("{disbanded} units disband with the loss of {civilization:?}"),
+            ));
         }
     }
     pub(super) fn select_defender(&self, attacker_idx: usize, tile: Location) -> usize {

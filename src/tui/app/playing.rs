@@ -621,6 +621,17 @@ impl App {
         if events.is_empty() {
             return;
         }
+        // The log is the player's own story: a rival founding a city or moving
+        // a settler is the rival's news, not the player's. Only events about
+        // the civilization at the keyboard are kept.
+        let human = PlayerId::new(0);
+        let events: Vec<GameEvent> = events
+            .into_iter()
+            .filter(|event| event.is_about(human))
+            .collect();
+        if events.is_empty() {
+            return;
+        }
         // Keep only the most recent few messages so the log view stays small.
         self.event_log.extend(events);
         let overflow = self.event_log.len().saturating_sub(EVENT_LOG_SIZE);

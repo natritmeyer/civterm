@@ -84,11 +84,14 @@ impl Engine {
         // land unit stepping ashore brings nothing with it.
         self.game.sync_cargo(unit);
         self.record_rival_step(owner, unit, origin, destination, false);
-        self.events.push(Event::new(if was_transported {
-            format!("Unit {} disembarks", unit.index())
-        } else {
-            format!("Unit {} moves {:?}", unit.index(), direction)
-        }));
+        self.events.push(Event::for_player(
+            owner,
+            if was_transported {
+                format!("Unit {} disembarks", unit.index())
+            } else {
+                format!("Unit {} moves {:?}", unit.index(), direction)
+            },
+        ));
     }
     /// Record a landing of `unit` from `from` onto `to` for the TUI's rival
     /// replay, marking the steps that ended in combat so the replay can flash
@@ -142,8 +145,10 @@ impl Engine {
         boarder.board(carrier);
         self.game.reveal_tiles_at(owner, destination);
         self.record_rival_step(owner, unit, origin, destination, false);
-        self.events
-            .push(Event::new(format!("Unit {} boards the ship", unit.index())));
+        self.events.push(Event::for_player(
+            owner,
+            format!("Unit {} boards the ship", unit.index()),
+        ));
         Ok(())
     }
     /// The lawful boarding of a ship: the unit must be a land unit on a
@@ -271,10 +276,13 @@ impl Engine {
                 )));
             }
             Some(u) => {
+                let owner = u.owner();
                 u.fortify();
                 u.spend_turn();
-                self.events
-                    .push(Event::new(format!("Unit {} fortifies", unit.index())));
+                self.events.push(Event::for_player(
+                    owner,
+                    format!("Unit {} fortifies", unit.index()),
+                ));
             }
             None => self.events.push(Event::new("No such unit")),
         }
@@ -288,10 +296,13 @@ impl Engine {
                 )));
             }
             Some(u) => {
+                let owner = u.owner();
                 u.sentry();
                 u.spend_turn();
-                self.events
-                    .push(Event::new(format!("Unit {} stands sentry", unit.index())));
+                self.events.push(Event::for_player(
+                    owner,
+                    format!("Unit {} stands sentry", unit.index()),
+                ));
             }
             None => self.events.push(Event::new("No such unit")),
         }
@@ -328,11 +339,10 @@ impl Engine {
             u.work(improvement);
             u.spend_turn();
         }
-        self.events.push(Event::new(format!(
-            "Unit {} begins building {:?}",
-            unit.index(),
-            improvement
-        )));
+        self.events.push(Event::for_player(
+            self.owned_unit(unit).unwrap().owner(),
+            format!("Unit {} begins building {:?}", unit.index(), improvement),
+        ));
     }
     pub(super) fn cancel_order(&mut self, unit: UnitId) {
         match self.owned_unit_mut(unit) {
@@ -343,10 +353,13 @@ impl Engine {
                 )));
             }
             Some(u) => {
+                let owner = u.owner();
                 u.cancel_order();
                 u.spend_turn();
-                self.events
-                    .push(Event::new(format!("Unit {} order cancelled", unit.index())));
+                self.events.push(Event::for_player(
+                    owner,
+                    format!("Unit {} order cancelled", unit.index()),
+                ));
             }
             None => self.events.push(Event::new("No such unit")),
         }
@@ -371,11 +384,12 @@ impl Engine {
                 )));
             }
             Some(u) => {
+                let owner = u.owner();
                 u.cancel_order();
-                self.events.push(Event::new(format!(
-                    "Unit {} is no longer fortified",
-                    unit.index()
-                )));
+                self.events.push(Event::for_player(
+                    owner,
+                    format!("Unit {} is no longer fortified", unit.index()),
+                ));
             }
             None => self.events.push(Event::new("No such unit")),
         }
@@ -399,11 +413,12 @@ impl Engine {
                 )));
             }
             Some(u) => {
+                let owner = u.owner();
                 u.cancel_order();
-                self.events.push(Event::new(format!(
-                    "Unit {} is no longer on sentry",
-                    unit.index()
-                )));
+                self.events.push(Event::for_player(
+                    owner,
+                    format!("Unit {} is no longer on sentry", unit.index()),
+                ));
             }
             None => self.events.push(Event::new("No such unit")),
         }

@@ -19,11 +19,10 @@ impl Engine {
                 self.turn += 1;
                 break;
             }
-            self.events.push(Event::new(format!(
-                "{:?} begins turn {}",
-                self.current_player(),
-                self.turn
-            )));
+            self.events.push(Event::for_player(
+                self.current_player_index,
+                format!("{:?} begins turn {}", self.current_player(), self.turn),
+            ));
             self.run_rival_turn();
             rivals_acted += 1;
             // Only the human's turn ends a round. If the human has been
@@ -34,11 +33,10 @@ impl Engine {
                 break;
             }
         }
-        self.events.push(Event::new(format!(
-            "{:?} begins turn {}",
-            self.current_player(),
-            self.turn
-        )));
+        self.events.push(Event::for_player(
+            self.current_player_index,
+            format!("{:?} begins turn {}", self.current_player(), self.turn),
+        ));
     }
     pub(super) fn advance_to_next_player(&mut self) {
         let count = self.game.players.len();
@@ -73,11 +71,14 @@ impl Engine {
                         .is_ok();
                     unit.cancel_order();
                     unit.spend_turn();
-                    self.events.push(Event::new(if finished {
-                        format!("Unit {} finishes {:?}", done.index(), improvement)
-                    } else {
-                        format!("Cannot build {:?} here", improvement)
-                    }));
+                    self.events.push(Event::for_player(
+                        self.current_player_index,
+                        if finished {
+                            format!("Unit {} finishes {:?}", done.index(), improvement)
+                        } else {
+                            format!("Cannot build {:?} here", improvement)
+                        },
+                    ));
                 }
             } else {
                 unit.restore_moves();

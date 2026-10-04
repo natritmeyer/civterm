@@ -27,7 +27,7 @@ pub use city_income::CityIncome;
 pub use command::Command;
 pub use engine::{DEFAULT_MAP_HEIGHT, DEFAULT_MAP_WIDTH, Engine};
 pub use errors::{MoveError, SettleError};
-pub use event::Event;
+pub use event::{Event, EventAbout};
 pub use exploration::Exploration;
 pub use game_view::GameView;
 pub use outcome::GameOutcome;

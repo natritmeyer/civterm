@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 666 passing unit
+Run `make build` after any change. Current test baseline: 671 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -212,6 +212,26 @@ a hard boundary; keep it by convention.
 - When a carrier is removed, its cargo must go too: combat calls
   `Game::disband_cargo_of`, and `disband_units_homed_to` sweeps cargo
   aboard a doomed ship. No unit may reference a missing carrier.
+
+## Event log ownership
+
+- An event says whose story it is. `Event::new` builds one about nobody in
+  particular — a rule rejection the player caused, which stays visible. The
+  constructors that matter are `Event::for_player` (a civilization's own
+  business: its units moving, its city growing, its research) and
+  `Event::between` (a clash between two, told to both).
+- `record_events` keeps only `is_about(PlayerId::new(0))`, so a rival's turn
+  start, its settlers walking and its cities producing never reach the window
+  the player reads. Filter at the TUI, not the engine: the engine has no idea
+  which civilization is at the keyboard.
+- A battle is `between`, never `for_player`. A rival attacking the player is
+  the player's news even though the aggressor belongs to someone else, and
+  `is_about` matches either side of a `Both`.
+- Attribution is data, not a naming convention, because the messages cannot be
+  filtered by text: `"Unit 1 moves SW"` carries no civilization name at all.
+- `Event.about` is `#[serde(default)]`, so events written by older builds —
+  and `SaveData` does persist `events` — still load as `Everyone` rather than
+  silently vanishing from the log.
 
 ## City build-completion notice
 

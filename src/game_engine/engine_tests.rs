@@ -4123,3 +4123,69 @@ fn a_rival_city_finishing_a_build_is_not_announced_to_the_player() {
         "only the player's cities are announced: {recorded:?}"
     );
 }
+
+/// A civilization's log is its own story. Rival housekeeping — their turn
+/// starting, a settler walking, a rival city producing — belongs to the rival's
+/// log and must never surface in the player's.
+#[test]
+fn rival_events_are_not_about_the_player() {
+    let mut engine = Engine::with_seed(
+        24,
+        16,
+        Player::new(Civilization::English),
+        vec![
+            Player::new(Civilization::Roman),
+            Player::new(Civilization::Egyptian),
+        ],
+        0x5EED,
+    );
+    engine.populate_starting_world();
+    let human = PlayerId::new(0);
+    let mut all = Vec::new();
+    for _ in 0..5 {
+        all.extend(engine.submit(Command::EndTurn));
+    }
+    assert!(all.len() > 10, "the fixture produced a busy round: {all:?}");
+    let mine: Vec<&str> = all
+        .iter()
+        .filter(|e| e.is_about(human))
+        .map(Event::message)
+        .collect();
+    assert!(
+        !mine.is_empty(),
+        "the player still hears about their own turn"
+    );
+    for message in &mine {
+        // Every surviving line is the player's own business. Rival civ names
+        // are the tell: nothing about Rome or Egypt belongs in the English log.
+        assert!(
+            !message.contains("Roman") && !message.contains("Egyptian"),
+            "rival news leaked into the player's log: {message:?}"
+        );
+    }
+}
+
+/// A battle is between two, so both sides are told. This is the case that
+/// matters most: a rival attacking the player must be reported even though the
+/// aggressor is not the civilization at the keyboard.
+#[test]
+fn a_clash_is_reported_to_both_sides() {
+    let human = PlayerId::new(0);
+    let rival = PlayerId::new(1);
+    let event = Event::between(human, rival, "Unit 3 attacks Unit 4");
+    assert!(event.is_about(human), "the player hears of their own fight");
+    assert!(event.is_about(rival), "so does the rival");
+    assert!(
+        !event.is_about(PlayerId::new(2)),
+        "an uninvolved civilization does not"
+    );
+}
+
+/// A rule rejection belongs to whoever tried it, so it stays in the log. It is
+/// the player's own mistake and they need to see why nothing happened.
+#[test]
+fn a_rejected_command_is_visible_to_everyone() {
+    let event = Event::new("Cannot build Road here");
+    assert!(event.is_about(PlayerId::new(0)));
+    assert!(event.is_about(PlayerId::new(1)));
+}

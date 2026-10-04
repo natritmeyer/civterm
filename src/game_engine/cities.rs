@@ -51,15 +51,20 @@ impl Engine {
         if first_city {
             self.game.begin_research(owner);
             let target = self.game.advancement_in_progress(owner).unwrap();
-            self.events.push(Event::new(format!(
-                "{:?} begin researching {:?}",
-                self.game.players[owner.index()].civilization,
-                target
-            )));
+            self.events.push(Event::for_player(
+                owner,
+                format!(
+                    "{:?} begin researching {:?}",
+                    self.game.players[owner.index()].civilization,
+                    target
+                ),
+            ));
         }
         self.game.reveal_tiles_surrounding_city_at(owner, location);
-        self.events
-            .push(Event::new(format!("Unit {} founds {}", unit.index(), name)));
+        self.events.push(Event::for_player(
+            owner,
+            format!("Unit {} founds {}", unit.index(), name),
+        ));
     }
     pub(super) fn set_production(&mut self, city: CityId, target: ProductionTarget) {
         if !self
@@ -86,10 +91,10 @@ impl Engine {
         {
             Some(city) => {
                 city.set_production(target);
-                self.events.push(Event::new(format!(
-                    "{} begins producing {:?}",
-                    city.name, target
-                )));
+                self.events.push(Event::for_player(
+                    self.current_player_index,
+                    format!("{} begins producing {:?}", city.name, target),
+                ));
             }
             None => self.events.push(Event::new("No such city")),
         }
@@ -114,16 +119,19 @@ impl Engine {
             let result = self.game.process_city(city_id);
             if result.grew {
                 self.game.auto_assign_work(city_id);
-                self.events.push(Event::new(format!(
-                    "{} grows to size {}",
-                    city_name,
-                    self.game
-                        .cities
-                        .iter()
-                        .find(|c| c.id() == city_id)
-                        .unwrap()
-                        .population()
-                )));
+                self.events.push(Event::for_player(
+                    owner,
+                    format!(
+                        "{} grows to size {}",
+                        city_name,
+                        self.game
+                            .cities
+                            .iter()
+                            .find(|c| c.id() == city_id)
+                            .unwrap()
+                            .population()
+                    ),
+                ));
             }
             if let Some(target) = result.completed {
                 // Only the human's completions are worth a window: a rival's
@@ -150,20 +158,24 @@ impl Engine {
                             // mustered as veterans before taking the field.
                             self.game.units[index].promote();
                         }
-                        self.events.push(Event::new(format!(
-                            "{} produces {:?}",
-                            city_name, unit_class
-                        )));
+                        self.events.push(Event::for_player(
+                            owner,
+                            format!("{} produces {:?}", city_name, unit_class),
+                        ));
                     }
                     ProductionTarget::Improvement(_) => {
-                        self.events
-                            .push(Event::new(format!("{} completes {:?}", city_name, target)));
+                        self.events.push(Event::for_player(
+                            owner,
+                            format!("{} completes {:?}", city_name, target),
+                        ));
                     }
                 }
             }
             if result.starving {
-                self.events
-                    .push(Event::new(format!("{} is starving", city_name)));
+                self.events.push(Event::for_player(
+                    owner,
+                    format!("{} is starving", city_name),
+                ));
             }
         }
     }

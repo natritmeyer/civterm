@@ -4058,3 +4058,66 @@ fn a_research_dialog_parks_the_build_queue_instead_of_dropping_it() {
         "no city is skipped by the detour through research"
     );
 }
+
+/// The event window is the player's own log. Ending a turn runs every rival's
+/// turn, which floods the engine's buffer with their housekeeping; none of it
+/// may reach the log the player reads.
+/// The event window is the player's own log. Ending a turn runs every rival's
+/// turn, which floods the engine's buffer with their housekeeping — "Roman
+/// begins turn", "Egyptian begin researching", "Unit 1 moves SW". None of that
+/// may reach the log the player reads.
+#[test]
+fn the_event_log_holds_only_the_players_own_events() {
+    let mut app = App::new();
+    at_competition(&mut app);
+    app.handle_key(key(KeyCode::Enter)); // default competition, on to difficulty
+    app.handle_key(key(KeyCode::Enter)); // default difficulty, on to start prompt
+    app.handle_key(key(KeyCode::Char('s')));
+    for _ in 0..3 {
+        app.handle_key(key(KeyCode::Enter)); // end turn
+    }
+
+    let human = app
+        .engine
+        .as_ref()
+        .unwrap()
+        .civilization_of(PlayerId::new(0))
+        .display_name()
+        .to_string();
+    let log: Vec<String> = app
+        .event_log
+        .iter()
+        .map(|e| e.message().to_string())
+        .collect();
+    assert!(
+        log.iter().any(|m| m.contains(&human)),
+        "the player still hears about their own turn: {log:?}"
+    );
+    // Every rival civilization in the game, by name, must be absent.
+    // Every other civilization in the match, found through the units they own.
+    let rival_names: Vec<String> = {
+        let engine = app.engine.as_ref().unwrap();
+        let mut names: Vec<String> = engine
+            .game
+            .players
+            .iter()
+            .filter(|p| p.civilization.display_name() != human)
+            .map(|p| p.civilization.display_name().to_string())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    assert!(
+        !rival_names.is_empty(),
+        "the fixture needs rivals to be meaningful"
+    );
+    for message in &log {
+        for rival in &rival_names {
+            assert!(
+                !message.contains(rival.as_str()),
+                "{rival:?} news leaked into the player's log: {message:?}"
+            );
+        }
+    }
+}
