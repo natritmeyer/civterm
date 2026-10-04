@@ -33,7 +33,7 @@ stateDiagram-v2
         Exploring --> CityWindowOpen : select city (click / key)
         CityWindowOpen --> ProductionPickerOpen : change production
         ProductionPickerOpen --> CityWindowOpen : save / cancel
-        CityWindowOpen --> Exploring : close (Esc / ✕)
+        CityWindowOpen --> Exploring : close (Esc / ✕ / click outside)
 
         Exploring --> CommandPickerOpen : w on a unit / click a unit
         CommandPickerOpen --> Exploring : save order / cancel
@@ -74,8 +74,13 @@ stateDiagram-v2
    confirming the research choice, resumes the loop.
 8. `diplomacy` → diplomacy keys only.
 9. `command_picker_open` → command picker keys only.
-10. `production_picker_open` → production picker keys only.
-11. `rival_animation` active → swallows game input (modals still capture), pans camera.
+10. `production_picker_open` → production picker keys only (floats over the
+    city window, which is why its guard comes first).
+11. `selected_city` set (city window open) → Esc closes it; every other key is
+    inert, so no map command reaches the tile under the panel. A press inside
+    the window acts on its buttons, a press outside dismisses the window and is
+    consumed rather than becoming a drag or a click on the map.
+12. `rival_animation` active → swallows game input (modals still capture), pans camera.
 12. Otherwise: unit keys (`arrows/hjkl/yubn`, `Tab` cycle, `space` sentry-wait),
     `v` found city, `w` command window, `c` cancel order, `e` toggle events, `?` help,
     `S` save, `Enter` end turn, `Esc` deselect/close.

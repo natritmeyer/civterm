@@ -998,6 +998,22 @@ fn with_city_window_open() -> (App, usize, usize, Rect) {
     (app, cx, cy, win)
 }
 
+/// Plants a fresh militia on the player's city tile, for tests that need a
+/// unit to move or to be selected. `playing_app` spends the starting settler
+/// founding the city, so nothing is left in the field without this.
+fn spawn_militia_at_city(app: &mut App) -> UnitId {
+    let (location, city_id) = {
+        let city = app.engine.as_ref().unwrap().player_cities()[0];
+        (city.location, city.id())
+    };
+    app.engine.as_mut().unwrap().game.spawn_unit(
+        UnitClass::Militia,
+        location,
+        PlayerId::new(0),
+        Some(city_id),
+    )
+}
+
 /// Opens the production picker over the open city window and pretends the
 /// panel was drawn, so its mouse hit-testing is live.
 fn with_production_picker_open() -> (App, Rect, u16) {
@@ -1077,7 +1093,17 @@ fn clicking_unfortify_returns_a_garrison_to_the_command_loop() {
         unit.moves_remaining() > 0,
         "unfortify must not spend the garrison's turn"
     );
-    // Back in the available-units loop: the next Tab lands on it.
+    // Back in the available-units loop. The city window still owns the
+    // keyboard, so Tab is ignored while it is open; it lands on the garrison
+    // once the window is dismissed.
+    app.handle_key(key(KeyCode::Tab));
+    assert_ne!(
+        app.selected_unit,
+        Some(garrison),
+        "Tab must not reach the map while the city window is open"
+    );
+    app.handle_key(key(KeyCode::Esc));
+    assert!(app.selected_city.is_none());
     app.handle_key(key(KeyCode::Tab));
     assert_eq!(app.selected_unit, Some(garrison));
     // The two starting settlers (the human's and the rival's) spawned first,
@@ -1108,6 +1134,198 @@ fn clicks_outside_the_window_reach_the_map() {
     app.left_click(4, cy as u16);
     assert_eq!(app.selected_city, None);
     let _ = cx;
+}
+
+/// The reported bug: with a city window up, space fell through to the
+/// end-turn key and handed the whole round to the rivals.
+#[test]
+fn space_does_not_end_the_turn_while_the_city_window_is_open() {
+    let (mut app, _, _, _) = with_city_window_open();
+    let before = app.engine.as_ref().unwrap().turn();
+    app.handle_key(key(KeyCode::Char(' ')));
+    assert_eq!(
+        app.engine.as_ref().unwrap().turn(),
+        before,
+        "space must not advance the turn behind the city window"
+    );
+    assert!(
+        app.selected_city.is_some(),
+        "space is swallowed; the window is still up"
+    );
+    assert_eq!(
+        app.engine.as_ref().unwrap().current_player_id(),
+        PlayerId::new(0),
+        "the player still holds the turn"
+    );
+}
+
+/// Enter shares the end-turn key, so it is swallowed too.
+#[test]
+fn enter_does_not_end_the_turn_while_the_city_window_is_open() {
+    let (mut app, _, _, _) = with_city_window_open();
+    let before = app.engine.as_ref().unwrap().turn();
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(app.engine.as_ref().unwrap().turn(), before);
+}
+
+/// Only Esc is a city-window key. Every map command is inert while it is up,
+/// so a stray letter cannot move a unit or found a city behind the panel.
+#[test]
+fn map_commands_are_inert_while_the_city_window_is_open() {
+    let (mut app, _, _, _) = with_city_window_open();
+    let unit_id = spawn_militia_at_city(&mut app);
+    let snapshot = {
+        let engine = app.engine.as_ref().unwrap();
+        let unit = engine
+            .game
+            .units
+            .iter()
+            .find(|u| u.id() == unit_id)
+            .unwrap();
+        (unit_id, unit.location, engine.player_cities().len())
+    };
+    let focus_before = app.selected_unit;
+    for code in [
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Char('u'),
+        KeyCode::Char('h'),
+        KeyCode::Char('m'),
+        KeyCode::Char('k'),
+        KeyCode::Tab,
+        KeyCode::Char('v'),
+        KeyCode::Char('f'),
+        KeyCode::Char('c'),
+        KeyCode::Char('w'),
+        KeyCode::Char('j'),
+    ] {
+        app.handle_key(key(code));
+    }
+    let engine = app.engine.as_ref().unwrap();
+    let unit = engine
+        .game
+        .units
+        .iter()
+        .find(|u| u.id() == snapshot.0)
+        .expect("the unit is still in the world");
+    assert_eq!(
+        unit.location, snapshot.1,
+        "no unit may move behind the window"
+    );
+    assert_eq!(
+        engine.player_cities().len(),
+        snapshot.2,
+        "no city may be founded behind the window"
+    );
+    assert_eq!(
+        app.selected_unit, focus_before,
+        "no key may move the selection behind the window"
+    );
+    assert!(app.selected_city.is_some(), "the window survives every key");
+}
+
+/// Quit and help are app-level toggles, not map commands, but the window is
+/// modal all the same: the player dismisses it first.
+#[test]
+fn the_city_window_swallows_the_quit_and_help_keys() {
+    let (mut app, _, _, _) = with_city_window_open();
+    app.handle_key(key(KeyCode::Char('q')));
+    assert!(
+        app.quit_dialog.is_none(),
+        "quit must not open behind the window"
+    );
+    app.handle_key(key(KeyCode::Char('?')));
+    assert!(!app.show_help, "help must not open behind the window");
+}
+
+/// A press on the map pane beside the window must not become a click: the
+/// press dismisses the window and nothing else. The unit is planted on the
+/// tile north of the press, so a click that reached the map would move it.
+#[test]
+fn a_click_outside_the_city_window_does_not_move_a_unit() {
+    let (mut app, _, _, win) = with_city_window_open();
+    // Pick a screen cell in the map pane, then read back the world tile it
+    // stands for, exactly as `map_click` maps it. The unit goes north of it,
+    // one square away, which is what makes the click a move.
+    let column = LEFT_COLUMN_WIDTH + 4;
+    let row = 4;
+    let (world_x, world_y) = {
+        let engine = app.engine.as_ref().unwrap();
+        let (camera_x, camera_y) = app.camera.get();
+        let tile_col = (column as usize - LEFT_COLUMN_WIDTH as usize) / TILE_WIDTH;
+        let world_x = (camera_x + tile_col) % engine.width();
+        let world_y = camera_y + row as usize;
+        assert!(world_y > 0, "the test needs a tile north of the press");
+        (world_x, world_y)
+    };
+    let unit_id = {
+        let city_id = {
+            let engine = app.engine.as_ref().unwrap();
+            engine.player_cities()[0].id()
+        };
+        let engine = app.engine.as_mut().unwrap();
+        engine.game.spawn_unit(
+            UnitClass::Militia,
+            crate::model::cartography::Location::new(world_x as u16, world_y as u16 - 1),
+            PlayerId::new(0),
+            Some(city_id),
+        )
+    };
+    let home = {
+        let engine = app.engine.as_ref().unwrap();
+        engine
+            .game
+            .units
+            .iter()
+            .find(|u| u.id() == unit_id)
+            .unwrap()
+            .location
+    };
+    app.selected_unit = Some(unit_id);
+    assert!(
+        !win.contains((column, row).into()),
+        "the press is off the window"
+    );
+    app.left_click(column, row);
+
+    assert!(
+        app.selected_city.is_none(),
+        "a press outside dismisses the window"
+    );
+    let engine = app.engine.as_ref().unwrap();
+    let unit = engine
+        .game
+        .units
+        .iter()
+        .find(|u| u.id() == unit_id)
+        .expect("the unit is still in the world");
+    assert_eq!(
+        unit.location, home,
+        "the dismissing click must not also act on the map tile at ({world_x}, {world_y})"
+    );
+}
+
+/// A click that begins beside the window and ends on the map is a drag, and a
+/// drag needs a press on the pane. With the window up no press reaches the
+/// pane, so the camera stays put.
+#[test]
+fn a_drag_cannot_start_outside_the_city_window() {
+    let (mut app, _, _, win) = with_city_window_open();
+    let camera = app.camera.get();
+    let inside = (win.x + 1, win.y + 1);
+    app.handle_mouse(mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        inside.0,
+        inside.1,
+    ));
+    app.handle_mouse(mouse_event(
+        MouseEventKind::Drag(MouseButton::Left),
+        inside.0 + 6,
+        inside.1 + 2,
+    ));
+    assert_eq!(app.camera.get(), camera, "a drag must not pan the camera");
 }
 
 #[test]

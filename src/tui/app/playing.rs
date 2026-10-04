@@ -85,6 +85,16 @@ impl App {
             }
             return false;
         }
+        // While a city window is open it captures the keyboard: the player may
+        // only dismiss it with Esc. Nothing else reaches the map behind it, so
+        // a stray space cannot end the turn and the movement keys cannot act on
+        // the tile the window is covering.
+        if self.selected_city.is_some() {
+            if key.code == KeyCode::Esc {
+                self.close_city_window();
+            }
+            return false;
+        }
         // While the rival-movement replay is in flight the game keys are idle:
         // the player may only watch the round they just resolved, and any
         // command typed now would land while the camera is elsewhere. Modals
@@ -289,6 +299,7 @@ impl App {
             || self.save_prompt.is_some()
             || self.quit_dialog.is_some()
             || self.rival_animation.is_some()
+            || self.selected_city.is_some()
     }
 
     /// After a command that may spend the focused unit, arm a pending

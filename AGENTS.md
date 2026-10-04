@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 678 passing unit
+Run `make build` after any change. Current test baseline: 684 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -232,6 +232,26 @@ a hard boundary; keep it by convention.
 - `Event.about` is `#[serde(default)]`, so events written by older builds —
   and `SaveData` does persist `events` — still load as `Everyone` rather than
   silently vanishing from the log.
+
+## The city window is modal
+
+- `selected_city` is the city window's state, and while it is `Some` the map is
+  inert. `handle_playing_key` returns early for every key except Esc, so no
+  map command reaches the tile the panel covers: a stray space or Enter cannot
+  end the turn (they are the end-turn key), and the movement keys, `Tab`, `v`,
+  `w`, `f` and `c` cannot act behind it. Esc closes the window.
+- That guard sits **after** the production picker's, so the picker floating over
+  the window keeps its own keys, and after the research/diplomacy/build-notice
+  guards, which open over the map rather than from it.
+- Mouse presses follow the same rule. A press inside the window acts on its
+  buttons; a press anywhere outside dismisses the window and is consumed, so it
+  never becomes a drag or a `map_click` on the tile underneath. Clicking out is
+  the dismissal, so the window needs no key of its own beyond Esc.
+- `selected_city.is_some()` counts as modal in `modal_open`, so a pending
+  auto-advance cannot fire under the window and move the selection out from
+  under the player.
+- The rule is one-directional on purpose: dismissing the window is always
+  allowed, so no input can leave the player stuck behind a panel.
 
 ## City build-completion notice
 

@@ -202,8 +202,14 @@ impl App {
                 return;
             }
         }
+        // The open city window owns the screen: a press outside it dismisses
+        // it and stops there, so the press never becomes a drag or a click on
+        // the map underneath. Dismissing is the only map-shaped act allowed.
+        if self.selected_city.is_some() {
+            self.close_city_window();
+            return;
+        }
         if column < LEFT_COLUMN_WIDTH {
-            self.selected_city = None;
             return;
         }
         // A press on the map pane starts a potential drag.
