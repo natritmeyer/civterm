@@ -326,7 +326,10 @@ impl<'a> CityWindow<'a> {
             }
             let mut x = rect.x;
             x = draw_text(buf, x, y, &icon.to_string(), BOLD);
-            let text = format!(" {label:<10}{value}");
+            // The label field is two columns wider than the longest label
+            // ("Production", 10 characters) so no number is ever glued to the
+            // end of its own word.
+            let text = format!(" {label:<12}{value}");
             draw_text(buf, x, y, &text, TEXT);
             y += 1;
         }
@@ -989,5 +992,32 @@ mod tests {
             .map(|i| buf.cell((x + i, y)).unwrap().symbol())
             .collect();
         assert_eq!(central, "          ", "foreign city must not paint");
+    }
+
+    /// "Production" is the longest label in the panel and used to fill its
+    /// column exactly, gluing the yield onto the word ("Production3"). Every
+    /// label must be followed by a gap before its number.
+    #[test]
+    fn no_yield_is_glued_to_the_end_of_its_label() {
+        let buf = render(london(), 0);
+        let rows: Vec<String> = (0..40)
+            .map(|y| {
+                (0..80)
+                    .map(|x| buf.cell((x, y)).unwrap().symbol())
+                    .collect()
+            })
+            .collect();
+        for label in ["Food", "Production", "Trade", "Research", "Gold"] {
+            let row = rows
+                .iter()
+                .find(|row| row.contains(label))
+                .unwrap_or_else(|| panic!("no {label} row rendered"));
+            let after = &row[row.find(label).unwrap() + label.len()..];
+            let gap = after.len() - after.trim_start().len();
+            assert!(
+                gap >= 2,
+                "{label:?} needs a gap before its number, got {gap}: {row:?}"
+            );
+        }
     }
 }
