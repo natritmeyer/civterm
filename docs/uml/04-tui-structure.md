@@ -24,6 +24,8 @@ classDiagram
         -Option~BattleAnimation~ battle_animation
         -Option~RivalMoveAnimation~ rival_animation
         -Option~WarNoticeState~ war_notice
+        -Option~BuildNoticeState~ build_notice
+        -Cell~Option~tuple~ build_notice_rect
         -Option~GameOverState~ game_over
         -Cell~Option~tuple~ game_over_buttons
         +new() App
@@ -125,6 +127,14 @@ classDiagram
         +dialog_rect(area) Rect
         +ok_button_rect(panel) Rect
     }
+    class BuildCompleteDialog {
+        +String city_name
+        +ProductionTarget target
+        +new(city_name, target) BuildCompleteDialog
+        +dialog_rect(area) Rect
+        +ok_button_rect(panel) Rect
+        +new_order_button_rect(panel) Rect
+    }
     class DiplomacyDialog {
         +PlayerId opponent
         +DiplomacyOrigin origin
@@ -186,9 +196,10 @@ classDiagram
     App ..> CityWindow : opens on selection
     App ..> ProductionPicker : opens on city
     App ..> CommandPicker : opens on a unit
-App ..> ResearchDialog : opens on discovery
+    App ..> ResearchDialog : opens on discovery
     App ..> DiplomacyDialog : opens on contact/block
     App ..> WarDialog : opens on rival war declaration
+    App ..> BuildCompleteDialog : one window per city that finished
     App *-- SaveLoadPrompt : 0..1 save/load text box
     App *-- QuitDialog : 0..1 quit-to-menu prompt
     App ..> QuitDialog : q in Playing
