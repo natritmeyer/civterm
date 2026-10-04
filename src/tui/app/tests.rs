@@ -3926,7 +3926,7 @@ fn ok_is_reachable_from_the_keyboard() {
 }
 
 #[test]
-fn new_order_opens_the_announced_city_window_and_parks_the_queue() {
+fn next_order_opens_the_announced_city_window_and_parks_the_queue() {
     let (mut app, cities) = app_with_cities(2);
     app.open_build_notices(vec![
         build(
@@ -3973,7 +3973,7 @@ fn closing_the_city_window_returns_to_the_loop_at_the_next_city() {
             ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
         ),
     ]);
-    app.build_notice_new_order();
+    app.build_notice_next_order();
     assert_eq!(app.selected_city, Some(cities[0]));
 
     // Give the city a next order the way the player would, then close.
@@ -4013,7 +4013,7 @@ fn the_loop_survives_several_cities_each_taking_a_new_order() {
     for expected in [&cities[0], &cities[1], &cities[2]] {
         assert_eq!(app.current_build_notice().map(|d| d.city), Some(*expected));
         visited.push(app.current_build_notice().unwrap().city_name.clone());
-        app.build_notice_new_order();
+        app.build_notice_next_order();
         assert_eq!(app.selected_city, Some(*expected));
         app.handle_key(key(KeyCode::Esc));
     }
@@ -4050,7 +4050,7 @@ fn a_build_window_for_a_city_that_no_longer_exists_moves_on() {
         ),
     ]);
 
-    app.build_notice_new_order();
+    app.build_notice_next_order();
 
     assert_eq!(
         app.selected_city, None,
@@ -4064,7 +4064,7 @@ fn a_build_window_for_a_city_that_no_longer_exists_moves_on() {
 }
 
 #[test]
-fn clicking_ok_and_new_order_drive_the_same_loop_as_the_keys() {
+fn clicking_ok_and_next_order_drive_the_same_loop_as_the_keys() {
     let (mut app, cities) = app_with_cities(2);
     let area = Rect::new(0, 0, 120, 40);
     app.open_build_notices(vec![
@@ -4082,11 +4082,11 @@ fn clicking_ok_and_new_order_drive_the_same_loop_as_the_keys() {
     let panel = crate::tui::build_complete_dialog::dialog_rect(area);
     app.build_notice_rect.set(Some(panel));
 
-    let new_order = crate::tui::build_complete_dialog::new_order_button_rect(panel);
+    let next_order = crate::tui::build_complete_dialog::next_order_button_rect(panel);
     app.handle_mouse(mouse_event(
         MouseEventKind::Down(MouseButton::Left),
-        new_order.x + 1,
-        new_order.y,
+        next_order.x + 1,
+        next_order.y,
     ));
     assert_eq!(app.selected_city, Some(cities[0]));
 
@@ -4168,12 +4168,12 @@ fn a_completed_build_is_drawn_over_the_map_with_both_buttons() {
     assert!(screen.contains("Militia"), "the unit is named: {screen}");
     assert!(screen.contains("OK"), "OK is offered: {screen}");
     assert!(
-        screen.contains("New Order"),
-        "New Order is offered: {screen}"
+        screen.contains("Next Order"),
+        "Next Order is offered: {screen}"
     );
 }
 
-/// While the player is inside the city window opened by "New Order", the notice
+/// While the player is inside the city window opened by "Next Order", the notice
 /// is parked: it must not paint over the city they are ordering.
 #[test]
 fn the_parked_build_window_does_not_paint_over_the_city_window() {
@@ -4195,7 +4195,7 @@ fn the_parked_build_window_does_not_paint_over_the_city_window() {
     terminal.draw(|frame| App::draw(frame, &app)).unwrap();
     assert!(app.build_notice_rect.get().is_some(), "drawn while queued");
 
-    app.build_notice_new_order();
+    app.build_notice_next_order();
     terminal.draw(|frame| App::draw(frame, &app)).unwrap();
 
     assert!(

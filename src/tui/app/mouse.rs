@@ -148,7 +148,7 @@ impl App {
     }
 
     /// Open a city's window, dismissing whatever the map was showing. Used by
-    /// a click on a city tile and by the build-completion window's "New Order"
+    /// a click on a city tile and by the build-completion window's "Next Order"
     /// button, so both routes leave the same state behind.
     pub(super) fn open_city_window(&mut self, city: CityId) {
         self.selected_city = Some(city);

@@ -264,9 +264,9 @@ a hard boundary; keep it by convention.
   answered.
 - The windows are a **loop**, not a stack: every city that finished gets its
   own window, one after another, oldest first. `OK` pops the front and shows
-  the next (closing the window once the queue empties); `New Order` pops it
+  the next (closing the window once the queue empties); `Next Order` pops it
   too and opens *that* city's window instead.
-- `New Order` sets `BuildNoticeState::suspended`, which parks the queue: the
+- `Next Order` sets `BuildNoticeState::suspended`, which parks the queue: the
   notice neither draws nor takes input, so the city window owns the screen.
   `close_city_window` calls `resume_build_notice`, so closing the city window
   returns to the loop at the next city rather than abandoning the rest.
@@ -280,7 +280,7 @@ a hard boundary; keep it by convention.
 - A round can advance a technology *and* finish a build. Research captures the
   keyboard and draws first, so the queue is parked (suspended) behind the
   research dialog and `research_dialog_confirm` resumes it — parking, not
-  dropping, for the same reason `New Order` parks rather than drops.
+  dropping, for the same reason `Next Order` parks rather than drops.
 - The notice is modal while it shows, exactly like the war-declaration window:
   `q` does not reach the quit path until the queue is answered.
 

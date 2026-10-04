@@ -48,7 +48,7 @@ impl App {
                     self.build_notice_confirm();
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') => {
-                    self.build_notice_new_order();
+                    self.build_notice_next_order();
                 }
                 _ => {}
             }
@@ -561,7 +561,7 @@ impl App {
                 queue: wars.into_iter().map(|war| war.rival).collect(),
             });
             // A city that finished building this round is announced by a
-            // window offering OK (move to the next such city) or New Order
+            // window offering OK (move to the next such city) or Next Order
             // (open that city's window to set its next target). Each is shown
             // in turn, so several finishing cities queue up one after another.
             builds = engine.drain_build_completions();

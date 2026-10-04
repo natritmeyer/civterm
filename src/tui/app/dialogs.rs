@@ -203,7 +203,7 @@ impl App {
     /// builds next, and park the notice until that window closes. If the city
     /// is gone — it could have been lost in the same round that finished its
     /// building — the notice simply moves on rather than opening nothing.
-    pub(super) fn build_notice_new_order(&mut self) {
+    pub(super) fn build_notice_next_order(&mut self) {
         let Some(notice) = &mut self.build_notice else {
             return;
         };
@@ -248,7 +248,7 @@ impl App {
     }
 
     /// A click on the build-completion window: OK moves on to the next city,
-    /// "New Order" opens this city's window instead.
+    /// "Next Order" opens this city's window instead.
     pub(super) fn handle_build_notice_mouse(&mut self, mouse: MouseEvent) {
         let Some(panel) = self.build_notice_rect.get() else {
             return;
@@ -262,12 +262,12 @@ impl App {
         let position = (mouse.column, mouse.row).into();
         if build_complete_dialog::ok_button_rect(panel).contains(position) {
             self.build_notice_confirm();
-        } else if build_complete_dialog::new_order_button_rect(panel).contains(position) {
-            self.build_notice_new_order();
+        } else if build_complete_dialog::next_order_button_rect(panel).contains(position) {
+            self.build_notice_next_order();
         }
     }
 
-    /// Resume a build-completion notice parked by "New Order": the city window
+    /// Resume a build-completion notice parked by "Next Order": the city window
     /// it opened has closed, so the loop carries on with the next city. The
     /// notice is cleared outright once its queue has emptied, since a park with
     /// nothing behind it has nothing left to return to.

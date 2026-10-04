@@ -18,11 +18,11 @@ const IDEAL_WIDTH: u16 = 46;
 const IDEAL_HEIGHT: u16 = 11;
 
 const OK_TEXT: &str = "OK";
-const NEW_ORDER_TEXT: &str = "New Order";
+const NEXT_ORDER_TEXT: &str = "Next Order";
 
 /// A modal window reporting that one of the player's cities finished building
 /// a unit or an improvement. OK moves on to the next city that finished;
-/// "New Order" opens that city's window instead, so the player can set what it
+/// "Next Order" opens that city's window instead, so the player can set what it
 /// builds next without hunting for it on the map.
 pub struct BuildCompleteDialog {
     city_name: String,
@@ -154,10 +154,10 @@ pub fn ok_button_rect(panel: Rect) -> Rect {
     )
 }
 
-/// The rectangle of the New Order button, right-aligned on the button row.
-pub fn new_order_button_rect(panel: Rect) -> Rect {
+/// The rectangle of the Next Order button, right-aligned on the button row.
+pub fn next_order_button_rect(panel: Rect) -> Rect {
     let inner = inner(panel);
-    let width = (NEW_ORDER_TEXT.len() as u16 + 2).min(inner.width);
+    let width = (NEXT_ORDER_TEXT.len() as u16 + 2).min(inner.width);
     button_rect(panel, inner.right().saturating_sub(width + 1), width)
 }
 
@@ -198,7 +198,7 @@ impl Widget for BuildCompleteDialog {
         // choice the way the quit dialog highlights its cursor.
         for (rect, label) in [
             (ok_button_rect(area), OK_TEXT),
-            (new_order_button_rect(area), NEW_ORDER_TEXT),
+            (next_order_button_rect(area), NEXT_ORDER_TEXT),
         ] {
             fill_row(buf, rect, Style::new().fg(BLACK).bg(Color::White));
             draw_text(buf, rect.x + 1, rect.y, rect.right(), label, LINK);
@@ -291,7 +291,7 @@ mod tests {
         let panel = panel();
         for (rect, label) in [
             (ok_button_rect(panel), OK_TEXT),
-            (new_order_button_rect(panel), NEW_ORDER_TEXT),
+            (next_order_button_rect(panel), NEXT_ORDER_TEXT),
         ] {
             assert_eq!(
                 row_text(&buf, rect.x + 1, rect.y, label.len() as u16),
@@ -312,10 +312,10 @@ mod tests {
     fn the_two_buttons_do_not_overlap() {
         let panel = panel();
         assert!(
-            !ok_button_rect(panel).intersects(new_order_button_rect(panel)),
-            "OK at {:?} overlaps New Order at {:?}",
+            !ok_button_rect(panel).intersects(next_order_button_rect(panel)),
+            "OK at {:?} overlaps Next Order at {:?}",
             ok_button_rect(panel),
-            new_order_button_rect(panel)
+            next_order_button_rect(panel)
         );
     }
 }

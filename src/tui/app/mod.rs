@@ -121,7 +121,7 @@ struct WarNoticeState {
 /// that finished a unit or improvement during the round just resolved, in the
 /// order the cities were processed.
 ///
-/// The queue drives a loop: OK moves on to the next city, while "New Order"
+/// The queue drives a loop: OK moves on to the next city, while "Next Order"
 /// hands the player that city's own window instead and parks the queue until
 /// the city window closes — otherwise closing that window would silently
 /// abandon the other cities still waiting to be announced.
