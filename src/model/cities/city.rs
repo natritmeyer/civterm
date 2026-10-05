@@ -87,6 +87,14 @@ impl City {
         self.improvements.push(improvement);
     }
 
+    /// Tear out an improvement, as a catapult does to a city wall. Returns
+    /// whether it was there to be torn out, so the caller knows if the shot
+    /// found anything to hit.
+    pub fn remove_improvement(&mut self, improvement: CityImprovement) -> bool {
+        let before = self.improvements.len();
+        self.improvements.retain(|held| *held != improvement);
+        self.improvements.len() != before
+    }
     pub fn set_production(&mut self, target: ProductionTarget) {
         self.production = Some(target);
         self.resource_stored = 0;

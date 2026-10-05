@@ -46,6 +46,16 @@ impl UnitClass {
         }
     }
 
+    /// Whether this class can fight units at all. A catapult is a siege engine,
+    /// not a warrior: it bombards the walls of a city and cannot strike at the
+    /// garrison, which is what makes a walled city attackable at all.
+    pub fn attacks_units(&self) -> bool {
+        !matches!(self, UnitClass::Catapult)
+    }
+    /// Whether this class bombards a city instead of fighting its garrison.
+    pub fn sieges(&self) -> bool {
+        matches!(self, UnitClass::Catapult)
+    }
     pub fn can_found_city(&self) -> bool {
         matches!(self, UnitClass::Settler)
     }

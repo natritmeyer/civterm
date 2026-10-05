@@ -39,11 +39,33 @@ impl Engine {
         let enemies_present = self.game.units.iter().any(|u| {
             !u.is_transported() && u.location == destination && self.game.at_war(owner, u.owner())
         });
-        if enemies_present {
-            // The step is recorded before the fight resolves: an attacker
-            // repelled here is about to be removed from the game, but the
-            // TUI still needs the landing to replay the attack.
-            self.record_rival_step(owner, unit, origin, destination, true);
+        // A siege engine attacks a city from where it stands: it bombards
+        // the improvements behind the walls instead of fighting the
+        // garrison, and it is routed to the combat tail even when no
+        // soldiers hold the tile — otherwise an undefended city would
+        // change hands without a shot being fired. Once there is nothing
+        // left to break there is nothing left to bombard, so the engine
+        // walks in and takes the city like any other land unit: the siege
+        // was the means, not the end.
+        let sieges = self.owned_unit(unit).is_some_and(|u| u.unit_class.sieges());
+        let sieges_city = sieges
+            && self
+                .game
+                .cities
+                .iter()
+                .find(|c| {
+                    c.location == destination
+                        && c.owner() != owner
+                        && self.game.at_war(owner, c.owner())
+                })
+                .is_some_and(|city| !city.improvements().is_empty());
+        if enemies_present || sieges_city {
+            if enemies_present && !sieges {
+                // The step is recorded before the fight resolves: an attacker
+                // repelled here is about to be removed from the game, but the
+                // TUI still needs the landing to replay the attack.
+                self.record_rival_step(owner, unit, origin, destination, true);
+            }
             self.resolve_move_combat(unit, destination);
             return;
         }
@@ -239,6 +261,19 @@ impl Engine {
             has_foreign_occupant = true;
             if self.game.at_war(owner, city.owner()) {
                 has_enemy_occupant = true;
+            }
+        }
+        // A catapult is a siege engine and never strikes at a garrison: it may
+        // enter a city tile to bombard the walls, but a tile held down by enemy
+        // soldiers is no place for it.
+        if !unit.unit_class.attacks_units() && has_enemy_occupant {
+            let holds_city = self.game.cities.iter().any(|c| {
+                c.location == destination
+                    && c.owner() != owner
+                    && self.game.at_war(owner, c.owner())
+            });
+            if !holds_city {
+                return Err(MoveError::CannotAttackUnits(unit.id()));
             }
         }
         if has_foreign_occupant && !has_enemy_occupant {

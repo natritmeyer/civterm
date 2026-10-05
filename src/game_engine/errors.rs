@@ -9,6 +9,7 @@ pub enum MoveError {
     CannotCrossLandSeaBorder(UnitId),
     NoShipToBoard(UnitId),
     PeacefulTileOccupied(UnitId),
+    CannotAttackUnits(UnitId),
 }
 
 impl MoveError {
@@ -25,6 +26,10 @@ impl MoveError {
             }
             MoveError::PeacefulTileOccupied(unit) => format!(
                 "Unit {} cannot move onto a tile occupied by a civilization at peace",
+                unit.index()
+            ),
+            MoveError::CannotAttackUnits(unit) => format!(
+                "Unit {} is a siege engine and cannot attack units",
                 unit.index()
             ),
         }

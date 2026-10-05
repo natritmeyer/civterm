@@ -7,14 +7,76 @@ const HIT_POINTS: u32 = 10;
 /// or not, stacked on top of the ordinary home-city bonus.
 const CITY_WALLS_DEFENSE_BONUS: u32 = 2;
 
+/// Defense multiplier a unit gains while fortified, the `f` order. It applies
+/// wherever the unit is standing and stacks with the terrain, home-city and
+/// walls bonuses, so a fortified garrison behind walls on a hill is the
+/// hardest tile on the map to take.
+const FORTIFIED_DEFENSE_BONUS: u32 = 3;
+
 use crate::game_engine::Event;
 use crate::model::cartography::Location;
 use crate::model::cities::{CityId, CityImprovement};
 use crate::model::civilizations::PlayerId;
 use crate::model::geography::Terrain;
+use crate::model::units::UnitOrder;
 use crate::model::units::{Unit, UnitId};
 
 impl Engine {
+    /// A siege engine takes a city apart rather than beating its garrison. It
+    /// spends its whole turn on one improvement, preferring the walls: tearing
+    /// them down strips the `CITY_WALLS_DEFENSE_BONUS` from every defender in
+    /// the city, which is the point of the exercise. Once the walls are flat
+    /// an ordinary warrior can take the tile as it does any other.
+    ///
+    /// The bombardment never captures the city and never touches a unit, so a
+    /// catapult sitting in a besieged capital is a very thin place to be.
+    pub(super) fn bombard_city(&mut self, attacker_idx: usize, tile: Location) {
+        let attacker_id = self.game.units[attacker_idx].id();
+        let attacker_owner = self.game.units[attacker_idx].owner();
+        let city_idx = self
+            .game
+            .cities
+            .iter()
+            .position(|c| c.location == tile && self.game.at_war(attacker_owner, c.owner()));
+        let Some(city_idx) = city_idx else {
+            self.game.units[attacker_idx].spend_turn();
+            return;
+        };
+        // Walls first: they are the improvement worth removing, and the only
+        // one that is a defence in its own right.
+        let target = self.game.cities[city_idx]
+            .improvements()
+            .iter()
+            .find(|i| **i == CityImprovement::CityWalls)
+            .or_else(|| self.game.cities[city_idx].improvements().first())
+            .copied();
+        let city_name = self.game.cities[city_idx].name.clone();
+        match target {
+            Some(improvement) => {
+                self.game.cities[city_idx].remove_improvement(improvement);
+                self.events.push(Event::between(
+                    attacker_owner,
+                    self.game.cities[city_idx].owner(),
+                    format!(
+                        "Unit {} bombards the {} of {}",
+                        attacker_id.index(),
+                        improvement.name(),
+                        city_name
+                    ),
+                ));
+            }
+            None => self.events.push(Event::between(
+                attacker_owner,
+                self.game.cities[city_idx].owner(),
+                format!(
+                    "Unit {} bombards {} but finds nothing left to break",
+                    attacker_id.index(),
+                    city_name
+                ),
+            )),
+        }
+        self.game.units[attacker_idx].spend_turn();
+    }
     pub(super) fn resolve_move_combat(&mut self, attacker: UnitId, tile: Location) {
         let attacker_idx = self
             .game
@@ -22,6 +84,11 @@ impl Engine {
             .iter()
             .position(|u| u.id() == attacker)
             .expect("the moving unit exists");
+        // A siege engine has no quarrel with the garrison: it bombards the city.
+        if self.game.units[attacker_idx].unit_class.sieges() {
+            self.bombard_city(attacker_idx, tile);
+            return;
+        }
         let defender_idx = self.select_defender(attacker_idx, tile);
 
         let attacker_id = self.game.units[attacker_idx].id();
@@ -294,8 +361,35 @@ impl Engine {
         if unit.is_veteran() {
             power = power * 3 / 2;
         }
+        if unit.order() == UnitOrder::Fortified {
+            power = power * FORTIFIED_DEFENSE_BONUS / 2;
+        }
         power
     }
+    /// The attacker's real chance of winning the fight, as a percentage.
+    ///
+    /// Combat is a race to `HIT_POINTS`, not a single roll: each side lands one
+    /// hit per round with probability proportional to its power, so the chance
+    /// of winning is `a^n / (a^n + d^n)`, not `a / (a + d)`. The two agree at
+    /// even odds but diverge violently past it — a 60-90 fight is two thirds of
+    /// the attacker's power and yet wins barely one time in fifty. Reading the
+    /// linear share would have the rival throwing warriors at fortified walls
+    /// that will eat them every time.
+    pub(super) fn win_chance_percent(attacker: u32, defender: u32) -> u32 {
+        // Both sides carry `HIT_POINTS` health, and a power of `x` wins a round
+        // with probability `x / (a + d)`. u128 keeps `a^10` exact: powers here
+        // run to a few hundred at most, and even 10_000^10 fits comfortably.
+        const H: u32 = HIT_POINTS;
+        let (a, d) = (attacker as u128, defender as u128);
+        let (a_hits, d_hits) = (a.pow(H), d.pow(H));
+        let total = a_hits + d_hits;
+        if total == 0 {
+            // Two powerless units cannot trade a hit, so neither side can lose.
+            return 50;
+        }
+        (a_hits * 100 / total) as u32
+    }
+
     pub(super) fn resolve_combat(&mut self, attacker_power: u32, defender_power: u32) -> bool {
         let total = attacker_power + defender_power;
         if total == 0 {

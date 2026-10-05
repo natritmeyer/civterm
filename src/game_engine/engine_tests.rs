@@ -975,15 +975,41 @@ fn a_rival_capture_is_recorded_as_a_plain_landing_not_a_battle() {
     );
 }
 
-/// The rival's attack floor is a real percentage of the odds: an even fight
-/// is 50%, the human's own 10%-floor binds beneath it, and a trivial win
-/// against an empty tile counts as certain.
+/// The rival's odds must describe the fight `resolve_combat` actually runs: a
+/// race to `HIT_POINTS`, not one roll. Even odds are 50% and an unopposed
+/// attack certain, as before.
 #[test]
-fn the_rival_win_chance_is_the_attackers_share_of_the_power() {
+fn the_rival_win_chance_matches_the_combat_race() {
     assert_eq!(Engine::win_chance_percent(30, 0), 100);
     assert_eq!(Engine::win_chance_percent(30, 30), 50);
-    assert_eq!(Engine::win_chance_percent(10, 90), 10);
-    assert_eq!(Engine::win_chance_percent(1, 99), 1);
+    assert_eq!(
+        Engine::win_chance_percent(0, 0),
+        50,
+        "neither side can lose"
+    );
+    assert_eq!(Engine::win_chance_percent(0, 90), 0);
+}
+
+/// The linear share of the power is not the odds. It happens to agree at even
+/// stakes, which is exactly what hid the bug: past them it flatters the
+/// attacker enormously. A Catapult against a fortified garrison in a walled
+/// city holds two thirds of the power and wins one fight in sixty, not forty
+/// in a hundred.
+#[test]
+fn the_rival_win_chance_is_not_the_linear_share_of_the_power() {
+    assert_eq!(
+        Engine::win_chance_percent(60, 90),
+        1,
+        "two thirds of the power is not 40% of the odds"
+    );
+    assert_eq!(
+        Engine::win_chance_percent(90, 60),
+        98,
+        "and three halves is not 60% either"
+    );
+    // A hopeless fight is hopeless, not merely unlikely.
+    assert_eq!(Engine::win_chance_percent(10, 90), 0);
+    assert_eq!(Engine::win_chance_percent(1, 99), 0);
 }
 
 /// Zulu cities planted at `left` and `right`, their settler already standing
@@ -2537,6 +2563,112 @@ fn city_walls_double_defense_on_a_city_tile() {
     );
     assert_eq!(engine.defender_power(&engine.game.units[0]), 15);
     engine.game.cities[0].add_improvement(CityImprovement::CityWalls);
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 30);
+}
+
+/// The `f` order has to be worth something: a fortified defender is half
+/// again as hard to kill as the same unit standing alert.
+#[test]
+fn a_fortified_defender_gets_half_again_its_defence() {
+    let mut engine = Engine::new(
+        5,
+        5,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(2, 2),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 20);
+    engine.game.units[0].fortify();
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 30);
+    engine.game.units[0].cancel_order();
+    assert_eq!(
+        engine.defender_power(&engine.game.units[0]),
+        20,
+        "standing down the order gives the bonus back"
+    );
+}
+
+/// Only the fortified order pays out. Sentry and a plain idle unit defend at
+/// their ordinary value, so the player is choosing `f` and not merely being
+/// on the tile.
+#[test]
+fn only_the_fortified_order_pays_the_defence_bonus() {
+    let mut engine = Engine::new(
+        5,
+        5,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(2, 2),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 20);
+    engine.game.units[0].sentry();
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 20);
+}
+
+/// The bonus stacks rather than replacing: a fortified veteran behind city
+/// walls on its home tile is the toughest defender in the game, at three
+/// times its bare defence.
+#[test]
+fn the_fortified_bonus_stacks_with_the_other_defenders_bonuses() {
+    let mut engine = Engine::new(
+        5,
+        5,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(2, 2));
+    engine.game.cities[0].add_improvement(CityImprovement::CityWalls);
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(2, 2),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+    // 20 base, 3/2 for its home city, doubled by the walls: 60.
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 60);
+    engine.game.units[0].promote();
+    // The veteran half again: 90.
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 90);
+    engine.game.units[0].fortify();
+    // And the fortification half again: 135.
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 135);
+}
+
+/// A defender that is fortified but has spent its moves is still a wall: the
+/// bonus belongs to the order, not to having movement left.
+#[test]
+fn the_fortified_bonus_survives_a_spent_move_budget() {
+    let mut engine = Engine::new(
+        5,
+        5,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(2, 2),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+    engine.game.units[0].fortify();
+    assert_eq!(engine.defender_power(&engine.game.units[0]), 30);
+    engine.game.units[0].spend_moves(1);
     assert_eq!(engine.defender_power(&engine.game.units[0]), 30);
 }
 
@@ -4188,4 +4320,464 @@ fn a_rejected_command_is_visible_to_everyone() {
     let event = Event::new("Cannot build Road here");
     assert!(event.is_about(PlayerId::new(0)));
     assert!(event.is_about(PlayerId::new(1)));
+}
+
+/// A walled Zulu capital at `(3, 2)` behind a fortified Phalanx garrison, with
+/// an English catapult standing at `(2, 2)` and the two already at war. Returns
+/// the engine and the catapult's id.
+fn a_catapult_besieging_a_walled_city() -> (Engine, UnitId) {
+    let mut engine = Engine::new(
+        5,
+        5,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+    engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(3, 2));
+    engine.game.cities[0].add_improvement(CityImprovement::CityWalls);
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(3, 2),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+    engine.game.units[0].fortify();
+    let catapult = engine.game.spawn_unit(
+        UnitClass::Catapult,
+        Location::new(2, 2),
+        PlayerId::new(0),
+        Some(CityId::new(9)),
+    );
+    (engine, catapult)
+}
+
+/// A catapult is a siege engine: it takes the city apart instead of fighting
+/// the garrison. The walls go first, the soldiers are never touched, and the
+/// city itself does not fall to a bombardment.
+#[test]
+fn a_catapult_bombards_the_city_walls_instead_of_the_garrison() {
+    let (mut engine, catapult) = a_catapult_besieging_a_walled_city();
+    engine.submit(Command::Move {
+        unit: catapult,
+        direction: Direction::E,
+    });
+    assert!(
+        !engine.game.cities[0]
+            .improvements()
+            .contains(&CityImprovement::CityWalls),
+        "the walls are what the catapult is for"
+    );
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(1),
+        "a bombardment does not capture the city"
+    );
+    assert_eq!(engine.game.units[0].owner(), PlayerId::new(1));
+    assert_eq!(
+        engine.game.units[0].location,
+        Location::new(3, 2),
+        "the garrison is untouched"
+    );
+    assert_eq!(
+        engine.game.units[1].location,
+        Location::new(2, 2),
+        "a siege engine bombards from where it stands and never walks in"
+    );
+    assert_eq!(
+        engine.game.units[1].moves_remaining(),
+        0,
+        "a bombardment costs the whole turn"
+    );
+}
+
+/// The payoff. The same garrison that shrugged off a Catapult at 90 defence
+/// falls to one at 45 the moment the walls are flat, which is the whole reason
+/// a siege engine is worth building.
+#[test]
+fn bombarding_the_walls_makes_the_garrison_vulnerable() {
+    let (mut engine, catapult) = a_catapult_besieging_a_walled_city();
+    let garrison = 0;
+    let defended = engine.defender_power(&engine.game.units[garrison]);
+    let shot = engine.attacker_power(&engine.game.units[1]);
+    let against_walls = Engine::win_chance_percent(shot, defended);
+    assert_eq!(defended, 90, "walls, home city and fortification all stack");
+    assert_eq!(against_walls, 1, "which a catapult loses almost every time");
+    engine.submit(Command::Move {
+        unit: catapult,
+        direction: Direction::E,
+    });
+    let stripped = engine.defender_power(&engine.game.units[garrison]);
+    let against_open_city = Engine::win_chance_percent(shot, stripped);
+    assert_eq!(
+        stripped, 45,
+        "losing the walls halves the garrison's defence"
+    );
+    assert_eq!(
+        against_open_city, 94,
+        "and the very same catapult now nearly always wins"
+    );
+}
+
+/// Once the walls are down the siege goes on to the improvements behind them.
+#[test]
+fn a_catapult_strips_improvements_behind_the_walls() {
+    let (mut engine, catapult) = a_catapult_besieging_a_walled_city();
+    engine.game.cities[0].remove_improvement(CityImprovement::CityWalls);
+    engine.game.cities[0].add_improvement(CityImprovement::Temple);
+    engine.submit(Command::Move {
+        unit: catapult,
+        direction: Direction::E,
+    });
+    assert!(
+        !engine.game.cities[0]
+            .improvements()
+            .contains(&CityImprovement::Temple)
+    );
+    assert_eq!(engine.game.cities[0].owner(), PlayerId::new(1));
+}
+
+/// A city with nothing left to destroy still absorbs the catapult's turn
+/// rather than letting it walk on into the garrison.
+#[test]
+fn a_catapult_finds_nothing_left_to_break_on_a_bare_city() {
+    let (mut engine, catapult) = a_catapult_besieging_a_walled_city();
+    engine.game.cities[0].remove_improvement(CityImprovement::CityWalls);
+    engine.submit(Command::Move {
+        unit: catapult,
+        direction: Direction::E,
+    });
+    assert!(engine.game.cities[0].improvements().is_empty());
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(1),
+        "a bare city is still not conquered by a catapult"
+    );
+    assert_eq!(engine.game.units[0].owner(), PlayerId::new(1));
+    assert_eq!(
+        engine.game.units[1].moves_remaining(),
+        0,
+        "the shot is still spent"
+    );
+}
+
+/// A catapult cannot strike at soldiers, so a tile held by an enemy garrison
+/// is a wall to it even with no city behind those soldiers.
+#[test]
+fn a_catapult_cannot_attack_units() {
+    let mut engine = Engine::new(
+        5,
+        5,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    engine.game.map.tile_at_mut(Location::new(3, 2)).terrain = Terrain::Grassland;
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(3, 2),
+        PlayerId::new(1),
+        Some(CityId::new(9)),
+    );
+    let catapult = engine.game.spawn_unit(
+        UnitClass::Catapult,
+        Location::new(2, 2),
+        PlayerId::new(0),
+        Some(CityId::new(9)),
+    );
+    let events = engine.submit(Command::Move {
+        unit: catapult,
+        direction: Direction::E,
+    });
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message() == "Unit 1 is a siege engine and cannot attack units"),
+        "got {events:?}"
+    );
+    assert_eq!(
+        engine.game.units[1].location,
+        Location::new(2, 2),
+        "the catapult never got there"
+    );
+    assert_eq!(engine.game.units[0].owner(), PlayerId::new(1));
+}
+
+/// Every other unit is a fighter; the catapult alone is not.
+#[test]
+fn only_the_catapult_is_a_siege_engine() {
+    assert!(!UnitClass::Catapult.attacks_units());
+    assert!(UnitClass::Catapult.sieges());
+    for class in [
+        UnitClass::Settler,
+        UnitClass::Militia,
+        UnitClass::Phalanx,
+        UnitClass::Legion,
+        UnitClass::Cavalry,
+        UnitClass::Chariot,
+        UnitClass::Knight,
+        UnitClass::Diplomat,
+        UnitClass::Caravan,
+        UnitClass::Trireme,
+        UnitClass::Sail,
+        UnitClass::Frigate,
+    ] {
+        assert!(class.attacks_units(), "{class:?} can fight");
+        assert!(!class.sieges(), "{class:?} is not a siege engine");
+    }
+}
+
+/// A catapult firing into a garrison-less city that still has walls to
+/// break does not simply walk in and take it: the shot comes first, and
+/// the city is still the defender's when it lands.
+#[test]
+fn a_catapult_bombards_an_undefended_city_before_taking_it() {
+    let (mut engine, catapult) = a_catapult_besieging_a_walled_city();
+    engine.game.remove_unit(UnitId::new(0));
+    engine.submit(Command::Move {
+        unit: catapult,
+        direction: Direction::E,
+    });
+    assert!(
+        !engine.game.cities[0]
+            .improvements()
+            .contains(&CityImprovement::CityWalls)
+    );
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(1),
+        "walls still stand at the start of the siege, so no capture yet"
+    );
+    assert_eq!(
+        engine.game.units[0].location,
+        Location::new(2, 2),
+        "and the engine is still outside them"
+    );
+}
+
+/// With the walls down and nothing left to break, the siege is over and
+/// the engine walks in and takes the city like any other land unit. It
+/// cannot fight its way in, but it does not have to once there is nothing
+/// standing between it and the place.
+#[test]
+fn a_catapult_walks_into_a_city_with_nothing_left_to_break() {
+    let (mut engine, catapult) = a_catapult_besieging_a_walled_city();
+    engine.game.remove_unit(UnitId::new(0));
+    // Grown past one so the conquest captures it rather than razing it.
+    engine.game.cities[0].grow();
+    // The first turn takes the walls down.
+    engine.submit(Command::Move {
+        unit: catapult,
+        direction: Direction::E,
+    });
+    assert_eq!(engine.game.cities[0].owner(), PlayerId::new(1));
+    engine.submit(Command::EndTurn);
+    // The second turn finds nothing left to break, so it takes the city.
+    engine.submit(Command::Move {
+        unit: catapult,
+        direction: Direction::E,
+    });
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(0),
+        "a stripped city is taken by the same engine that stripped it"
+    );
+    assert_eq!(engine.game.units[0].location, Location::new(3, 2));
+}
+
+/// With the walls flat and the garrison gone, an ordinary warrior walks in
+/// and takes the city exactly as it would any other.
+#[test]
+fn an_open_city_falls_to_an_ordinary_attack() {
+    let (mut engine, catapult) = a_catapult_besieging_a_walled_city();
+    // Grown past one so the conquest captures it rather than razing it.
+    engine.game.cities[0].grow();
+    engine.submit(Command::Move {
+        unit: catapult,
+        direction: Direction::E,
+    });
+    engine.game.remove_unit(UnitId::new(0));
+    let legion = engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(2, 2),
+        PlayerId::new(0),
+        Some(CityId::new(9)),
+    );
+    engine.submit(Command::Move {
+        unit: legion,
+        direction: Direction::E,
+    });
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(0),
+        "the siege worked"
+    );
+}
+
+/// Walls before the other improvements, not merely first off the list: a city
+/// whose Temple was built before its walls still loses the walls to the first
+/// shot.
+#[test]
+fn a_catapult_strikes_the_walls_before_the_improvements_behind_them() {
+    let (mut engine, catapult) = a_catapult_besieging_a_walled_city();
+    engine.game.cities[0].remove_improvement(CityImprovement::CityWalls);
+    engine.game.cities[0].add_improvement(CityImprovement::Temple);
+    engine.game.cities[0].add_improvement(CityImprovement::CityWalls);
+    engine.submit(Command::Move {
+        unit: catapult,
+        direction: Direction::E,
+    });
+    let held = engine.game.cities[0].improvements();
+    assert!(
+        !held.contains(&CityImprovement::CityWalls),
+        "the walls are the target worth having"
+    );
+    assert!(
+        held.contains(&CityImprovement::Temple),
+        "the Temple is behind them: {held:?}"
+    );
+}
+
+/// A walled English capital with a fortified garrison, and a Zulu catapult
+/// standing beside it at `(1, 0)`. The `at_war` flag decides whether the rival
+/// is already fighting or merely standing next to the place.
+fn a_rival_catapult_beside_a_walled_human_city(at_war: bool) -> (Engine, UnitId) {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine
+        .game
+        .add_city(PlayerId::new(0), "Londinium", Location::new(2, 0));
+    engine.game.cities[0].grow();
+    engine.game.cities[0].add_improvement(CityImprovement::CityWalls);
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(2, 0),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    engine.game.units[0].fortify();
+    let catapult = engine.game.spawn_unit(
+        UnitClass::Catapult,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(9)),
+    );
+    if at_war {
+        engine.game.declare_war(PlayerId::new(1), PlayerId::new(0));
+    }
+    (engine, catapult)
+}
+
+/// A siege engine is not a fighter, so the power comparison that holds a
+/// rival's warriors back does not apply to one: it never meets the garrison.
+/// Beside a walled city at war it opens fire, which is the whole point of
+/// building one.
+#[test]
+fn a_rival_catapult_bombards_a_walled_city_it_cannot_outfight() {
+    let (mut engine, catapult) = a_rival_catapult_beside_a_walled_human_city(true);
+    assert!(
+        engine.attacker_power(&engine.game.units[1]) < engine.defender_power(&engine.game.units[0]),
+        "the garrison is the stronger side of this fight"
+    );
+    engine.submit(Command::EndTurn);
+    assert!(
+        !engine.game.cities[0]
+            .improvements()
+            .contains(&CityImprovement::CityWalls),
+        "the rival strips the walls"
+    );
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(0),
+        "a bombardment takes nothing"
+    );
+    assert_eq!(
+        engine.game.cities[0].name, "Londinium",
+        "and the city is still standing"
+    );
+    assert_eq!(
+        engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == catapult)
+            .expect("the catapult survives the bombardment")
+            .location,
+        Location::new(1, 0),
+        "bombarding from where it stands"
+    );
+}
+
+/// A rival will not go to war to knock stones off a wall: a bombardment takes
+/// nothing, so it is no reason to declare one.
+#[test]
+fn a_rival_does_not_declare_war_to_bombard_a_city() {
+    let (mut engine, catapult) = a_rival_catapult_beside_a_walled_human_city(false);
+    engine.submit(Command::EndTurn);
+    assert!(
+        !engine.game.at_war(PlayerId::new(1), PlayerId::new(0)),
+        "no war is declared over a siege engine"
+    );
+    assert!(engine.drain_rival_wars().is_empty());
+    assert!(
+        engine.game.cities[0]
+            .improvements()
+            .contains(&CityImprovement::CityWalls),
+        "and the walls are left alone"
+    );
+    assert_eq!(
+        engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == catapult)
+            .expect("the catapult is still there")
+            .location,
+        Location::new(1, 0)
+    );
+}
+
+/// Siege is a whole plan, not a single shot: once the walls are down and no
+/// soldiers hold the place, the same engine walks in and takes the city.
+#[test]
+fn a_rival_catapult_takes_a_city_it_has_stripped() {
+    let (mut engine, catapult) = a_rival_catapult_beside_a_walled_human_city(true);
+    engine.submit(Command::EndTurn);
+    assert_eq!(engine.game.cities[0].owner(), PlayerId::new(0));
+    // The garrison is gone and only the walls ever stood: nothing is left to
+    // bombard, so the engine can take the tile.
+    engine.game.remove_unit(UnitId::new(0));
+    engine.submit(Command::EndTurn);
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(1),
+        "the siege finishes the conquest"
+    );
+    assert_eq!(
+        engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.id() == catapult)
+            .expect("the catapult holds the city")
+            .location,
+        Location::new(2, 0)
+    );
 }

@@ -553,10 +553,15 @@ impl Engine {
             if !ready {
                 continue;
             }
-            let Some(direction) = self.rival_best_attack(human, unit_id) else {
+            let Some((direction, starts_war)) = self.rival_best_attack(human, unit_id) else {
                 continue;
             };
             if !self.game.at_war(ai, human) {
+                if !starts_war {
+                    // Siege follows a war already declared; it is no reason
+                    // to begin one.
+                    continue;
+                }
                 self.declare_war(human);
                 self.rival_wars.push(RivalWar { rival: ai });
             }
@@ -564,15 +569,12 @@ impl Engine {
         }
     }
 
-    /// The direction of the human presence the unit would beat, if any: an
-    /// adjacent tile holding a human unit or city. The unit attacks only when
-    /// its own power outweighs the strongest defender there — an undefended
-    /// city counts as a trivial win — and only when the odds clear
-    /// `RIVAL_MINIMUM_WIN_CHANCE`, so a rival never throws its warriors at a
-    /// fight it almost certainly loses. Deterministic: the target with the
-    /// widest power margin wins; ties break on the weaker defender, then on
-    /// `Direction` scan order.
-    fn rival_best_attack(&self, human: PlayerId, unit_id: UnitId) -> Option<Direction> {
+    /// What a rival has decided to do about the human presence next door: the
+    /// direction to move, and whether the move is worth starting a war over.
+    /// A siege engine answers `false`, because a bombardment strips walls but
+    /// takes nothing, and a rival should not go to war merely to knock a few
+    /// stones off a wall.
+    fn rival_best_attack(&self, human: PlayerId, unit_id: UnitId) -> Option<(Direction, bool)> {
         let unit = self.owned_unit(unit_id)?;
         Direction::iter()
             .enumerate()
@@ -589,6 +591,27 @@ impl Engine {
                     .any(|city| city.location == target && city.owner() == human);
                 if !human_here {
                     return None;
+                }
+                // A bombardment is not a fight: it never meets the garrison,
+                // so the power comparison a warrior is held to does not apply
+                // to one. It is worth a turn while the city has anything left
+                // to break — walls above all, since they are what the rival's
+                // own warriors are waiting for — and once there is nothing
+                // left, only if no soldiers are standing in the way.
+                if unit.unit_class.sieges() {
+                    let city = self
+                        .game
+                        .cities
+                        .iter()
+                        .find(|city| city.location == target && city.owner() == human)?;
+                    let empty = !self.game.units.iter().any(|occupied| {
+                        occupied.location == target
+                            && occupied.owner() == human
+                            && !occupied.is_transported()
+                    });
+                    if !city.improvements().is_empty() || empty {
+                        return Some((index, 0, 0, direction, false));
+                    }
                 }
                 let defender = self
                     .game
@@ -607,22 +630,10 @@ impl Engine {
                     return None;
                 }
                 let margin = attacker.saturating_sub(defender);
-                Some((index, margin, defender, direction))
+                Some((index, margin, defender, direction, true))
             })
-            .min_by_key(|&(index, margin, defender, _)| (Reverse(margin), defender, index))
-            .map(|(_, _, _, direction)| direction)
-    }
-
-    /// The odds, as a whole percentage, that a fight whose two sides bring
-    /// `attacker` and `defender` power goes to the attacker: the attacker
-    /// wins the share of dice rolls equal to its power, so that share is its
-    /// chance of finishing the defender off first.
-    pub(super) fn win_chance_percent(attacker: u32, defender: u32) -> u32 {
-        let total = attacker + defender;
-        if total == 0 {
-            return 100;
-        }
-        attacker * 100 / total
+            .min_by_key(|&(index, margin, defender, _, _)| (Reverse(margin), defender, index))
+            .map(|(_, _, _, direction, starts_war)| (direction, starts_war))
     }
 
     /// Chebyshev distance between two world tiles, wrapping east/west.

@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 684 passing unit
+Run `make build` after any change. Current test baseline: 702 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -172,6 +172,13 @@ a hard boundary; keep it by convention.
   game and the TUI still needs the landing to replay the attack. The TUI drains
   the record (`drain_rival_motion`, oldest first) after an EndTurn to replay it;
   the record is never persisted.
+- A siege engine is the exception to the rule below, and it is a policy
+  exception rather than a weaker one: a bombardment never meets the garrison,
+  so the power comparison does not apply to one at all, and `rival_best_attack`
+  returns it a target it could never outfight. It does **not** declare a war to
+  do so — a bombardment strips walls but takes nothing — so `rival_warfare`
+  skips a siege engine entirely while at peace and sieges only a war already
+  declared. See `Siege` for the mechanics.
 - A rival fights only fights it expects to win: it declares war on the human
   when one of its military units stands beside (any of the 8 neighbours, wrap
   included) a human unit or city whose strongest defender its power outguns
@@ -189,6 +196,81 @@ a hard boundary; keep it by convention.
   fight is fought (and the RNG stream advanced) exactly as the human's would
   be. Every rival step still goes out through the ordinary `move_unit` path,
   so the movement/reveal/transport/combat invariants hold.
+
+## Defence
+
+- `defender_power` is where every defensive bonus is collected, so the
+  multipliers stack multiplicatively and in one readable place: veteran
+  (×3/2), mountain terrain (×2), the unit's own home city
+  (×3/2), city walls on that tile (`CITY_WALLS_DEFENSE_BONUS`, ×2), and the
+  fortified order (`FORTIFIED_DEFENSE_BONUS`, ×3/2). A fortified veteran behind
+  walls on its home tile is therefore three times its bare defence.
+- The fortified bonus belongs to the **order**, not to the unit or its move
+  budget: a unit that fortified and then spent its moves is still a wall, and
+  `cancel_order` hands the bonus straight back. Nothing else pays out — a
+  sentry or idle unit defends at its ordinary value, so the player is choosing
+  `f` and not merely occupying the tile.
+- Every multiplier lives as a named `const` in `combat.rs`, because these are
+  tuning numbers and a bare `* 3 / 2` in the middle of the function hides
+  them. Note the integer division: `power * 3 / 2` truncates, so the order of
+  the bonuses is visible in the tests that pin the stacked values.
+- The rival AI reads `defender_power` for its own winnable-fight test
+  (`attacker_power > defender_power`, plus a minimum win chance), so a
+  fortified garrison raises the bar a rival has to clear without any AI change.
+  The AI takes the **strongest** defender on the tile, so one fortified unit
+  among several is enough to put the whole tile out of reach.
+
+## Combat odds are a race, not a ratio
+
+- Combat is a race to `HIT_POINTS` (10), not a single roll: each round the
+  attacker lands one hit with probability `a / (a + d)`. The odds of winning
+  are therefore `a^n / (a^n + d^n)`, and `Engine::win_chance_percent` in
+  `combat.rs` models exactly that. It lives in `combat.rs` because it is a
+  property of the fight `resolve_combat` runs, and it reads `HIT_POINTS`
+  rather than repeating the number.
+- The linear share `a / (a + d)` is **not** the odds. The two agree at even
+  stakes — which is exactly what hid the bug — and diverge violently past
+  it: 60 against 90 is two thirds of the power and wins one fight in sixty,
+  not forty in a hundred. Anything reasoning about combat odds must go
+  through `win_chance_percent`.
+- The function lives with the fight, but the rival's *policy* stays in
+  `rival_player_engine.rs`: `attacker_power > defender_power` plus
+  `RIVAL_MINIMUM_WIN_CHANCE`. Note that the power comparison is the binding
+  constraint in practice, since it already refuses every fight at or under
+  even odds and the chance floor sits well beneath that.
+
+## Siege
+
+- The Catapult is a siege engine, not a warrior. `UnitClass::attacks_units`
+  is false for it alone and `UnitClass::sieges` true for it alone, so the
+  distinction is data on the unit rather than a special case spelled out at
+  every call site. `is_military` is unaffected — a catapult is land military
+  and garrisons and war AI still see it.
+- A siege engine bombards a city from where it stands. It never walks onto
+  the tile it is attacking, and it only takes the city once there is
+  nothing left to break, so `move_unit` routes it to the combat tail
+  whenever the destination holds an enemy city **with improvements still
+  standing** — otherwise an undefended but walled city would fall to a
+  catapult without a shot being fired. With the city stripped and no
+  soldiers on it, the engine falls through to the ordinary capture path
+  and takes it like any other land unit: the siege is the means, not the
+  end. It cannot fight its way in, but it need not once there is nothing
+  left to defend.
+- A bombardment records no `RivalMotion`: the engine never changes tile, so
+  there is nothing to replay, and unlike a repelled attacker it survives to
+  bombard again next turn. The final capture *is* a tile change and is
+  recorded like any other advance.
+- `bombard_city` spends the whole turn on one improvement and prefers
+  `CityWalls`, because the walls are the only improvement that is a defence
+  in its own right. Tearing them down strips
+  `CITY_WALLS_DEFENSE_BONUS` from every defender in the city, which is the
+  entire point: a fortified walled garrison is otherwise close to
+  unattackable, since a losing attacker is removed outright and no wound
+  state survives between fights, so a defended city cannot be ground down by
+  attrition.
+- A tile held by enemy soldiers with no city on it rejects the catapult
+  outright (`MoveError::CannotAttackUnits`) — it has no quarrel with a
+  garrison and nowhere to bombard from.
 
 ## Transport invariants
 

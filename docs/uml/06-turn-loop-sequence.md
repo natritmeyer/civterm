@@ -12,7 +12,17 @@ so the replay flashes the tile the fight was fought on. A rival attack starts
 with a war declaration: when a military unit stands beside a human unit or city
 whose strongest defender it outguns (`attacker_power > defender_power`, or an
 undefended city), it declares war, records a transient `RivalWar`, and the TUI
-announces it in an OK window after the round.
+announces it in an OK window after the round. The odds it weighs are
+`win_chance_percent`, which models the race `resolve_combat` actually fights
+(`a^n / (a^n + d^n)` over `HIT_POINTS`, not the linear share `a / (a + d)`).
+
+A siege engine is the exception, and it is a policy exception rather than a
+weaker one. It has no quarrel with the garrison, so the power comparison does
+not apply to it at all: it bombards a walled city it could never outfight,
+which is the whole reason to build one. It does not declare a war to do so — a
+bombardment strips walls but takes nothing — so siege only ever follows a war
+already declared. Once the walls are down and no soldiers hold the tile, the
+same engine walks in and takes the city, finishing the conquest.
 
 ```mermaid
 sequenceDiagram
@@ -40,12 +50,15 @@ sequenceDiagram
             loop each rival unit step
                 Riv->>Riv: best_settlement_site()<br/>open(≤3 overlap) → acceptable(≤6)<br/>→ frontier edge → crowded
                 alt winnable fight beside unit
-                    Riv->>Riv: rival_best_attack()<br/>attacker_power > defender_power<br/>odds ≥ RIVAL_MINIMUM_WIN_CHANCE (10%)
+                    Riv->>Riv: rival_best_attack() → (Direction, starts_war)<br/>attacker_power > defender_power<br/>win_chance_percent ≥ RIVAL_MINIMUM_WIN_CHANCE<br/>(models the race to 10, not a/(a+d))
                     Riv->>Riv: declare_war(human) + push RivalWar
+                else siege engine beside a walled city
+                    Riv->>Riv: skips the power test — a bombardment<br/>never meets the garrison, so odds do not apply.<br/>Worth a turn while walls stand; then only<br/>if no soldiers hold the tile
+                    Riv->>Riv: starts_war = false:<br/>siege follows a war already declared,<br/>it is no reason to begin one
                 end
                 Riv->>Mov: move_unit(step)
                 Mov->>Gam: spend_moves + reveal_tiles_at<br/>+ sync_cargo
-                Mov->>Riv: push RivalMotion{unit, from, to,<br/>battle} (owner != human)
+                Mov->>Riv: push RivalMotion{unit, from, to,<br/>battle} (owner != human)<br/>no motion for a bombardment
             end
         end
     end

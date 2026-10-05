@@ -148,6 +148,7 @@ classDiagram
         CannotCrossLandSeaBorder
         NoShipToBoard
         PeacefulTileOccupied
+        CannotAttackUnits
         +message() String
     }
     class SettleError {

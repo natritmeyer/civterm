@@ -142,6 +142,8 @@ classDiagram
         +moves() int
         +carry_capacity() int
         +can_found_city() bool
+        +attacks_units() bool
+        +sieges() bool
         +can_travel_water() bool
         +required_advancement() Option~Advancement~
     }
@@ -168,6 +170,7 @@ classDiagram
         +shrink()
         +improvements() slice
         +add_improvement(imp)
+        +remove_improvement(imp) bool
         +set_production(t)
         +production_target() Option~ProductionTarget~
         +worked_tiles() slice
