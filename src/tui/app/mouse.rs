@@ -38,6 +38,26 @@ impl App {
         }
         // The diplomacy window floats above everything and captures all mouse
         // input while it is open.
+        // The diplomat window claims the mouse ahead of the diplomacy window:
+        // both can open on the same step, and the more specific one is on top.
+        if self.diplomat_actions_rect.get().is_some() {
+            self.handle_diplomat_actions_mouse(mouse);
+            return;
+        }
+        // The technology-stolen window claims the mouse ahead of the
+        // diplomacy window too: the theft is newer news than the first contact
+        // that may have made the walk-in possible.
+        if self.steal_notice_rect.get().is_some() {
+            self.handle_steal_notice_mouse(mouse);
+            return;
+        }
+        // The sabotage-report window claims the mouse ahead of the diplomacy
+        // window too, like the theft's window does: the damage is newer news
+        // than the first contact that may have made the walk-in possible.
+        if self.sabotage_notice_rect.get().is_some() {
+            self.handle_sabotage_notice_mouse(mouse);
+            return;
+        }
         if self.diplomacy_rect.get().is_some() {
             self.handle_diplomacy_mouse(mouse);
             return;
@@ -182,15 +202,25 @@ impl App {
             return;
         }
         // While the window is open, the "Change" button opens the production
-        // picker, the close button dismisses the window, and presses anywhere
-        // else inside it are consumed rather than reaching the map.
+        // picker (for the owner's own city alone — a foreign city's window is a
+        // read-only report), the close button dismisses the window, and presses
+        // anywhere else inside it are consumed rather than reaching the map.
         if let Some((window, close)) = self.moused_window.get() {
             if self.unfortify_click(window) {
                 return;
             }
             let change =
                 city_window::change_button_rect(city_window::production_panel_rect(window));
-            if change.contains((column, row).into()) {
+            let owns_open_city = self
+                .engine
+                .as_ref()
+                .and_then(|engine| {
+                    let city_id = self.selected_city?;
+                    let city = engine.city(city_id)?;
+                    Some(city.owner() == engine.current_player_id())
+                })
+                .unwrap_or(false);
+            if owns_open_city && change.contains((column, row).into()) {
                 self.open_production_picker();
                 return;
             }

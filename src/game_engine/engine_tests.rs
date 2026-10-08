@@ -1,5 +1,6 @@
 use super::*;
 use crate::game_engine::calendar::calendar_year;
+use crate::game_engine::diplomat_actions::SUBVERT_CITY_COST;
 use crate::game_engine::{Command, GameView, Player};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Direction;
@@ -4779,5 +4780,1115 @@ fn a_rival_catapult_takes_a_city_it_has_stripped() {
             .expect("the catapult holds the city")
             .location,
         Location::new(2, 0)
+    );
+}
+
+/// An English city at `(2, 0)` and a diplomat of `diplomat_owner` standing at
+/// `(1, 0)`, with the two at war or not as `at_war` dictates.
+fn a_diplomat_beside_a_foreign_city(diplomat_owner: PlayerId, at_war: bool) -> (Engine, UnitId) {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![
+            Player::new(Civilization::Zulu),
+            Player::new(Civilization::Roman),
+        ],
+    );
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine
+        .game
+        .add_city(PlayerId::new(0), "Londinium", Location::new(2, 0));
+    engine.game.cities[0].grow();
+    let diplomat = engine.game.spawn_unit(
+        UnitClass::Diplomat,
+        Location::new(1, 0),
+        diplomat_owner,
+        Some(CityId::new(9)),
+    );
+    if at_war {
+        engine.game.declare_war(diplomat_owner, PlayerId::new(0));
+    }
+    // The diplomat's civilisation is the one at the keyboard, or the move is
+    // rejected before it is ever considered.
+    engine.current_player_index = diplomat_owner;
+    engine.begin_turn();
+    (engine, diplomat)
+}
+
+/// Walking into a foreign city unannounced is what a diplomat is for: he is
+/// admitted at peace as readily as at war, because diplomacy has no
+/// casus belli and does not need one.
+#[test]
+fn a_diplomat_walks_into_a_foreign_city_at_peace() {
+    let (mut engine, diplomat) = a_diplomat_beside_a_foreign_city(PlayerId::new(1), false);
+    engine.submit(Command::Move {
+        unit: diplomat,
+        direction: Direction::E,
+    });
+    assert_eq!(
+        engine
+            .unit(diplomat)
+            .expect("the diplomat is in the game")
+            .location,
+        Location::new(2, 0),
+        "the city admits him"
+    );
+    assert!(
+        engine.game.cities[0].improvements().is_empty(),
+        "a diplomat takes nothing, least of all a city"
+    );
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(0),
+        "and the city is not taken by walking into it"
+    );
+    assert!(!engine.game.at_war(PlayerId::new(1), PlayerId::new(0)));
+}
+
+/// War does not bar a diplomat from the city either, and he does not have to
+/// cut his way in: he arrives in the middle of a garrison and stays on his
+/// feet, which is the whole point of sending him.
+#[test]
+fn a_diplomat_walks_into_an_enemy_city_at_war() {
+    let (mut engine, diplomat) = a_diplomat_beside_a_foreign_city(PlayerId::new(1), true);
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(2, 0),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    engine.submit(Command::Move {
+        unit: diplomat,
+        direction: Direction::E,
+    });
+    assert_eq!(
+        engine
+            .unit(diplomat)
+            .expect("the diplomat is in the game")
+            .location,
+        Location::new(2, 0),
+        "in through the garrison, unharmed"
+    );
+    assert_eq!(
+        engine
+            .unit(diplomat)
+            .expect("the diplomat is in the game")
+            .owner(),
+        PlayerId::new(1),
+        "he is not killed on arrival by a fight he never joined"
+    );
+    assert_eq!(
+        engine.game.units[1].owner(),
+        PlayerId::new(0),
+        "the garrison is untouched: he was never made to fight it"
+    );
+    assert_eq!(engine.game.cities[0].owner(), PlayerId::new(0));
+    assert!(engine.game.at_war(PlayerId::new(1), PlayerId::new(0)));
+}
+
+/// Undefended does not mean defenceless: a diplomat stepping into an empty
+/// enemy city is still only talking. Taking the city by diplomacy costs gold
+/// and is a deliberate act, not a side effect of walking.
+#[test]
+fn a_diplomat_does_not_capture_an_undefended_enemy_city() {
+    let (mut engine, diplomat) = a_diplomat_beside_a_foreign_city(PlayerId::new(1), true);
+    engine.submit(Command::Move {
+        unit: diplomat,
+        direction: Direction::E,
+    });
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(0),
+        "no garrison is no free city"
+    );
+    assert_eq!(
+        engine
+            .unit(diplomat)
+            .expect("the diplomat is in the game")
+            .location,
+        Location::new(2, 0)
+    );
+}
+
+/// A settler still takes an undefended enemy city by walking in — the diplomat
+/// is the exception that proves this is a unit property, not a change to the
+/// conquest rule.
+#[test]
+fn an_ordinary_unit_still_captures_an_undefended_city_by_walking_in() {
+    let (mut engine, _) = a_diplomat_beside_a_foreign_city(PlayerId::new(1), true);
+    let settler = engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(9)),
+    );
+    engine.submit(Command::Move {
+        unit: settler,
+        direction: Direction::E,
+    });
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(1),
+        "the conquest rule is untouched"
+    );
+}
+
+/// The exception is the diplomat's alone: everyone else is still held out of a
+/// peaceful neighbour's city.
+#[test]
+fn a_warrior_is_still_kept_out_of_a_peaceful_neighbours_city() {
+    let (mut engine, _) = a_diplomat_beside_a_foreign_city(PlayerId::new(1), false);
+    let militia = engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(9)),
+    );
+    engine.submit(Command::Move {
+        unit: militia,
+        direction: Direction::E,
+    });
+    assert_eq!(
+        engine.game.units[1].location,
+        Location::new(1, 0),
+        "only a diplomat may enter unannounced"
+    );
+    assert_eq!(engine.game.cities[0].owner(), PlayerId::new(0));
+    assert!(engine.game.units.iter().any(|u| u.id() == militia));
+}
+
+/// The human's own diplomat, walked into a Zulu city that stands ready to be
+/// dealt with: walled, garrisoned, and with English soldiers beside him in the
+/// street. With all of that in place every one of the five actions is
+/// available, which is the state the window is designed around.
+fn a_diplomat_audience(gold: u32) -> (Engine, UnitId, CityId) {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    let city = engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(2, 0));
+    engine.game.cities[0].grow();
+    engine.game.cities[0].add_improvement(CityImprovement::CityWalls);
+    let diplomat = engine.game.spawn_unit(
+        UnitClass::Diplomat,
+        Location::new(1, 0),
+        PlayerId::new(0),
+        Some(CityId::new(9)),
+    );
+    // A Zulu garrison for the city's owner, the thing Incite and Subvert are
+    // aimed at, and an English regiment beside the diplomat so tests can pin
+    // that the subvert sweep leaves the player's own units alone. Only the
+    // garrison makes an action legal — no unit of the player's is ever needed.
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(2, 0),
+        PlayerId::new(1),
+        Some(city),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(2, 0),
+        PlayerId::new(0),
+        Some(CityId::new(9)),
+    );
+    engine.game.players[PlayerId::new(0).index()].set_gold(gold);
+    engine.game.players[PlayerId::new(1).index()].add_advancement(Advancement::Mathematics);
+    engine.begin_turn();
+    engine.submit(Command::Move {
+        unit: diplomat,
+        direction: Direction::E,
+    });
+    (engine, diplomat, city)
+}
+
+/// A diplomat walking into a rival city hands the TUI a record naming the unit
+/// and the city, which is what opens the window offering him a choice.
+#[test]
+fn a_diplomat_entering_a_rival_city_is_recorded_for_the_window() {
+    let (mut engine, diplomat, city) = a_diplomat_audience(500);
+    let audiences = engine.drain_diplomat_audiences();
+    assert_eq!(audiences.len(), 1, "one visit, one window");
+    assert_eq!(audiences[0].unit, diplomat);
+    assert_eq!(audiences[0].city, city);
+    assert_eq!(audiences[0].city_name, "Umgungundlovu");
+    assert!(
+        engine.drain_diplomat_audiences().is_empty(),
+        "draining the record empties it"
+    );
+}
+
+/// The window lists all five actions in a fixed order, each with its price.
+#[test]
+fn the_window_offers_five_actions_each_with_a_price() {
+    let (engine, diplomat, city) = a_diplomat_audience(500);
+    let options = engine.diplomat_options(diplomat);
+    assert_eq!(
+        options.iter().map(|o| o.action).collect::<Vec<_>>(),
+        DiplomatAction::ALL.to_vec(),
+        "the list never reshuffles under the cursor"
+    );
+    let population = engine
+        .city(city)
+        .expect("the rival city exists")
+        .population();
+    assert_eq!(
+        options.iter().map(|o| o.cost).collect::<Vec<_>>(),
+        vec![25, 50, 50, 100, SUBVERT_CITY_COST * population],
+        "and subvert is priced per head of population"
+    );
+    assert!(
+        options.iter().all(|o| o.blocked.is_none()),
+        "in a city worth robbing, with the money to pay, nothing is out of reach: {:?}",
+        options
+            .iter()
+            .filter_map(|o| o.blocked.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Subvert is charged by the head: the bigger the city, the bigger the bill,
+/// so the window's own price tracks the population it is standing in.
+#[test]
+fn subverting_costs_more_for_a_bigger_city() {
+    let (mut engine, diplomat, city) = a_diplomat_audience(500);
+    let subvert_price = |engine: &Engine| {
+        engine
+            .diplomat_options(diplomat)
+            .into_iter()
+            .find(|option| option.action == DiplomatAction::SubvertCity)
+            .expect("subvert is always on the list")
+            .cost
+    };
+    let before = subvert_price(&engine);
+    assert_eq!(
+        before, 400,
+        "the fixture city holds two people at 200 a head"
+    );
+    engine
+        .game
+        .cities
+        .iter_mut()
+        .find(|candidate| candidate.id() == city)
+        .expect("the rival city exists")
+        .grow();
+    assert_eq!(
+        subvert_price(&engine),
+        before + SUBVERT_CITY_COST,
+        "one more head is one more per-head price"
+    );
+}
+
+/// Every action costs gold and spends the diplomat doing it: one visit, one
+/// offer, and the man is used up either way — except a theft that comes away
+/// empty. In the audience fixture the rival knows only Mathematics, which the
+/// no-advance player cannot yet research, so StealTechnology is that theft: it
+/// spends nothing and is pinned by its own test below.
+#[test]
+fn every_action_costs_gold_and_the_diplomat() {
+    for action in DiplomatAction::ALL {
+        if action == DiplomatAction::StealTechnology {
+            continue;
+        }
+        let (mut engine, diplomat, city) = a_diplomat_audience(500);
+        let before = engine.game.players[PlayerId::new(0).index()].gold();
+        let cost = action.cost(engine.city(city));
+        engine.submit(Command::DiplomatAction {
+            unit: diplomat,
+            action,
+        });
+        assert!(
+            engine.unit(diplomat).is_none(),
+            "{action:?} should consume the diplomat"
+        );
+        assert_eq!(
+            engine.game.players[PlayerId::new(0).index()].gold(),
+            before - cost,
+            "{action:?} should cost {cost} gold",
+        );
+    }
+}
+
+/// Investigating tells the player what the city is building, and every look is
+/// a fresh purchase: the same city can be investigated again and again, each
+/// time handing the TUI the city so its report window can open.
+#[test]
+fn a_city_can_be_investigated_again() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    engine.game.cities[0].set_production(ProductionTarget::Unit(UnitClass::Militia));
+    let events = engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::InvestigateCity,
+    });
+    assert!(
+        events.iter().any(|e| e.message().contains("Militia")),
+        "the report names the build: {:?}",
+        events.iter().map(|e| e.message()).collect::<Vec<_>>()
+    );
+    assert!(engine.game.cities[0].investigated());
+    assert_eq!(
+        engine.drain_investigation(),
+        Some(CityId::new(0)),
+        "the engine hands the TUI the investigated city so its window can open"
+    );
+    assert_eq!(
+        engine.drain_investigation(),
+        None,
+        "and exactly once per purchase: the report window is a single showing"
+    );
+
+    // A second man sent to the same city may buy the same look again: the
+    // finding is not a one-time secret, and the door was the diplomat's gold
+    // all along.
+    let second = engine.game.spawn_unit(
+        UnitClass::Diplomat,
+        Location::new(2, 0),
+        PlayerId::new(0),
+        Some(CityId::new(9)),
+    );
+    let blocked = engine
+        .diplomat_options(second)
+        .into_iter()
+        .find(|o| o.action == DiplomatAction::InvestigateCity)
+        .and_then(|o| o.blocked);
+    assert!(
+        blocked.is_none(),
+        "investigating an already-known city is still on the table"
+    );
+    let events = engine.submit(Command::DiplomatAction {
+        unit: second,
+        action: DiplomatAction::InvestigateCity,
+    });
+    assert!(
+        events.iter().any(|e| e.message().contains("Militia")),
+        "the second report names the build too"
+    );
+    assert_eq!(
+        engine.drain_investigation(),
+        Some(CityId::new(0)),
+        "and the second purchase opens the report window afresh"
+    );
+    assert!(engine.unit(second).is_none(), "and costs its diplomat");
+}
+
+/// A stolen technology is an advance the player does not already have, taken
+/// from a city whose owner knows things worth taking. An advance the player
+/// could not yet research is no prize, so the pick comes from what is takeable:
+/// here the foundational Wheel is researchable from nothing and so comes away,
+/// while the Mathematics that needs Alphabet and Masonry stays in the cup.
+#[test]
+fn stealing_a_technology_adopts_an_advance_the_player_can_research() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    engine.game.players[PlayerId::new(1).index()].add_advancement(Advancement::Wheel);
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::StealTechnology,
+    });
+    assert!(
+        engine.game.players[PlayerId::new(0).index()].has_advancement(Advancement::Wheel),
+        "the foundational advance comes away"
+    );
+    assert!(
+        !engine.game.players[PlayerId::new(0).index()].has_advancement(Advancement::Mathematics),
+        "the advance that needs groundwork is not the pick"
+    );
+}
+
+/// The theft's result is handed to the TUI as a transient record, naming the
+/// advance that came away and the rival it was taken from, and is drained by
+/// the one window that announces it.
+#[test]
+fn stealing_a_technology_reports_the_advance_and_its_rival() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    engine.game.players[PlayerId::new(1).index()].add_advancement(Advancement::Wheel);
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::StealTechnology,
+    });
+    assert_eq!(
+        engine.drain_steal_outcome(),
+        Some(StealOutcome::Stolen {
+            advancement: Advancement::Wheel,
+            rival: "Zulu".to_string(),
+        }),
+        "the record names the technology and its former owner"
+    );
+    assert!(
+        engine.drain_steal_outcome().is_none(),
+        "the record is one window's worth and retains nothing"
+    );
+}
+
+/// The advance the player is currently researching comes away before anything
+/// pricier the rival also knows: the queue is the plan, and the theft shortens
+/// it rather than browsing the whole cupboard.
+#[test]
+fn a_steal_takes_the_advance_the_player_is_researching_first() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    let player = &mut engine.game.players[PlayerId::new(0).index()];
+    player.add_advancement(Advancement::Alphabet);
+    player.add_advancement(Advancement::Masonry);
+    engine.submit(Command::SetResearchTarget {
+        advancement: Advancement::Mathematics,
+    });
+    engine.game.players[PlayerId::new(1).index()].add_advancement(Advancement::Writing);
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::StealTechnology,
+    });
+    assert!(
+        engine.game.players[PlayerId::new(0).index()].has_advancement(Advancement::Mathematics),
+        "the research queue comes off the list first"
+    );
+    assert!(
+        !engine.game.players[PlayerId::new(0).index()].has_advancement(Advancement::Writing),
+        "the costlier Writing waits its turn"
+    );
+}
+
+/// Without a target the rival knows, the pick is the priciest advance the
+/// player could begin researching next: Writing (70) outbids Mathematics (50),
+/// so the steal buys the dearer half of the cupboard.
+#[test]
+fn without_a_target_in_reach_the_steal_takes_the_priciest_researchable_advance() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    let player = &mut engine.game.players[PlayerId::new(0).index()];
+    player.add_advancement(Advancement::Alphabet);
+    player.add_advancement(Advancement::Masonry);
+    engine.game.players[PlayerId::new(1).index()].add_advancement(Advancement::Writing);
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::StealTechnology,
+    });
+    assert!(
+        engine.game.players[PlayerId::new(0).index()].has_advancement(Advancement::Writing),
+        "the price dictates the pick"
+    );
+    assert!(
+        !engine.game.players[PlayerId::new(0).index()].has_advancement(Advancement::Mathematics),
+        "the cheaper advance is left in the cup"
+    );
+}
+
+/// A city can be robbed again and again, while its owner still knows advances
+/// the player lacks: the door is the rival's learning, not a one-theft seal.
+#[test]
+fn a_city_can_be_robbed_again() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    // Both robberies researchable: the player has the Alphabet and Masonry
+    // that Mathematics and Code of Laws sit on, so every theft below has a
+    // takeable prize waiting in the rival's cupboard.
+    engine.game.players[PlayerId::new(0).index()].add_advancement(Advancement::Alphabet);
+    engine.game.players[PlayerId::new(0).index()].add_advancement(Advancement::Masonry);
+    engine.game.players[PlayerId::new(1).index()].add_advancement(Advancement::CodeOfLaws);
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::StealTechnology,
+    });
+    let second = engine.game.spawn_unit(
+        UnitClass::Diplomat,
+        Location::new(2, 0),
+        PlayerId::new(0),
+        Some(CityId::new(9)),
+    );
+    let blocked = engine
+        .diplomat_options(second)
+        .into_iter()
+        .find(|o| o.action == DiplomatAction::StealTechnology)
+        .and_then(|o| o.blocked);
+    assert!(
+        blocked.is_none(),
+        "a second theft is still on the table while the rival knows more"
+    );
+    let events = engine.submit(Command::DiplomatAction {
+        unit: second,
+        action: DiplomatAction::StealTechnology,
+    });
+    assert!(
+        events.iter().any(|e| e.message().contains("steals")),
+        "the second man comes away with something too"
+    );
+    assert!(
+        engine.game.players[PlayerId::new(0).index()].has_advancement(Advancement::Mathematics)
+            && engine.game.players[PlayerId::new(0).index()]
+                .has_advancement(Advancement::CodeOfLaws),
+        "between them the two thieves took every advance the rival had"
+    );
+    assert_eq!(
+        engine.game.players[PlayerId::new(0).index()].gold(),
+        400,
+        "and each theft cost its own 50 gold"
+    );
+    assert!(engine.unit(second).is_none(), "and its own diplomat");
+}
+
+/// There is nothing to steal from a civilization that knows only advances the
+/// player cannot yet work on. The attempt is not a dead row but a refusal that
+/// reports itself: nothing is taken, nothing is spent, the row stays actionable,
+/// and the report names the cupboard it came away empty from.
+#[test]
+fn a_theft_against_a_civilization_that_knows_nothing_researchable_is_empty() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    let blocked = engine
+        .diplomat_options(diplomat)
+        .into_iter()
+        .find(|o| o.action == DiplomatAction::StealTechnology)
+        .and_then(|o| o.blocked);
+    assert!(
+        blocked.is_none(),
+        "an empty cupboard is a refusal, not a dead row"
+    );
+    let events = engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::StealTechnology,
+    });
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message().contains("nothing left to steal")),
+        "the attempt reports itself: {:?}",
+        events.iter().map(|e| e.message()).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        engine.drain_steal_outcome(),
+        Some(StealOutcome::NothingToSteal {
+            rival: "Zulu".to_string()
+        }),
+        "the report names whose cupboard came up empty"
+    );
+    assert_eq!(
+        engine.game.players[PlayerId::new(0).index()].gold(),
+        500,
+        "and costs nothing"
+    );
+    assert!(engine.unit(diplomat).is_some(), "and spends no diplomat");
+}
+
+/// Sabotage takes the walls first, because the walls are the one building that
+/// is a defence in its own right.
+#[test]
+fn sabotage_destroys_the_walls_before_anything_else() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    engine.game.cities[0].add_improvement(CityImprovement::Temple);
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::IndustrialSabotage,
+    });
+    assert!(
+        !engine.game.cities[0]
+            .improvements()
+            .contains(&CityImprovement::CityWalls),
+        "the walls come down"
+    );
+    assert!(
+        engine.game.cities[0]
+            .improvements()
+            .contains(&CityImprovement::Temple),
+        "the temple is not the point"
+    );
+    assert_eq!(
+        engine.drain_sabotage_notice(),
+        Some(SabotageNotice {
+            improvement: CityImprovement::CityWalls,
+            city_name: "Umgungundlovu".to_string(),
+        }),
+        "the damage is handed to the TUI as a transient record naming what fell"
+    );
+    assert!(
+        engine.drain_sabotage_notice().is_none(),
+        "the record is one window's worth and retains nothing"
+    );
+}
+
+/// A city with nothing built in it has nothing to destroy, so no damage is
+/// recorded either: a refused sabotage leaves the record as empty as the city.
+#[test]
+fn sabotage_needs_something_to_destroy() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    assert!(engine.game.cities[0].remove_improvement(CityImprovement::CityWalls));
+    assert!(engine.game.cities[0].improvements().is_empty());
+    let events = engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::IndustrialSabotage,
+    });
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message().contains("nothing left to destroy")),
+        "an empty city cannot be sabotaged"
+    );
+    assert!(engine.unit(diplomat).is_some());
+    assert!(
+        engine.drain_sabotage_notice().is_none(),
+        "and nothing was destroyed to report"
+    );
+}
+
+/// Inciting a revolt buys the garrison: war is declared and the units in the
+/// city answer to the player afterwards. The city itself is not taken.
+#[test]
+fn inciting_a_revolt_declares_war_and_takes_the_garrison() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    let garrison = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.owner() == PlayerId::new(1))
+        .expect("the city is garrisoned")
+        .id();
+    assert!(!engine.game.at_war(PlayerId::new(0), PlayerId::new(1)));
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::InciteRevolt,
+    });
+    assert!(
+        engine.game.at_war(PlayerId::new(0), PlayerId::new(1)),
+        "a coup is a declaration of war"
+    );
+    assert_eq!(
+        engine.unit(garrison).expect("the unit survives").owner(),
+        PlayerId::new(0),
+        "and the garrison is the player's now"
+    );
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(1),
+        "only the soldiers are bought, not the city"
+    );
+}
+
+/// A lone diplomat needs no soldier of his own behind him: the garrison is all
+/// there is to buy, and he buys it on his own. The row is not even greyed.
+#[test]
+fn a_lone_diplomat_can_incite_a_garrison() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    let regiment = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.unit_class == UnitClass::Phalanx && unit.owner() == PlayerId::new(0))
+        .expect("the fixture puts a regiment in the city")
+        .id();
+    engine.game.remove_unit(regiment);
+    for action in [DiplomatAction::InciteRevolt, DiplomatAction::SubvertCity] {
+        let blocked = engine
+            .diplomat_options(diplomat)
+            .into_iter()
+            .find(|option| option.action == action)
+            .and_then(|option| option.blocked);
+        assert!(
+            blocked.is_none(),
+            "the window offers {action:?} to a diplomat on his own, got {blocked:?}"
+        );
+    }
+    let events = engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::InciteRevolt,
+    });
+    assert!(
+        events.iter().any(|e| e.message().contains("defect")),
+        "a diplomat alone can buy the garrison: {:?}",
+        events.iter().map(|e| e.message()).collect::<Vec<_>>()
+    );
+    assert!(
+        engine.game.at_war(PlayerId::new(0), PlayerId::new(1)),
+        "a coup is a declaration of war"
+    );
+    assert!(
+        engine.unit(diplomat).is_none(),
+        "and the action still spends him"
+    );
+}
+
+/// A garrison bought by Incite a Revolt is a player's ordinary unit from the
+/// moment it defects: it answers to the player, is homed to the diplomat's
+/// city, carries no rival order, and has a budget to act on. A real garrison
+/// *is* a fortify order with its turn spent, so both have to be put back to
+/// the state the player's units are bought in.
+#[test]
+fn a_revolted_garrison_joins_the_players_command_loop() {
+    let (mut engine, diplomat, city) = a_diplomat_audience(500);
+    let home = engine
+        .unit(diplomat)
+        .expect("the diplomat exists")
+        .home_city();
+    let garrison = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.owner() == PlayerId::new(1))
+        .expect("the city is garrisoned")
+        .id();
+    {
+        let found = engine
+            .game
+            .units
+            .iter_mut()
+            .find(|unit| unit.id() == garrison)
+            .expect("the garrison exists");
+        found.fortify();
+        found.spend_turn();
+    }
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::InciteRevolt,
+    });
+    let defected = engine.unit(garrison).expect("the garrison survives");
+    assert_eq!(
+        defected.owner(),
+        PlayerId::new(0),
+        "the bought soldier answers to the player"
+    );
+    assert_eq!(
+        defected.home_city(),
+        home,
+        "and is homed to the diplomat's city, not the city it stood in"
+    );
+    assert_eq!(
+        defected.order(),
+        UnitOrder::Idle,
+        "the rival's fortify order is cancelled"
+    );
+    assert!(
+        defected.moves_remaining() > 0,
+        "and the budget is back, so it is commandable this turn"
+    );
+    // Commandable means exactly the shape the TUI looks for when it cycles
+    // units, and a plain move off the rival square is the one thing the rule
+    // leaves it to do.
+    engine.submit(Command::Move {
+        unit: garrison,
+        direction: Direction::W,
+    });
+    assert_ne!(
+        engine
+            .unit(garrison)
+            .expect("the garrison still lives")
+            .location,
+        engine
+            .city(city)
+            .expect("the rival city still stands")
+            .location,
+        "the first order it takes is the walk out of the city"
+    );
+}
+
+/// A revolted unit's first act must be to walk off the rival square: the city
+/// it was bought in is still the enemy's, so no order may be taken there.
+/// Once it has stepped off, the ground is its own and the orders open up.
+#[test]
+fn a_revolted_garrison_cannot_take_an_order_on_the_rival_square() {
+    let (mut engine, diplomat, city) = a_diplomat_audience(500);
+    let location = engine.city(city).expect("the city exists").location;
+    // A settler standing with the garrison, so the Work refusal is pinned too.
+    engine
+        .game
+        .spawn_unit(UnitClass::Settler, location, PlayerId::new(1), Some(city));
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::InciteRevolt,
+    });
+    let garrison = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.owner() == PlayerId::new(0) && unit.unit_class == UnitClass::Phalanx)
+        .expect("the bought garrison")
+        .id();
+    let settler = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.owner() == PlayerId::new(0) && unit.unit_class == UnitClass::Settler)
+        .expect("the bought settler")
+        .id();
+    for command in [
+        Command::Fortify { unit: garrison },
+        Command::Sentry { unit: garrison },
+        Command::Work {
+            unit: settler,
+            improvement: TerrainImprovement::Irrigation,
+        },
+    ] {
+        let events = engine.submit(command);
+        assert!(
+            events
+                .iter()
+                .any(|event| event.message().contains("must leave the city first")),
+            "an order on the rival square is refused: {:?}",
+            events.iter().map(|e| e.message()).collect::<Vec<_>>()
+        );
+    }
+    assert_eq!(
+        engine.unit(garrison).unwrap().order(),
+        UnitOrder::Idle,
+        "the refused order was never applied"
+    );
+    // A step west clears the city tile, and the fortify that was refused on
+    // the rival's square is taken freely on the unit's own ground.
+    engine.submit(Command::Move {
+        unit: garrison,
+        direction: Direction::W,
+    });
+    engine.submit(Command::Fortify { unit: garrison });
+    assert_eq!(
+        engine.unit(garrison).unwrap().order(),
+        UnitOrder::Fortified,
+        "the order is allowed once the unit has left the city"
+    );
+}
+
+/// There is nothing to incite in a city that holds no units.
+#[test]
+fn inciting_a_revolt_needs_a_garrison_to_incite() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    let garrison = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.owner() == PlayerId::new(1))
+        .expect("the city is garrisoned")
+        .id();
+    engine.game.remove_unit(garrison);
+    let events = engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::InciteRevolt,
+    });
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message().contains("no units to incite")),
+        "an empty city has nothing to bribe"
+    );
+    assert!(engine.unit(diplomat).is_some());
+}
+
+/// Subverting buys the city itself, not a garrison, so a city nobody guards is
+/// still a city: only the gold stands between the diplomat and the deed.
+#[test]
+fn subverting_an_ungarrisoned_city_needs_only_gold() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    let garrison = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.owner() == PlayerId::new(1))
+        .expect("the city is garrisoned")
+        .id();
+    engine.game.remove_unit(garrison);
+    let before = engine.game.players[PlayerId::new(0).index()].gold();
+    let events = engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::SubvertCity,
+    });
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(0),
+        "an empty city still falls to the money"
+    );
+    assert!(
+        !engine.game.at_war(PlayerId::new(0), PlayerId::new(1)),
+        "and still without a war"
+    );
+    assert!(
+        events.iter().any(|e| e.message().contains("subverts")),
+        "the deed is reported"
+    );
+    assert!(
+        engine.game.players[PlayerId::new(0).index()].gold() < before - SUBVERT_CITY_COST,
+        "at 200 a head for a city of two the price is well over the base"
+    );
+    assert!(engine.unit(diplomat).is_none(), "and it still spends him");
+}
+
+/// Subverting takes the city without a shot, and the garrison standing in it
+/// goes with the city.
+#[test]
+fn subverting_takes_the_city_without_declaring_war() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    let garrison = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.owner() == PlayerId::new(1))
+        .expect("the city is garrisoned")
+        .id();
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::SubvertCity,
+    });
+    assert_eq!(
+        engine.game.cities[0].owner(),
+        PlayerId::new(0),
+        "the city changes hands"
+    );
+    assert!(
+        !engine.game.at_war(PlayerId::new(0), PlayerId::new(1)),
+        "and no war was declared: that is the whole price of the difference"
+    );
+    assert!(
+        engine.unit(garrison).is_none(),
+        "the garrison standing in it does not stay"
+    );
+}
+
+/// The city changes hands and the ground it stood on is cleared, whoever was
+/// standing on it. The garrison homed to the city would go with the city anyway,
+/// so this fixture hangs a soldier off it: only the explicit sweep can take that
+/// one, and forgetting the sweep would leave a soldier standing in a city that
+/// has quietly changed hands.
+#[test]
+fn subverting_clears_a_garrison_that_is_homed_elsewhere() {
+    let (mut engine, diplomat, city) = a_diplomat_audience(500);
+    let tile = engine.city(city).expect("the rival city exists").location;
+    // A second city, so the rival survives the subversion instead of being
+    // eliminated with the last of its people: a civilization that owns nothing
+    // takes its stragglers down with it, which would clear the tile by accident.
+    engine
+        .game
+        .add_city(PlayerId::new(1), "Isandlwana", Location::new(4, 2));
+    let mercenary = engine.spawn_unit(UnitClass::Legion, tile, PlayerId::new(1), None);
+    let own_regiment = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.unit_class == UnitClass::Phalanx && unit.owner() == PlayerId::new(0))
+        .expect("the fixture puts a regiment in the city")
+        .id();
+    engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::SubvertCity,
+    });
+    assert_eq!(engine.game.cities[0].owner(), PlayerId::new(0));
+    assert!(
+        engine.unit(mercenary).is_none(),
+        "the soldier who was only standing there is cleared off it"
+    );
+    assert!(
+        engine.unit(own_regiment).is_some(),
+        "while the player's own regiment is no part of the bargain"
+    );
+}
+
+/// A gold action the treasury cannot cover is refused, and nothing is spent.
+#[test]
+fn an_action_the_player_cannot_afford_is_refused() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(10);
+    let events = engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::StealTechnology,
+    });
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message().contains("Not enough gold")),
+        "50 gold cannot come out of a purse holding 10: {:?}",
+        events.iter().map(|e| e.message()).collect::<Vec<_>>()
+    );
+    assert_eq!(engine.game.players[PlayerId::new(0).index()].gold(), 10);
+    assert!(
+        engine.unit(diplomat).is_some(),
+        "and the diplomat is not spent on a refused offer"
+    );
+}
+
+/// The row the player can read greyed out is the rule the engine enforces: one
+/// refusal serves both, so the window cannot promise what the rules forbid.
+#[test]
+fn a_refused_action_reads_the_same_as_it_enforces() {
+    let (engine, diplomat, _) = a_diplomat_audience(10);
+    let blocked = engine
+        .diplomat_options(diplomat)
+        .into_iter()
+        .find(|o| o.action == DiplomatAction::StealTechnology)
+        .and_then(|o| o.blocked)
+        .expect("50 gold is out of reach on 10");
+    let (mut engine, diplomat, _) = a_diplomat_audience(10);
+    let events = engine.submit(Command::DiplomatAction {
+        unit: diplomat,
+        action: DiplomatAction::StealTechnology,
+    });
+    assert!(
+        events.iter().any(|e| e.message() == blocked),
+        "the window says {:?} and the engine says {:?}",
+        blocked,
+        events.iter().map(|e| e.message()).collect::<Vec<_>>()
+    );
+}
+
+/// Only a diplomat, only inside a rival city: a legion is not a negotiator, and
+/// a diplomat on open ground has nobody to deal with.
+#[test]
+fn only_a_diplomat_inside_a_rival_city_may_act() {
+    let (mut engine, _, _) = a_diplomat_audience(500);
+    let legion = engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(2, 0),
+        PlayerId::new(0),
+        Some(CityId::new(9)),
+    );
+    let events = engine.submit(Command::DiplomatAction {
+        unit: legion,
+        action: DiplomatAction::InvestigateCity,
+    });
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message().contains("not a diplomat")),
+        "a legion is not a negotiator"
+    );
+
+    let (mut engine, _, _) = a_diplomat_audience(500);
+    let envoy = engine.game.spawn_unit(
+        UnitClass::Diplomat,
+        Location::new(0, 2),
+        PlayerId::new(0),
+        Some(CityId::new(9)),
+    );
+    let events = engine.submit(Command::DiplomatAction {
+        unit: envoy,
+        action: DiplomatAction::InvestigateCity,
+    });
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message().contains("not inside a rival city")),
+        "and a diplomat on open ground has nobody to deal with"
+    );
+}
+
+/// Only the human's own diplomat opens a window: a rival sending one is its
+/// own business, not a decision for the player at the keyboard.
+#[test]
+fn a_rivals_diplomat_earns_no_window() {
+    let (mut engine, diplomat, _) = a_diplomat_audience(500);
+    engine.drain_diplomat_audiences();
+    // The keyboard is on Zulu now: an English audience is not Zulu's to answer.
+    engine.current_player_index = PlayerId::new(1);
+    engine.record_diplomat_audience(diplomat, Location::new(1, 0), Location::new(2, 0), 2);
+    assert!(
+        engine.drain_diplomat_audiences().is_empty(),
+        "only the civilization at the keyboard is asked"
     );
 }

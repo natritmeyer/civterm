@@ -11,7 +11,8 @@ pub struct Unit {
     pub location: Location,
     id: UnitId,
     owner: PlayerId,
-    /// The city this unit was raised in and is homed to, if any. A starting
+    /// The city this unit is homed to, if any: the one that raised it, or for
+    /// a garrison bought by Incite a Revolt the diplomat's own city. A starting
     /// settler founded nothing, so it belongs to no city and stands homeless
     /// (`None`) until it does — never a placeholder id, which would collide
     /// with the first real city founded and so read as "raised there".
@@ -56,6 +57,17 @@ impl Unit {
 
     pub fn owner(&self) -> PlayerId {
         self.owner
+    }
+
+    /// Hand this unit to another civilization and home it to `home_city`, as
+    /// a garrison incited by a diplomat does. Who a unit answers to, where it
+    /// was raised and which square it stands on are three separate questions:
+    /// the city it served does not follow it to its new owner, and its new
+    /// home is the diplomat's, so it is raised among the buyer's cities rather
+    /// than kept alive by the guard of a city still held against him.
+    pub fn defect_to(&mut self, owner: PlayerId, home_city: Option<CityId>) {
+        self.owner = owner;
+        self.home_city = home_city;
     }
 
     /// The city this unit is homed to, if it belongs to one.
@@ -106,6 +118,12 @@ impl Unit {
 
     pub fn restore_moves(&mut self) {
         self.moves_remaining = self.unit_class.moves();
+    }
+
+    /// Set the move budget back to exactly `moves`, the state this unit
+    /// carried into a step the game is undoing.
+    pub fn restore_moves_to(&mut self, moves: u8) {
+        self.moves_remaining = moves.min(self.unit_class.moves());
     }
 
     pub fn fortify(&mut self) {

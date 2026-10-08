@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 702 passing unit
+Run `make build` after any change. Current test baseline: 783 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -26,7 +26,8 @@ Leave changes in the working tree; the human decides when and how to commit.
 
 ## Architecture
 
-Top-level modules (`src/lib.rs`): `game_engine`, `model`, `tui`, `utils`.
+Top-level modules (`src/lib.rs`): `crash_log`, `game_engine`, `model`, `tui`,
+`utils`.
 The full design (module boundaries, command flow, turn loop, rendering
 passes) is in `ARCHITECTURE.md`; on any conflict the specifics here win.
 
@@ -55,8 +56,14 @@ a hard boundary; keep it by convention.
       itself lives in `game_view.rs`).
     - `calendar.rs` — `CALENDAR_SCHEDULE` + `calendar_year` (`pub(crate)`).
     - `movement.rs`, `combat.rs`, `cities.rs`, `diplomacy.rs`, `research.rs`,
-      `turns.rs` — private modules, one `impl Engine` block each by concern
-      (`combat.rs` owns `HIT_POINTS`).
+      `diplomat_actions.rs`, `turns.rs` — private modules, one `impl Engine`
+      block each by concern (`combat.rs` owns `HIT_POINTS`).
+    - `diplomat_actions.rs` — `DiplomatAction`/`DiplomatOption`/
+      `DiplomatAudience`/`DiplomatError` (re-exported as
+      `game_engine::DiplomatAction` and friends) plus the action window's
+      engine half: `diplomat_options`, `record_diplomat_audience`,
+      `drain_diplomat_audiences`, `perform_diplomat_action` and
+      `withdraw_diplomat`.
     - `rival_player_engine.rs` — `RivalMotion`, `RivalWar` (re-exported as
       `game_engine::RivalMotion`, `game_engine::RivalWar`) plus the rival AI:
       `run_rival_turn`, `drain_rival_motion`, `drain_rival_wars`, and the
@@ -139,6 +146,146 @@ a hard boundary; keep it by convention.
   size two or more is captured and keeps producing for its new owner. Either
   fate disbands units homed to the fallen city, and a civilization left with
   no city at all is eliminated (its stragglers in the field disband with it).
+- Conquest is a property of the unit, not of the tile: `UnitClass::
+  enters_to_conquer` is false for the Diplomat alone. A diplomat walks into an
+  undefended enemy city and does **not** take it, because taking a city by
+  diplomacy is Incite a Revolt or Subvert, both of which cost gold. Every other
+  unit — settlers included — takes the ground it walks on.
+
+## Diplomat entry
+
+- A diplomat may enter a foreign city whether the two civilizations are at
+  peace or at war. Walking in unannounced is what he is for; he needs no
+  casus belli and so never has cause to demand one. Civ 1 lets him do this
+  past any garrison, and the repo has no Zone of Control rule to lift, so this
+  is the whole of the mechanic.
+- That single permission touches three places, and all three are needed or the
+  rule lies in one of its halves:
+  - `ensure_peaceful_passage` clears the foreign-occupant flag for a
+    diplomat bound for a foreign city, so the city does not bar him at peace.
+  - `move_unit` sets `conducts_business` for the same pair, so a diplomat is
+    never routed to `resolve_combat` — at 0 attack he would lose every fight
+    to the garrison waiting inside, and be deleted on arrival for the crime of
+    arriving.
+  - the capture path checks `enters_to_conquer`, so walking in does not take
+    the city.
+- Nobody else gets any of this: a warrior is still held out of a peaceful
+  neighbor's city, and a settler still takes an undefended enemy one. The
+  exception is the unit's alone, which is why it is data on `UnitClass` and
+  not a special case spelled out per call site.
+- A diplomat walking into a city is an ordinary move, so it spends movement,
+  reveals, and records a `RivalMotion` like any other step. What he may *do*
+  once he is inside is the action window below.
+- `UnitClass::Diplomat.moves()` is 2, where every other land unit is 1 or 3.
+  He is built for walking into places, so reaching the first one should not use
+  him up, and the step left in hand is what lets a player who dismisses the
+  window walk back out again.
+- One case is still unresolved and should not be quietly folded in here: a
+  diplomat at war stepping onto a tile held by enemy units with **no city** on
+  it still resolves as combat, and at 0 attack he loses it and is deleted. Civ
+  1's answer belongs with the city-capture ransom, so fix it there rather than
+  widening entry here.
+
+## The diplomat action window
+
+- Walking the human's diplomat into a foreign city records a `DiplomatAudience`
+  from the plain-move tail (human only, like every other rival-motion filter)
+  and the TUI drains it into one modal window. The record is transient; the one
+  thing the diplomat *learns* (`City::investigated`) is model state and does
+  survive a save.
+- Five actions, in this fixed order and no others — `DiplomatAction::ALL` is the
+  single source of that order, and both the window and `diplomat_options` read
+  it: Investigate City (25), Steal Technology (50), Industrial Sabotage (50),
+  Incite a Revolt (100), Subvert City (200 **per head of population** — the
+  city the diplomat stands in is handed to `DiplomatAction::cost`, so a city
+  of three costs 600). Establish Embassy and Meet with King are deliberately
+  absent. Every one of them spends the diplomat.
+- `Engine::diplomat_blocker` is where a row's legality lives, and it is called
+  twice for the same action: once by `diplomat_options` to grey the row out and
+  supply the sentence the window prints under the list, and again by
+  `perform_diplomat_action` before anything happens. The window snapshots the
+  options when the diplomat arrives, so the second check is not redundant — gold
+  can run out between the window opening and the player pressing OK.
+- A blocked row is not a choice: OK on one neither acts nor closes the window.
+  Esc always closes — and closing is not just dismissal, it is an undo: the
+  window's state carries `from` and `moves_before` (the tile the walk-in left
+  and the budget it carried), and `close_diplomat_actions` submits
+  `Command::WithdrawDiplomat`, so the diplomat steps back onto `from` with his
+  move budget restored. A player who turns down every offer is handed his
+  diplomat back outside the city, unconsumed, rather than stranded inside one.
+- Investigate City buys a look, and every look is a fresh purchase: the engine
+  records the city on the transient `Engine.investigation` (pushed by
+  `perform_diplomat_action`, drained by `drain_investigation`, rebuilt empty by
+  `into_loaded`), and the TUI opens that rival city's window there and then, as
+  a read-only report over the map. `investigated` holds no veto on later
+  investigations — a city can be probed again and again, at 25 gold and a
+  diplomat a look. What it *does* keep is the one free door shut: the report is
+  a showing, not a door, so a foreign city stays unselectable on the map and
+  the intel is only ever rebought for gold, never tapped for free later. The
+  window renders a foreign city only once `investigated` is set, hides the
+  Change and Unfortify affordances (the player edits no one else's order and
+  releases no one else's garrison), and the Change click is additionally
+  guarded by ownership so the production picker can never open on a rival city.
+- Incite and Subvert need nothing but the gold and whatever else each is
+  aimed at: the diplomat acts alone, and no unit of his own side is ever
+  required. Incite buys the rival garrison standing in the city and declares
+  the war — with no garrison there is nothing to bribe, so an empty city
+  refuses it. Subvert asks nothing of the garrison at all: gold alone is the
+  price, at `SUBVERT_CITY_COST` per head of population, and it takes the city
+  outright and clears the tile, which is what distinguishes them.
+- The garrison a diplomat buys is the player's unit from the moment the
+  action lands. `Unit::defect_to` re-homes it to the diplomat's city, and the
+  incite arm cancels the rival's fortify order and restores the spent budget
+  — a real garrison is both of those things, and either one alone leaves the
+  man stuck outside the ordinary command cycle (Tab skips a Fortified unit
+  with no moves). The city he was bought out of is still the enemy's, so his
+  first duty is the walk-out: `standing_in_foreign_city` makes fortify,
+  sentry and work refuse on the rival square, and `available_commands`
+  offers the picker nothing there. Cancelling a release (Unfortify,
+  Unsentry, CancelOrder) stays allowed, because undoing an order is not
+  taking one, and the walk-off needs no permission it does not already have.
+- Steal Technology announces itself, and the pick is
+  not luck but priority: the player's current research target if the rival
+  knows it, otherwise the priciest advance the player could begin researching
+  next (`researchable_advancements`). An advance the player cannot yet work on
+  is no prize, so a rival whose cupboard holds nothing researchable is robbed
+  of nothing. The engine records what came away — `StealOutcome::Stolen`
+  (which advance, whose it was) — or the refusal `StealOutcome::NothingToSteal`
+  (both transient, drained by `drain_steal_outcome`) and the TUI opens a
+  single-OK window of its own that closes on acknowledgement like the
+  war-declaration window and is gone from the draw and the key and mouse guards
+  the moment it is. The theft itself is already spent and logged as the event
+  "Unit N steals ..."; the window is the receipt.
+- An empty cupboard is a refusal, not a dead row: Steal Technology is always
+  actionable (there is no `NothingToSteal` blocker on it), and the attempt
+  against a rival with nothing takeable spends nothing. The refusal's window
+  says so, and `diplomat_actions_confirm` then submits the same
+  `Command::WithdrawDiplomat` a dismissal would, so the diplomat walks back
+  onto the tile he came in from with his budget restored — an attempt that
+  takes nothing hands the man back unconsumed, exactly like the Esc that gave
+  up on the whole window.
+- Industrial Sabotage also announces itself: the engine records `SabotageNotice`
+  (the improvement that came down and the city it stood in, transient, drained
+  by `drain_sabotage_notice`) and the TUI opens a single-OK window naming both,
+  in the same shape and z-order as the theft's window. It differs from Steal
+  Technology in one place only: it is never empty — `diplomat_blocker` still
+  refuses it when the city has no improvements to break
+  (`DiplomatError::NoImprovementsToDestroy`) — so its window always reports
+  damage and its diplomat is always spent. The damage is already logged as the
+  event "Unit N sabotages ..."; the window is the receipt, read from the same
+  `diplomat_actions_confirm` drain as the theft.
+- The window is modal like the others — `window_is_open`, `modal_open`,
+  `hover_blocked`, a key guard ahead of the diplomacy guard and a mouse guard
+  ahead of the diplomacy guard. It sits ahead of the diplomacy window because
+  first contact with the city's owner can be recorded on the very same step,
+  and the more specific window belongs on top.
+- The diplomat guard returns `false` — it consumes the key and says nothing to
+  the run loop, exactly like every modal except the quit dialog. `handle_key`'s
+  flag means *quit the process*, and `true` from any other window reads as a
+  crash: the game closes silently on the first key it sees, and the exit looks
+  clean because nothing went wrong. The regression test
+  `a_key_in_the_diplomat_window_leaves_the_game_running` reads the flag, which
+  the other tests routinely throw away.
 
 ## Rival AI and turn resolution
 
@@ -372,8 +519,10 @@ New features are judged for their save impact before they are built:
 
 - Ask first what state a feature introduces and whether it must survive a
   save/load round trip. Transient state — e.g. `Engine.motion` (the rival
-  replay record), `Engine.builds` (the build-completion queue), the battle
-  flash, UI-only selection — is rebuilt fresh (`Engine::into_loaded`
+  replay record), `Engine.builds` (the build-completion queue),
+  `Engine.investigation` (the report window the next investigation opens),
+  `Engine.steal` and `Engine.sabotage` (the theft and sabotage report windows),
+  the battle flash, UI-only selection — is rebuilt fresh (`Engine::into_loaded`
   re-initialises it) and must never be pushed into `SaveData`.
 - Engine-level state is threaded by hand: `SaveData::capture` copies it and
   `SaveData::into_loaded` restores it. Adding a field to `Engine` (or to
@@ -432,6 +581,19 @@ New features are judged for their save impact before they are built:
   spill them east. The cap doubles as a layout guard, since a save written
   before cities were capped can carry a bigger number and a third digit would
   land in the neighbouring tile.
+- A window's rectangle is recomputed on **every** frame it is up, and recomputed
+  again by the mouse guard from whatever the last frame recorded, so the
+  geometry of every floating window must be **total over every `Rect` a terminal
+  can report**. `App::draw` asks for the rect before the widget gets a chance
+  to bail on a too-small area, so a plain `area.width - width` in a centering
+  helper overflows and takes the game down mid-decision the moment a terminal is
+  dragged down to a column or two. Every window therefore takes its `centered`,
+  `inner`, `button_row_y` and `draw_border` from `tui/window_geometry.rs`, which
+  saturates and clamps inside the area; a window with its own arithmetic (a
+  button's `right() - 17`, the city window's three-column bottom band) has to
+  saturate the same way. `window_geometry`'s `every_window` test hit-tests all
+  ten windows at twenty terminal sizes, which is what keeps one window's copy
+  from reintroducing the overflow the module was written to remove.
 - Wide (two-cell) glyphs such as 💥 must anchor in a tile's _left_ column; a
   wide glyph placed in the tile's right column spills a cell into the
   eastern neighbour. Tests assert the neighbour tile stays untouched.
@@ -452,6 +614,39 @@ New features are judged for their save impact before they are built:
   is shown — including the from-fog-into-sight and out-of-sight-into-fog
   ends, where the glyph is drawn even over undiscovered fog (the glyph,
   never the terrain).
+
+## Crash reporting
+
+- `crash_log` is installed from `main` **before** the terminal is touched, so a
+  crash from the moment raw mode goes on is reported *and* the terminal is put
+  back. Restoring matters as much as logging: a panic that leaves raw mode on
+  with the alternate screen up takes the player's shell with it, which is
+  exactly how a crash reports nothing at all.
+- `restore_terminal` is idempotent and gated on `terminal_active`, which `main`
+  sets once the alternate screen is up. A crash *before* that — during install,
+  during map generation — must not emit escape sequences at a terminal that was
+  never taken over, so the gate is what lets the panic hook, the signal handler
+  and the normal exit path all share the one teardown instead of three copies
+  that drift.
+- Nothing in the module may panic: a crash reporter that crashes the game at
+  startup has defeated itself. `install_signal_handler` wraps a call that is
+  documented to `assert!`, `recent_notes` takes the ring without blocking (the
+  thread being crashed is likely the thread holding it), and every I/O result is
+  discarded. Reports append to `civterm-crash.log`, or wherever
+  `CIVTERM_CRASH_LOG` points.
+- Breadcrumbs belong where the crash localises. `App::run` records every key and
+  mouse event and a note on each phase change; `Engine::submit` records the
+  command, and it records it *inside* the engine rather than at each of its
+  twenty-odd call sites, so a command issued by a rival's turn or by a pending
+  auto-advance is in the ring too. The ring holds 40 notes and flattens each to
+  one line, so a note cannot push the report out of shape.
+- SIGSEGV, SIGILL and SIGFPE are deliberately **not** handled. signal-hook
+  refuses to register a hardware fault through its checked API — `Signals::new`
+  asserts rather than returning an error, which took the whole process down the
+  first time this was written — and getting past that means `unsafe` in a crate
+  that has none, for a fault only a dependency could raise. SIGABRT is handled,
+  and that is the one that matters: a double panic becomes an abort and prints
+  nothing a panic hook could have caught first.
 
 ## Tooling
 

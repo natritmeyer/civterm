@@ -121,6 +121,7 @@ classDiagram
         +advance_work()
         +cancel_order()
         +promote()
+        +change_owner(p)
     }
     class UnitClass {
         <<enumeration>>
@@ -143,6 +144,7 @@ classDiagram
         +carry_capacity() int
         +can_found_city() bool
         +attacks_units() bool
+        +enters_to_conquer() bool
         +sieges() bool
         +can_travel_water() bool
         +required_advancement() Option~Advancement~
@@ -179,6 +181,31 @@ classDiagram
         +research() int
         +food_income(raw) int
         +gold_income(raw) int
+        +investigated() bool
+        +mark_investigated()
+        +technology_stolen() bool
+        +mark_technology_stolen()
+    }
+    class DiplomatAction {
+        <<enumeration>>
+        InvestigateCity
+        StealTechnology
+        IndustrialSabotage
+        InciteRevolt
+        SubvertCity
+        +cost() int
+        +label() str
+        +ALL slice
+    }
+    class DiplomatOption {
+        +DiplomatAction action
+        +int cost
+        +Option~String~ blocked
+    }
+    class DiplomatAudience {
+        +UnitId unit
+        +CityId city
+        +String city_name
     }
     class CityImprovement {
         <<enumeration>>
@@ -300,6 +327,8 @@ classDiagram
     City ..> CityId : id
     City ..> PlayerId : owner
     City ..> Location : location + worked tiles
+    City ..> DiplomatAudience : what a diplomat standing in it may do
+    DiplomatOption *-- DiplomatAction : 1 action, offered by one of its rows
     City ..> CityTick : tick() returns
     CityTick ..> ProductionTarget : 0..1 completed
     ProductionTarget ..> UnitClass : Unit payload
@@ -314,3 +343,13 @@ classDiagram
 > (`Alphabet` … `Writing`) is in `src/model/advancements/advancement.rs`.
 > `City.worked` always includes the centre tile; max 21 tiles (radius-2 diamond
 > minus corners) — see `Game::city_footprint` in `game_engine`.
+> `investigated` and `technology_stolen` are the two things a diplomat *learns*
+> and they outlive him; both are `#[serde(default)]`, so a city written by an
+> older build loads as un-investigated. `DiplomatOption` and
+> `DiplomatAudience` are engine types, not model state: the audience is a
+> transient record the TUI drains, and the option's `blocked` is the refusal
+> sentence the window prints under the list.
+> `moves()` puts the `Diplomat` at 2 and everything else at 1 or 3: a diplomat
+> is built for walking into places, so arriving at the first one should not use
+> him up, and the step left in hand is what lets a player who dismisses the
+> window walk back out again.

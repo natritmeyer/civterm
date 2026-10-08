@@ -16,6 +16,8 @@ classDiagram
         -Cell~bool~ camera_follow
         -Vec~GameEvent~ event_log
         -Option~ResearchDialogState~ research_dialog
+        -Option~DiplomatActionsState~ diplomat_actions
+        -Cell~Option~tuple~ diplomat_actions_rect
         -Option~DiplomacyState~ diplomacy
         -Option~SaveLoadState~ save_prompt
         -Option~QuitDialog~ quit_dialog
@@ -44,6 +46,12 @@ classDiagram
         +handle_quit_dialog_key(key)
         +start_game()
         +enter_playing()
+        +open_diplomat_actions(audience)
+        +handle_diplomat_actions_key(key)
+        +move_diplomat_actions_cursor(delta)
+        +diplomat_actions_confirm()
+        +close_diplomat_actions()
+        +handle_diplomat_actions_mouse(m)
     }
     class Phase {
         <<enumeration>>
@@ -122,6 +130,23 @@ classDiagram
         +Vec~Advancement~ choices
         +int cursor
     }
+    class DiplomatActionsState {
+        -UnitId unit
+        -String city_name
+        -Vec~DiplomatOption~ options
+        -int cursor
+    }
+    class DiplomatActionsDialog {
+        +str city_name
+        +slice options
+        +int cursor
+        +new(city_name, options, cursor) DiplomatActionsDialog
+        +dialog_rect(area) Rect
+        +ok_button_rect(panel) Rect
+        +list_rect(panel) Rect
+        +row_rect(panel, index) Option~Rect~
+        +reason_rect(panel) Rect
+    }
     class WarDialog {
         +PlayerId rival
         +dialog_rect(area) Rect
@@ -197,6 +222,8 @@ classDiagram
     App ..> ProductionPicker : opens on city
     App ..> CommandPicker : opens on a unit
     App ..> ResearchDialog : opens on discovery
+    App ..> DiplomatActionsDialog : opens on the audience drained from a move
+    App *-- DiplomatActionsState : 0..1 window open
     App ..> DiplomacyDialog : opens on contact/block
     App ..> WarDialog : opens on rival war declaration
     App ..> BuildCompleteDialog : one window per city that finished

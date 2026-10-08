@@ -21,6 +21,11 @@ pub struct City {
     production: Option<ProductionTarget>,
     resource_stored: u32,
     worked: Vec<Location>,
+    /// Whether a foreign diplomat has paid to look inside this city. The
+    /// knowledge belongs to whoever paid for it, but the city is the only
+    /// place to keep the fact, and only a rival's city can be true.
+    #[serde(default)]
+    investigated: bool,
 }
 
 impl City {
@@ -37,6 +42,7 @@ impl City {
             improvements: Vec::new(),
             production: None,
             resource_stored: 0,
+            investigated: false,
             // The city centre is always worked from the moment it is founded.
             worked: vec![location],
         }
@@ -90,6 +96,20 @@ impl City {
     /// Tear out an improvement, as a catapult does to a city wall. Returns
     /// whether it was there to be torn out, so the caller knows if the shot
     /// found anything to hit.
+    /// Whether a diplomat has already looked inside this city.
+    pub fn investigated(&self) -> bool {
+        self.investigated
+    }
+
+    /// Record that a diplomat has looked inside this city, and hand back
+    /// whether this was the first time — the TUI only ever renders the report
+    /// window once the flag is set, but the purchase itself is never barred.
+    pub fn mark_investigated(&mut self) -> bool {
+        let first_time = !self.investigated;
+        self.investigated = true;
+        first_time
+    }
+
     pub fn remove_improvement(&mut self, improvement: CityImprovement) -> bool {
         let before = self.improvements.len();
         self.improvements.retain(|held| *held != improvement);

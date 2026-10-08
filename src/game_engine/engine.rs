@@ -1,9 +1,11 @@
+use crate::crash_log;
 use crate::game_engine::cities::BuildComplete;
-use crate::game_engine::{Command, Event, Player, RivalMotion, RivalWar};
+use crate::game_engine::{
+    Command, DiplomatAudience, Event, Player, RivalMotion, RivalWar, SabotageNotice, StealOutcome,
+};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Location;
 use crate::model::cartography::generation::MapGenerator;
-#[cfg(test)]
 use crate::model::cities::CityId;
 use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::geography::Terrain;
@@ -42,6 +44,25 @@ pub struct Engine {
     /// round, in order. The TUI announces each with a window once the round
     /// resolves; drained by `drain_build_completions`, never persisted.
     pub(crate) builds: Vec<BuildComplete>,
+    /// Every time the player's own diplomat walked into a rival city during the
+    /// last move, naming the unit and the city. The TUI opens the window that
+    /// offers him a choice; drained by `drain_diplomat_audiences`, never
+    /// persisted.
+    pub(crate) audiences: Vec<DiplomatAudience>,
+    /// The rival city the player's diplomat investigated by the action just
+    /// submitted. The TUI drains it to open that city's window once, as a
+    /// read-only report; drained by `drain_investigation`, never persisted.
+    pub(crate) investigation: Option<CityId>,
+    /// What the player's diplomat's Steal Technology action just produced: the
+    /// advance he took, or the refusal when the rival knew nothing worth
+    /// taking. The TUI drains it to announce either one in a window of its own;
+    /// drained by `drain_steal_outcome`, never persisted.
+    pub(crate) steal: Option<StealOutcome>,
+    /// What the player's diplomat's Industrial Sabotage action just destroyed:
+    /// the improvement and the city it stood in. The TUI drains it to announce
+    /// it in a window of its own; drained by `drain_sabotage_notice`, never
+    /// persisted.
+    pub(crate) sabotage: Option<SabotageNotice>,
 }
 
 impl Default for Engine {
@@ -84,6 +105,10 @@ impl Engine {
             motion: Vec::new(),
             rival_wars: Vec::new(),
             builds: Vec::new(),
+            audiences: Vec::new(),
+            investigation: None,
+            steal: None,
+            sabotage: None,
         }
     }
 
@@ -122,6 +147,10 @@ impl Engine {
     }
 
     pub fn submit(&mut self, command: Command) -> Vec<Event> {
+        // One note per command, from inside the engine rather than from each
+        // call site: a crash report that names the command being run when the
+        // process died is worth more than one that names the screen.
+        crash_log::breadcrumb(format!("command {command:?}"));
         match command {
             Command::Move { unit, direction } => self.move_unit(unit, direction),
             Command::Fortify { unit } => self.fortify(unit),
@@ -135,6 +164,12 @@ impl Engine {
             Command::DeclareWar { opponent } => self.declare_war(opponent),
             Command::MakePeace { opponent } => self.make_peace(opponent),
             Command::SetResearchTarget { advancement } => self.set_research_target(advancement),
+            Command::DiplomatAction { unit, action } => self.perform_diplomat_action(unit, action),
+            Command::WithdrawDiplomat {
+                unit,
+                from,
+                moves_before,
+            } => self.withdraw_diplomat(unit, from, moves_before),
             Command::EndTurn => self.end_turn(),
         }
         std::mem::take(&mut self.events)

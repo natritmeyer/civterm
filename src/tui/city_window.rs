@@ -1,3 +1,4 @@
+use crate::tui::window_geometry::set_cell;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -10,6 +11,7 @@ use crate::game_engine::GameView;
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::geography::SpecialResource;
 use crate::model::units::{UnitId, UnitOrder};
+use crate::tui::window_geometry;
 
 /// The vanilla-yellow backdrop of the city window.
 const VANILLA_BG: Color = Color::Rgb(216, 182, 78);
@@ -79,13 +81,6 @@ fn draw_text(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) -> u16 
     cx
 }
 
-fn set_cell(buf: &mut Buffer, x: u16, y: u16, symbol: &str, style: Style) {
-    if let Some(cell) = buf.cell_mut((x, y)) {
-        cell.set_symbol(symbol);
-        cell.set_style(style);
-    }
-}
-
 /// Fill a rectangle with the vanilla background (and clear any prior paint).
 fn fill_rect(buf: &mut Buffer, rect: Rect) {
     for y in rect.y..rect.bottom() {
@@ -101,22 +96,7 @@ fn fill_rect(buf: &mut Buffer, rect: Rect) {
 /// Draw a single-cell black box border around `rect` in the same character
 /// style as the event log's border.
 fn draw_border(buf: &mut Buffer, rect: Rect) {
-    let x0 = rect.x;
-    let x1 = rect.right() - 1;
-    let y0 = rect.y;
-    let y1 = rect.bottom() - 1;
-    for x in x0..=x1 {
-        set_cell(buf, x, y0, "─", RULE);
-        set_cell(buf, x, y1, "─", RULE);
-    }
-    for y in y0..=y1 {
-        set_cell(buf, x0, y, "│", RULE);
-        set_cell(buf, x1, y, "│", RULE);
-    }
-    set_cell(buf, x0, y0, "┌", RULE);
-    set_cell(buf, x1, y0, "┐", RULE);
-    set_cell(buf, x0, y1, "└", RULE);
-    set_cell(buf, x1, y1, "┘", RULE);
+    window_geometry::draw_border(buf, rect, RULE);
 }
 
 fn hrule(buf: &mut Buffer, y: u16, x0: u16, x1: u16) {
@@ -133,21 +113,19 @@ fn vrule(buf: &mut Buffer, x: u16, y0: u16, y1: u16) {
 
 /// The rectangle the city window occupies over `area`, centred across it.
 pub(crate) fn window_rect(area: Rect) -> Rect {
-    let width = (IDEAL_WIDTH.min(area.width.saturating_sub(2)).max(2)) & !1;
-    let height = (IDEAL_HEIGHT.min(area.height.saturating_sub(2)).max(2)) & !1;
-    Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    }
+    window_geometry::centered(area, IDEAL_WIDTH, IDEAL_HEIGHT)
 }
 
 /// The rectangle of the close button, right-aligned on the population panel's
 /// top row (immediately inside the top border).
 pub(crate) fn close_button_rect(window: Rect) -> Rect {
     Rect {
-        x: window.x + window.width - 1 - CLOSE_WIDTH,
+        // Saturating and never left of the window's edge: the mouse guard
+        // computes this from whatever the last frame recorded.
+        x: window
+            .x
+            .saturating_add(window.width)
+            .saturating_sub(1 + CLOSE_WIDTH),
         y: window.y + 1,
         width: CLOSE_WIDTH,
         height: 1,
@@ -164,22 +142,24 @@ const UNFORTIFY_WIDTH: u16 = 9;
 
 /// The three equal panels of the bottom band (food, units, production).
 pub(crate) fn bottom_panels(window: Rect) -> (Rect, Rect, Rect) {
-    let inner = Rect {
-        x: window.x + 1,
-        y: window.y + 1,
-        width: window.width - 2,
-        height: window.height - 2,
-    };
+    let inner = window_geometry::inner(window);
+    // Every step saturates: the mouse guard lays this out again from whatever
+    // the last frame recorded, and that frame may have been drawn on a
+    // terminal too small to paint the window at all.
     let ih = inner.height;
-    let mid_h = (ih - 2 - 2) / 2;
-    let bottom_top = inner.y + 3 + mid_h + 1;
+    let mid_h = ih.saturating_sub(4) / 2;
+    let bottom_top = inner
+        .y
+        .saturating_add(3)
+        .saturating_add(mid_h)
+        .saturating_add(1);
     let bottom = Rect {
         x: inner.x,
         y: bottom_top,
         width: inner.width,
-        height: ih - (bottom_top - inner.y),
+        height: ih.saturating_sub(bottom_top.saturating_sub(inner.y)),
     };
-    let panel_w = (inner.width - 2) / 3;
+    let panel_w = inner.width.saturating_sub(2) / 3;
     let food = Rect {
         x: bottom.x,
         y: bottom.y,
@@ -187,15 +167,17 @@ pub(crate) fn bottom_panels(window: Rect) -> (Rect, Rect, Rect) {
         height: bottom.height,
     };
     let units = Rect {
-        x: food.right() + 1,
+        x: food.right().saturating_add(1),
         y: bottom.y,
         width: panel_w,
         height: bottom.height,
     };
     let production = Rect {
-        x: units.right() + 1,
+        x: units.right().saturating_add(1),
         y: bottom.y,
-        width: bottom.right() - (units.right() + 1),
+        width: bottom
+            .right()
+            .saturating_sub(units.right().saturating_add(1)),
         height: bottom.height,
     };
     (food, units, production)
@@ -347,12 +329,7 @@ impl<'a> CityWindow<'a> {
     fn draw_minimap(&self, buf: &mut Buffer, city: &City, rect: Rect) {
         let map_w = self.view.width().max(1);
         let map_h = self.view.height().max(1);
-        let inner = Rect {
-            x: rect.x + 1,
-            y: rect.y + 1,
-            width: rect.width - 2,
-            height: rect.height - 2,
-        };
+        let inner = window_geometry::inner(rect);
         // The city sits at the centre of the 5x5 grid; draw every tile with
         // the same two-cell-per-tile paint as the ordinary map.
         for dy in 0..inner.height {
@@ -427,7 +404,7 @@ impl<'a> CityWindow<'a> {
         }
     }
 
-    fn draw_units_panel(&self, buf: &mut Buffer, city: &City, rect: Rect) {
+    fn draw_units_panel(&self, buf: &mut Buffer, city: &City, rect: Rect, foreign: bool) {
         draw_text(buf, rect.x, rect.y, "Units", BOLD);
         let units = self.view.home_units(city.id());
         if units.is_empty() {
@@ -441,8 +418,9 @@ impl<'a> CityWindow<'a> {
             }
             draw_text(buf, rect.x, row, &format!("{:?}", unit.unit_class), TEXT);
             // A fortified unit stowed on the city tile wears a quick-release
-            // button; clicking it restores the unit to the command loop.
-            if unit.order() == UnitOrder::Fortified && unit.location == city.location {
+            // button; clicking it restores the unit to the command loop. A
+            // foreign garrison renders as intel, so it gets no such handle.
+            if !foreign && unit.order() == UnitOrder::Fortified && unit.location == city.location {
                 draw_text(
                     buf,
                     rect.right() - UNFORTIFY_WIDTH,
@@ -460,6 +438,7 @@ impl<'a> CityWindow<'a> {
         city: &City,
         income: &CityIncome,
         rect: Rect,
+        foreign: bool,
     ) {
         let target = city.production_target();
         let label = match target {
@@ -468,13 +447,17 @@ impl<'a> CityWindow<'a> {
             None => "Idle".to_string(),
         };
         draw_text(buf, rect.x, rect.y, &label, BOLD);
-        draw_text(
-            buf,
-            rect.right() - CHANGE_WIDTH,
-            rect.y,
-            CHANGE_TEXT,
-            TEXT.add_modifier(Modifier::UNDERLINED),
-        );
+        // The Change button is the owner's handle on the city's order; what a
+        // foreign city is building is intel, not an order the player may edit.
+        if !foreign {
+            draw_text(
+                buf,
+                rect.right() - CHANGE_WIDTH,
+                rect.y,
+                CHANGE_TEXT,
+                TEXT.add_modifier(Modifier::UNDERLINED),
+            );
+        }
         if let Some(target) = target {
             let cost = target.resource_cost();
             let stored = city.resource_stored();
@@ -525,19 +508,19 @@ impl<'a> Widget for CityWindow<'a> {
         let Some(city) = self.view.city(self.city_id) else {
             return;
         };
-        if city.owner() != self.view.current_player_id() {
+        // A foreign city renders only as the report an investigation bought and
+        // is read-only: the Change and Unfortify affordances are skipped below.
+        // Until then it stays behind the fog of war — the map cannot even
+        // select it, and the investigation flow is the only way one gets here.
+        let foreign = city.owner() != self.view.current_player_id();
+        if foreign && !city.investigated() {
             return;
         }
         let window = window_rect(area);
         if window.width < 4 || window.height < 4 {
             return;
         }
-        let inner = Rect {
-            x: window.x + 1,
-            y: window.y + 1,
-            width: window.width - 2,
-            height: window.height - 2,
-        };
+        let inner = window_geometry::inner(window);
         fill_rect(buf, inner);
         draw_border(buf, window);
 
@@ -611,8 +594,8 @@ impl<'a> Widget for CityWindow<'a> {
         vrule(buf, units.right(), units.y, units.bottom() - 1);
 
         self.draw_food_panel(buf, city, &income, food);
-        self.draw_units_panel(buf, city, units);
-        self.draw_production_panel(buf, city, &income, production);
+        self.draw_units_panel(buf, city, units, foreign);
+        self.draw_production_panel(buf, city, &income, production, foreign);
     }
 }
 

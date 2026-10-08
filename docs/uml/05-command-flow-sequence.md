@@ -25,7 +25,7 @@ sequenceDiagram
     App->>Eng: submit(Move{unit, direction})
 
     Eng->>Mov: move_unit(unit, direction)
-    Mov->>Mov: ensure_can_move()<br/>(owned, moves left,<br/>on-map, medium, peaceful)
+    Mov->>Mov: ensure_can_move()<br/>(owned, moves left,<br/>on-map, medium, peaceful —<br/>a diplomat is admitted to a foreign city)
     alt cannot cross land/sea border
         Mov->>Mov: try_board()<br/>(adjacent friendly transport,<br/>free berth, no move cost)
         Mov->>Gam: meet_contacts_within() + reveal_tiles_at()
@@ -35,7 +35,7 @@ sequenceDiagram
     Mov->>Mov: meet_contacts_within(dest)
     Mov->>Gam: enemies_present?(dest)<br/>(cargo skipped)
 
-    alt enemies present, or a city with<br/>improvements still standing
+    alt enemies present, or a city with<br/>improvements still standing<br/>(a diplomat bound for a foreign city<br/>is on business, not on the attack)
         Mov->>Cbt: resolve_move_combat(attacker, dest)
         alt attacker is a siege engine
             Cbt->>Cbt: bombard_city()<br/>(never meets the garrison:<br/>no fight, no capture)
@@ -55,7 +55,7 @@ sequenceDiagram
                 Cbt->>Gam: eliminate_if_annihilated(attacker owner)
             end
         end
-    else undefended at-war foreign city on dest
+    else undefended at-war foreign city on dest<br/>(a diplomat never takes it: he talks)
         Mov->>Cbt: capture_city(id, unit, dest)
         Cbt->>Gam: disband_units_homed_to() + disband_cargo_of()
         Cbt->>Gam: change_owner(current) + advance +<br/>disembark + spend + reveal
@@ -66,6 +66,7 @@ sequenceDiagram
         Mov->>Gam: reveal_tiles_at(owner, dest)
         Mov->>Gam: sync_cargo(carrier)
         Mov->>Mov: record RivalMotion (owner != human)
+        Mov->>Mov: record_diplomat_audience(unit, dest)<br/>(human diplomat into a foreign city only)
     end
 
     Mov-->>Eng: Ok / MoveError
@@ -73,6 +74,17 @@ sequenceDiagram
     Eng-->>App: Vec~Event~
     App->>App: record_events() (keep last 5)
     App->>App: if 'attacks' → battle_animation<br/>if 'meet for the first time' → Diplomacy(Contact)<br/>if 'occupied by a civilization at peace' → Diplomacy(Movement)
+    App->>App: drain_diplomat_audiences() → the action window
+
+    opt a human diplomat just entered a foreign city
+        App->>Eng: diplomat_options(unit)<br/>→ five rows: label, cost, blocker
+        Human->>App: move the cursor, click OK
+        App->>Eng: submit(Command::DiplomatAction)
+        Eng->>Eng: diplomat_blocker() again —<br/>the snapshot can go stale
+        Eng->>Eng: pay the gold, do the thing, remove the diplomat
+        Eng-->>App: Vec~Event~
+        App->>App: record_events(); window closed either way
+    end
     App->>Scr: draw(&dyn GameView, events, overlays)
     Scr-->>Human: map + stats + focus + event log
 ```
@@ -92,6 +104,20 @@ sequenceDiagram
   would change hands without a shot. With the city stripped and no soldiers on
   it, it falls through to the ordinary capture path instead: it cannot fight
   its way in, but it need not once nothing is left to defend.
+- A diplomat enters a foreign city at peace or at war alike, and the rule
+  lives in three places at once, or it lies in one half of itself:
+  `ensure_peaceful_passage` clears the foreign-occupant flag (admitted at
+  peace), `conducts_business` in `move_unit` keeps him out of the tail above
+  (at 0 attack he would lose every fight and be deleted on arrival), and the
+  capture branch checks `UnitClass::enters_to_conquer` (walking in is not
+  taking). Nobody else is admitted to a peaceful city or spared the capture.
+- The action window is the tail of that last step: the plain move is what opens
+  it, and it opens for the human only. `diplomat_blocker` is consulted twice for
+  one action — once to grey the row out, once to enforce it — because the
+  options are snapshotted when the diplomat arrives and gold can run out while
+  the window is up. A blocked row is not a choice: OK on one neither acts nor
+  closes, so a player who cannot afford anything is not left holding a
+  diplomat in a rival city with no way to spend him.
 - `bombard_city` spends the whole turn on one improvement, `CityWalls` first.
   Stripping the walls removes `CITY_WALLS_DEFENSE_BONUS` from every defender in
   the city, which is the point: a losing attacker is removed outright and no

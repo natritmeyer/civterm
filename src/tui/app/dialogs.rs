@@ -1,7 +1,10 @@
 use super::*;
-use crate::game_engine::{Command, load_game, save_game};
+use crate::game_engine::{
+    Command, DiplomatAction, DiplomatAudience, StealOutcome, load_game, save_game,
+};
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
+use crate::tui::diplomat_actions_dialog;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 const DEFAULT_SAVE_PATH: &str = "civterm.civ";
@@ -141,6 +144,11 @@ impl App {
                 }
             }
         }
+        // The window suppressed the jump to the next unit with budget while it
+        // was up (`modal_open`), so a move that spent the focus and opened it
+        // never armed the advance. Back in the ordinary run loop now, arm it
+        // again: the next unit that can take an order keeps its flash.
+        self.schedule_unit_advance_if_spent();
     }
 
     /// Close the diplomacy window without declaring war; a pending move is
@@ -148,6 +156,10 @@ impl App {
     pub(super) fn diplomacy_cancel(&mut self) {
         self.diplomacy = None;
         self.diplomacy_rect = Cell::new(None);
+        // The window held the auto-advance off (`modal_open`); re-arm it now
+        // that the run loop owns the screen again, so a unit spent before the
+        // dialog opened still hands the flash on to the next one.
+        self.schedule_unit_advance_if_spent();
     }
 
     /// Acknowledge the war-declaration window currently showing: drop the
@@ -161,6 +173,20 @@ impl App {
             self.war_notice = None;
             self.war_notice_rect.set(None);
         }
+    }
+
+    /// Acknowledge the technology-stolen window currently showing: the prize
+    /// has been read, and the window closes.
+    pub(super) fn steal_notice_confirm(&mut self) {
+        self.steal_notice = None;
+        self.steal_notice_rect.set(None);
+    }
+
+    /// Acknowledge the sabotage-report window currently showing: the damage
+    /// has been read, and the window closes.
+    pub(super) fn sabotage_notice_confirm(&mut self) {
+        self.sabotage_notice = None;
+        self.sabotage_notice_rect.set(None);
     }
 
     /// Queue the build-completion windows for a finished round: one per city
@@ -295,6 +321,38 @@ impl App {
         }
         if war_dialog::ok_button_rect(panel).contains((mouse.column, mouse.row).into()) {
             self.war_notice_confirm();
+        }
+    }
+
+    /// A click on the technology-stolen window's OK button acknowledges it.
+    pub(super) fn handle_steal_notice_mouse(&mut self, mouse: MouseEvent) {
+        let Some(panel) = self.steal_notice_rect.get() else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        if steal_dialog::ok_button_rect(panel).contains((mouse.column, mouse.row).into()) {
+            self.steal_notice_confirm();
+        }
+    }
+
+    /// A click on the sabotage-report window's OK button acknowledges it.
+    pub(super) fn handle_sabotage_notice_mouse(&mut self, mouse: MouseEvent) {
+        let Some(panel) = self.sabotage_notice_rect.get() else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        if sabotage_dialog::ok_button_rect(panel).contains((mouse.column, mouse.row).into()) {
+            self.sabotage_notice_confirm();
         }
     }
 
@@ -564,6 +622,183 @@ impl App {
                     input: path.to_string(),
                     error: Some(err.to_string()),
                 });
+            }
+        }
+    }
+
+    /// Offer the player's diplomat the five things he came into the city for.
+    /// The record has already been drained from the engine, so this is the one
+    /// place the window is opened from.
+    pub(super) fn open_diplomat_actions(&mut self, audience: DiplomatAudience) {
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        let options = engine.diplomat_options(audience.unit);
+        self.diplomat_actions = Some(DiplomatActionsState {
+            unit: audience.unit,
+            city_name: audience.city_name,
+            options,
+            cursor: 0,
+            from: audience.from,
+            moves_before: audience.moves_before,
+        });
+    }
+    pub(super) fn handle_diplomat_actions_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.move_diplomat_actions_cursor(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_diplomat_actions_cursor(1),
+            // Enter confirms the row on the cursor, which is where the action
+            // happens; Esc sends the diplomat on his way without spending him,
+            // restoring him to the tile he entered from with his move budget
+            // intact.
+            KeyCode::Enter | KeyCode::Char(' ') => self.diplomat_actions_confirm(),
+            KeyCode::Esc => self.close_diplomat_actions(),
+            _ => {}
+        }
+    }
+    /// Move the diplomat window's cursor by `delta` rows. The five actions are
+    /// a fixed list, so the cursor wraps rather than stopping at the ends.
+    pub(super) fn move_diplomat_actions_cursor(&mut self, delta: isize) {
+        let Some(state) = &mut self.diplomat_actions else {
+            return;
+        };
+        if state.options.is_empty() {
+            return;
+        }
+        let total = state.options.len();
+        state.cursor = if delta > 0 {
+            advance(state.cursor, total)
+        } else {
+            retreat(state.cursor, total)
+        };
+    }
+    /// Confirm the action on the cursor: it happens, and the window closes.
+    ///
+    /// A row the window greys out is not a choice, so confirming it does nothing
+    /// at all — not even close the window. Closing on a refused offer would
+    /// leave the player standing in a rival city with a diplomat they have not
+    /// spent and no way to spend him, which is worse than the situation the
+    /// window was opened to solve.
+    pub(super) fn diplomat_actions_confirm(&mut self) {
+        let Some(state) = &self.diplomat_actions else {
+            return;
+        };
+        let Some(option) = state.options.get(state.cursor).cloned() else {
+            return;
+        };
+        if option.blocked.is_some() {
+            return;
+        }
+        let state = self
+            .diplomat_actions
+            .take()
+            .expect("the window was showing a moment ago");
+        let action = option.action;
+        self.diplomat_actions_rect.set(None);
+        let (investigated, stolen, sabotage) = if let Some(engine) = &mut self.engine {
+            // The engine re-checks the rule rather than trusting the snapshot
+            // this window drew: the window shows the choice as it stood when
+            // the diplomat arrived, and the rules are what is enforced.
+            let events = engine.submit(Command::DiplomatAction {
+                unit: state.unit,
+                action,
+            });
+            let investigated = if action == DiplomatAction::InvestigateCity {
+                engine.drain_investigation()
+            } else {
+                None
+            };
+            let stolen = if action == DiplomatAction::StealTechnology {
+                engine.drain_steal_outcome()
+            } else {
+                None
+            };
+            let sabotage = if action == DiplomatAction::IndustrialSabotage {
+                engine.drain_sabotage_notice()
+            } else {
+                None
+            };
+            self.record_events(events);
+            (investigated, stolen, sabotage)
+        } else {
+            (None, None, None)
+        };
+        // What the investigation bought is a look at the city: open its window
+        // once, over the map, as a read-only report. The window is the moment
+        // of the purchase and is not openable again — the evidence lives in the
+        // `investigated` flag and the event log, not in a reopenable door.
+        if let Some(city) = investigated {
+            self.open_city_window(city);
+        }
+        // A theft that came away empty-handed is no purchase: the rival had no
+        // advance the player could take, so nothing was spent and the diplomat
+        // walks back out the way he came in — the same undo a dismissal performs.
+        if matches!(&stolen, Some(StealOutcome::NothingToSteal { .. }))
+            && let Some(engine) = &mut self.engine
+        {
+            let events = engine.submit(Command::WithdrawDiplomat {
+                unit: state.unit,
+                from: state.from,
+                moves_before: state.moves_before,
+            });
+            self.record_events(events);
+        }
+        // What the theft bought is the advance itself; what it failed to buy is
+        // the refusal, and both are announced in a window of their own.
+        if let Some(stolen_outcome) = stolen {
+            self.steal_notice = Some(stolen_outcome);
+        }
+        // What the sabotage bought is the damage: announce it in a window of
+        // its own — which improvement came down, and in which city.
+        if let Some(sabotaged) = sabotage {
+            self.sabotage_notice = Some(sabotaged);
+        }
+    }
+    /// Dismiss the window without acting. The diplomat stays standing in the
+    /// city, unspent.
+    pub(super) fn close_diplomat_actions(&mut self) {
+        if let Some(state) = self.diplomat_actions.take()
+            && let Some(engine) = &mut self.engine
+        {
+            let events = engine.submit(Command::WithdrawDiplomat {
+                unit: state.unit,
+                from: state.from,
+                moves_before: state.moves_before,
+            });
+            self.record_events(events);
+        }
+        self.diplomat_actions_rect.set(None);
+    }
+    /// A click on the diplomat window: a row moves the cursor onto it, and OK
+    /// confirms whatever row the cursor is then on.
+    pub(super) fn handle_diplomat_actions_mouse(&mut self, mouse: MouseEvent) {
+        let Some(panel) = self.diplomat_actions_rect.get() else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        let position = (mouse.column, mouse.row).into();
+        if diplomat_actions_dialog::ok_button_rect(panel).contains(position) {
+            self.diplomat_actions_confirm();
+            return;
+        }
+        let total = self
+            .diplomat_actions
+            .as_ref()
+            .map_or(0, |state| state.options.len());
+        for index in 0..total {
+            if diplomat_actions_dialog::row_rect(panel, index)
+                .is_some_and(|row| row.contains(position))
+            {
+                let Some(state) = &mut self.diplomat_actions else {
+                    return;
+                };
+                state.cursor = index;
+                return;
             }
         }
     }

@@ -7,6 +7,7 @@ use crate::game_engine::GameView;
 use crate::model::cartography::Tile;
 use crate::model::geography::TerrainImprovement;
 use crate::model::units::{Unit, UnitClass, UnitId, UnitOrder};
+use crate::tui::window_geometry;
 
 /// The vanilla-yellow backdrop shared with the city window.
 const VANILLA_BG: Color = Color::Rgb(216, 182, 78);
@@ -89,6 +90,17 @@ pub fn available_commands(view: &dyn GameView, unit: UnitId) -> Vec<CommandChoic
     }
     match unit.order() {
         UnitOrder::Idle => {
+            // A unit standing in someone else's city has exactly one thing to
+            // do here: walk off it. This is the garrison a diplomat bought —
+            // the square it was bought on is still the rival's — and the
+            // engine refuses the same orders there, so the window does not
+            // offer a row the rule would take back.
+            let in_foreign_city = view
+                .city_at(unit.location.x as usize, unit.location.y as usize)
+                .is_some_and(|city| city.owner() != unit.owner());
+            if in_foreign_city {
+                return Vec::new();
+            }
             let mut commands = vec![CommandChoice::Fortify, CommandChoice::Sentry];
             if unit.unit_class == UnitClass::Settler {
                 let tile = view.tile(unit.location.x as usize, unit.location.y as usize);
@@ -175,13 +187,6 @@ fn draw_text(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) -> u16 
     cx
 }
 
-fn set_cell(buf: &mut Buffer, x: u16, y: u16, symbol: &str, style: Style) {
-    if let Some(cell) = buf.cell_mut((x, y)) {
-        cell.set_symbol(symbol);
-        cell.set_style(style);
-    }
-}
-
 /// Fill a rectangle with the vanilla background (and clear any prior paint).
 fn fill_rect(buf: &mut Buffer, rect: Rect) {
     for y in rect.y..rect.bottom() {
@@ -195,44 +200,17 @@ fn fill_rect(buf: &mut Buffer, rect: Rect) {
 }
 
 fn draw_border(buf: &mut Buffer, rect: Rect) {
-    let x0 = rect.x;
-    let x1 = rect.right() - 1;
-    let y0 = rect.y;
-    let y1 = rect.bottom() - 1;
-    for x in x0..=x1 {
-        set_cell(buf, x, y0, "─", TEXT);
-        set_cell(buf, x, y1, "─", TEXT);
-    }
-    for y in y0..=y1 {
-        set_cell(buf, x0, y, "│", TEXT);
-        set_cell(buf, x1, y, "│", TEXT);
-    }
-    set_cell(buf, x0, y0, "┌", TEXT);
-    set_cell(buf, x1, y0, "┐", TEXT);
-    set_cell(buf, x0, y1, "└", TEXT);
-    set_cell(buf, x1, y1, "┘", TEXT);
+    window_geometry::draw_border(buf, rect, TEXT);
 }
 
 /// The rectangle the picker panel occupies over `area`, centred across it.
 pub fn command_picker_rect(area: Rect) -> Rect {
-    let width = (PICKER_WIDTH.min(area.width.saturating_sub(2)).max(24)) & !1;
-    let height = (PICKER_HEIGHT.min(area.height.saturating_sub(2)).max(8)) & !1;
-    Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    }
+    window_geometry::sized(area, PICKER_WIDTH, PICKER_HEIGHT, 24, 8)
 }
 
 /// The interior of the panel, inside its border.
 fn inner(panel: Rect) -> Rect {
-    Rect {
-        x: panel.x + 1,
-        y: panel.y + 1,
-        width: panel.width - 2,
-        height: panel.height - 2,
-    }
+    window_geometry::inner(panel)
 }
 
 /// The rows rectangle: the title and subtitle sit above it, the Cancel/Save
@@ -250,13 +228,16 @@ pub fn rows_rect(panel: Rect) -> Rect {
 
 /// The y row the Cancel/Save buttons sit on (one above the bottom border).
 fn buttons_y(panel: Rect) -> u16 {
-    panel.y + panel.height - 2
+    window_geometry::button_row_y(panel)
 }
 
 pub fn cancel_button_rect(panel: Rect) -> Rect {
     let inner = inner(panel);
     Rect {
-        x: inner.right() - 17,
+        // Saturating, and never left of the panel's own edge: the mouse guard
+        // computes this from whatever the last frame recorded, and that frame
+        // may have been drawn on a terminal too small to paint the picker.
+        x: inner.right().saturating_sub(17).max(panel.x),
         y: buttons_y(panel),
         width: 6,
         height: 1,
@@ -266,7 +247,7 @@ pub fn cancel_button_rect(panel: Rect) -> Rect {
 pub fn save_button_rect(panel: Rect) -> Rect {
     let inner = inner(panel);
     Rect {
-        x: inner.right() - 6,
+        x: inner.right().saturating_sub(6).max(panel.x),
         y: buttons_y(panel),
         width: 4,
         height: 1,
@@ -353,6 +334,7 @@ mod tests {
     struct FakeView {
         tile: Tile,
         unit: Unit,
+        city: Option<City>,
     }
 
     impl FakeView {
@@ -364,7 +346,13 @@ mod tests {
             FakeView {
                 tile,
                 unit: make_unit(UnitClass::Settler, UnitOrder::Idle),
+                city: None,
             }
+        }
+
+        fn with_city(mut self, city: City) -> Self {
+            self.city = Some(city);
+            self
         }
 
         fn with_unit(mut self, unit: Unit) -> Self {
@@ -407,7 +395,7 @@ mod tests {
             (self.unit.id() == id).then_some(&self.unit)
         }
         fn city_at(&self, _x: usize, _y: usize) -> Option<&City> {
-            None
+            self.city.as_ref()
         }
         fn player_units(&self) -> Vec<&Unit> {
             vec![&self.unit]
@@ -652,6 +640,45 @@ mod tests {
             available_commands(&view, UnitId::new(0)),
             vec![CommandChoice::Fortify, CommandChoice::Sentry],
             "an improving settler with nothing to build still commands"
+        );
+    }
+
+    #[test]
+    fn a_unit_in_a_foreign_city_offers_no_orders() {
+        let view = FakeView::new(Terrain::Grassland)
+            .with_unit(make_unit(UnitClass::Settler, UnitOrder::Idle))
+            .with_city(City::new(
+                "Zululand",
+                Location::new(3, 3),
+                PlayerId::new(1),
+                CityId::new(1),
+            ));
+        assert_eq!(
+            available_commands(&view, UnitId::new(0)),
+            Vec::new(),
+            "a bought garrison's only business on the rival square is leaving"
+        );
+    }
+
+    #[test]
+    fn a_unit_in_its_own_city_offers_the_usual_orders() {
+        let view = FakeView::new(Terrain::Grassland)
+            .with_unit(make_unit(UnitClass::Settler, UnitOrder::Idle))
+            .with_city(City::new(
+                "Home",
+                Location::new(3, 3),
+                PlayerId::new(0),
+                CityId::new(1),
+            ));
+        assert_eq!(
+            available_commands(&view, UnitId::new(0)),
+            vec![
+                CommandChoice::Fortify,
+                CommandChoice::Sentry,
+                CommandChoice::Work(TerrainImprovement::Irrigation),
+                CommandChoice::Work(TerrainImprovement::Road),
+            ],
+            "an own square is born to hold orders"
         );
     }
 

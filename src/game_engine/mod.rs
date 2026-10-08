@@ -4,6 +4,7 @@ pub mod city_income;
 mod combat;
 pub mod command;
 mod diplomacy;
+mod diplomat_actions;
 pub mod engine;
 mod engine_view;
 pub mod errors;
@@ -25,6 +26,9 @@ mod engine_tests;
 pub use cities::BuildComplete;
 pub use city_income::CityIncome;
 pub use command::Command;
+pub use diplomat_actions::{
+    DiplomatAction, DiplomatAudience, DiplomatError, DiplomatOption, SabotageNotice, StealOutcome,
+};
 pub use engine::{DEFAULT_MAP_HEIGHT, DEFAULT_MAP_WIDTH, Engine};
 pub use errors::{MoveError, SettleError};
 pub use event::{Event, EventAbout};

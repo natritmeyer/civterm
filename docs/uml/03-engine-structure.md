@@ -5,8 +5,8 @@ Source: `src/game_engine/*.rs`. Facade `mod.rs` re-exports `Engine`,
 `Exploration`, `CityIncome`, `RivalMotion`, `RivalWar`, `GameOutcome`,
 `DEFAULT_MAP_WIDTH/HEIGHT`. One `impl Engine` block per concern file
 (`movement.rs`, `combat.rs`, `cities.rs`, `diplomacy.rs`, `research.rs`,
-`turns.rs`, `outcome.rs`; the rival AI lives in `rival_player_engine.rs`,
-which owns `RivalMotion` and `RivalWar`).
+`diplomat_actions.rs`, `turns.rs`, `outcome.rs`; the rival AI lives in
+`rival_player_engine.rs`, which owns `RivalMotion` and `RivalWar`).
 
 ```mermaid
 classDiagram
@@ -18,12 +18,16 @@ classDiagram
         +Rng rng
         +Vec~RivalMotion~ motion
         +Vec~RivalWar~ rival_wars
+        +Vec~DiplomatAudience~ audiences
         +new(w, h, first, rest)
         +new_random(w, h, first, rest)
         +with_seed(w, h, first, rest, seed)
         +submit(cmd) Vec~Event~
         +drain_rival_motion() Vec~RivalMotion~
         +drain_rival_wars() Vec~RivalWar~
+        +drain_diplomat_audiences() Vec~DiplomatAudience~
+        +diplomat_options(unit) Vec~DiplomatOption~
+        +record_diplomat_audience(unit, dest)
         +run_rival_turn()
         +game_outcome() Option~GameOutcome~
     }
@@ -201,6 +205,10 @@ classDiagram
     RivalMotion ..> UnitId : unit
     RivalMotion ..> Location : from/to
     RivalWar ..> PlayerId : rival
+    DiplomatAudience ..> UnitId : the diplomat to be spent
+    DiplomatAudience ..> CityId : the city he is standing in
+    DiplomatAudience ..> String : its name, snapshotted
+    DiplomatOption *-- DiplomatAction : 1 action, offered by one of its rows
 ```
 
 ## Dispatch table (`Engine::submit` → concern module)
@@ -212,6 +220,11 @@ classDiagram
 | `FoundCity` / `SetProductionTarget` | `cities.rs` | `Game::add_city`, `auto_assign_work`, `player.can_build` |
 | `DeclareWar` / `MakePeace` | `diplomacy.rs` | `Game::declare_war` / `make_peace` |
 | `SetResearchTarget` | `research.rs` | `Game::can_research`, `set_research_target` |
+| `DiplomatAction` | `diplomat_actions.rs` | `diplomat_blocker` (twice: the window's rows and this call), `advances_to_steal`, `take_captured_city` (`combat.rs`) |
 | `EndTurn` | `turns.rs` + `rival_player_engine.rs` | `advance_to_next_player`, `begin_turn`, `run_rival_turn`, `drain_rival_motion`, `drain_rival_wars` |
 
-`Engine.motion` and `Engine.rival_wars` are transient: rebuilt fresh in `into_loaded`, never serialized into `SaveData`.
+`Engine.motion`, `Engine.rival_wars` and `Engine.audiences` are transient: rebuilt
+fresh in `into_loaded`, never serialized into `SaveData`. What a diplomat
+*learns* is model state instead — `City.investigated` and
+`City.technology_stolen` ride inside `game: Game`, so they survive a round trip
+without `capture`/`into_loaded` knowing anything about them.

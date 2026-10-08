@@ -6,13 +6,15 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::game_engine::Engine;
-#[cfg(test)]
-use crate::game_engine::RivalWar;
 use crate::game_engine::event::Event;
 use crate::game_engine::game::Game;
+#[cfg(test)]
+use crate::game_engine::{DiplomatAudience, RivalWar};
 use crate::model::civilizations::PlayerId;
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
+#[cfg(test)]
+use crate::model::units::UnitId;
 use crate::utils::Rng;
 
 /// The version of the save format the loader writes. Bump it whenever the
@@ -68,6 +70,10 @@ impl SaveData {
                 motion: Vec::new(),
                 rival_wars: Vec::new(),
                 builds: Vec::new(),
+                audiences: Vec::new(),
+                investigation: None,
+                steal: None,
+                sabotage: None,
             },
             competition: self.competition,
             difficulty: self.difficulty,
@@ -410,6 +416,56 @@ mod tests {
         assert!(
             loaded.engine.drain_build_completions().is_empty(),
             "the build queue is rebuilt fresh on load, never replayed"
+        );
+    }
+
+    /// A diplomat's audience is transient for the same reason the build queue
+    /// is: the window it exists to open has either been answered or was never
+    /// seen, so carrying it across a save/load would either re-open a choice the
+    /// player already made or lose one they never did. The record is rebuilt
+    /// fresh, and the diplomat's arrival into the city is history, not news.
+    #[test]
+    fn diplomat_audiences_do_not_survive_save_and_load() {
+        let mut engine = engine();
+        let city = engine
+            .game
+            .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+        engine.audiences.push(DiplomatAudience {
+            unit: UnitId::new(0),
+            city,
+            city_name: "London".to_string(),
+            from: Location::new(1, 2),
+            moves_before: 2,
+        });
+        let data = SaveData::capture(&engine, Competition::new(1), Difficulty::Normal);
+        let restored: SaveData =
+            serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap();
+        let mut loaded = restored.into_loaded().unwrap();
+        assert!(
+            loaded.engine.drain_diplomat_audiences().is_empty(),
+            "the audience queue is rebuilt fresh on load, never replayed"
+        );
+    }
+
+    /// What a diplomat paid for belongs to the city, not to the diplomat: the
+    /// finding must outlive the man who bought it, because he is removed the
+    /// moment he acts. This is also the round trip that would catch the flag
+    /// being added without `#[serde(default)]`, and so breaking every older
+    /// save file.
+    #[test]
+    fn what_a_diplomat_learned_outlives_the_diplomat() {
+        let mut engine = engine();
+        engine
+            .game
+            .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+        engine.game.cities[0].mark_investigated();
+        let data = SaveData::capture(&engine, Competition::new(1), Difficulty::Normal);
+        let restored: SaveData =
+            serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap();
+        let loaded = restored.into_loaded().unwrap();
+        assert!(
+            loaded.engine.game.cities[0].investigated(),
+            "an investigated city stays investigated"
         );
     }
 

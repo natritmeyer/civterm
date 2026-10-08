@@ -59,7 +59,18 @@ impl Engine {
                         && self.game.at_war(owner, c.owner())
                 })
                 .is_some_and(|city| !city.improvements().is_empty());
-        if enemies_present || sieges_city {
+        // A diplomat bound for a foreign city is on business, not on the
+        // attack: he walks in at peace or at war alike, and never trades a
+        // blow with the garrison waiting there.
+        let conducts_business = self
+            .owned_unit(unit)
+            .is_some_and(|u| !u.unit_class.enters_to_conquer())
+            && self
+                .game
+                .cities
+                .iter()
+                .any(|c| c.location == destination && c.owner() != owner);
+        if (enemies_present && !conducts_business) || sieges_city {
             if enemies_present && !sieges {
                 // The step is recorded before the fight resolves: an attacker
                 // repelled here is about to be removed from the game, but the
@@ -87,7 +98,14 @@ impl Engine {
                     && u.owner() != owner
                     && self.game.at_war(owner, u.owner())
             });
-            if !defender_present {
+            // A diplomat does not conquer by walking in: Incite a Revolt and
+            // Subvert both cost gold, and the point of walking into a city is
+            // to be standing in it when you make the offer.
+            if !defender_present
+                && self
+                    .owned_unit(unit)
+                    .is_some_and(|u| u.unit_class.enters_to_conquer())
+            {
                 self.record_rival_step(owner, unit, origin, destination, false);
                 self.capture_city(captured, unit, destination);
                 return;
@@ -95,6 +113,7 @@ impl Engine {
         }
 
         let mut_unit = self.owned_unit_mut(unit).unwrap();
+        let moves_before = mut_unit.moves_remaining();
         mut_unit.location = destination;
         mut_unit.disembark();
         // Stepping off a carrier is free; an ordinary move pays the cost.
@@ -106,6 +125,11 @@ impl Engine {
         // land unit stepping ashore brings nothing with it.
         self.game.sync_cargo(unit);
         self.record_rival_step(owner, unit, origin, destination, false);
+        // A diplomat who has just walked into a rival city is owed a choice:
+        // this is the only place he can be caught standing in one, so it is
+        // where the window's record is made, along with the tile he left and
+        // the budget he carried, for the dismissal that walks him back.
+        self.record_diplomat_audience(unit, origin, destination, moves_before);
         self.events.push(Event::for_player(
             owner,
             if was_transported {
@@ -263,6 +287,19 @@ impl Engine {
                 has_enemy_occupant = true;
             }
         }
+        // A diplomat enters a foreign city whether the two are at peace or at
+        // war: walking in unannounced is what he is for. Anyone else is held
+        // out of a peaceful neighbour's city, and a unit's presence is settled
+        // by the war rather than by asking.
+        if !unit.unit_class.enters_to_conquer()
+            && self
+                .game
+                .cities
+                .iter()
+                .any(|c| c.location == destination && c.owner() != owner)
+        {
+            has_foreign_occupant = false;
+        }
         // A catapult is a siege engine and never strikes at a garrison: it may
         // enter a city tile to bombard the walls, but a tile held down by enemy
         // soldiers is no place for it.
@@ -302,7 +339,38 @@ impl Engine {
             .destination(from, direction)
             .ok_or(MoveError::CannotMoveThere)
     }
+    /// Whether `unit` stands in a city that answers to someone else. A
+    /// garrison bought by Incite a Revolt is bought where it stands — on the
+    /// rival's own square — and a diplomat walks into foreign cities on
+    /// business, so both are outsiders on the tile they occupy.
+    pub(super) fn standing_in_foreign_city(&self, unit: &Unit) -> bool {
+        self.game
+            .cities
+            .iter()
+            .any(|city| city.location == unit.location && city.owner() != unit.owner())
+    }
+
+    /// Refuse an order taken on another civilization's square, if that is
+    /// where `unit` stands, report the refusal, and say whether it happened.
+    /// The square stays the rival's after its garrison has been bought, so
+    /// the bought unit's first duty is to walk off it: no order may be taken
+    /// there, though *releasing* an order it already carries is not taking
+    /// one and stays allowed. `false` for a unit the player does not own, so
+    /// the order handler still gets to report "No such unit" itself.
+    pub(super) fn refuse_foreign_city_order(&mut self, unit: UnitId) -> bool {
+        let index = match self.owned_unit(unit) {
+            Some(found) if self.standing_in_foreign_city(found) => found.id().index(),
+            _ => return false,
+        };
+        self.events.push(Event::new(format!(
+            "Unit {index} must leave the city first"
+        )));
+        true
+    }
     pub(super) fn fortify(&mut self, unit: UnitId) {
+        if self.refuse_foreign_city_order(unit) {
+            return;
+        }
         match self.owned_unit_mut(unit) {
             Some(u) if u.is_transported() => {
                 self.events.push(Event::new(format!(
@@ -323,6 +391,9 @@ impl Engine {
         }
     }
     pub(super) fn sentry(&mut self, unit: UnitId) {
+        if self.refuse_foreign_city_order(unit) {
+            return;
+        }
         match self.owned_unit_mut(unit) {
             Some(u) if u.is_transported() => {
                 self.events.push(Event::new(format!(
@@ -343,6 +414,9 @@ impl Engine {
         }
     }
     pub(super) fn work(&mut self, unit: UnitId, improvement: TerrainImprovement) {
+        if self.refuse_foreign_city_order(unit) {
+            return;
+        }
         // A transported unit has no field agency: it cannot build from aboard.
         if self.owned_unit(unit).is_some_and(|u| u.is_transported()) {
             self.events.push(Event::new(format!(

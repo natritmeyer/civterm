@@ -42,6 +42,41 @@ impl Player {
         self.gold
     }
 
+    /// Pay `cost` gold out of the treasury, reporting whether it was there to
+    /// pay. The treasury has never been spent before this — diplomacy is the
+    /// first thing in the game that costs money outright, and nothing else
+    /// deducts — so this is the one place gold leaves a civilization.
+    pub(super) fn spend_gold(&mut self, cost: u32) -> bool {
+        if self.gold < cost {
+            return false;
+        }
+        self.gold -= cost;
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_gold(&mut self, gold: u32) {
+        self.gold = gold;
+    }
+
+    /// Adopt an advance the civilization did not know, as a stolen technology
+    /// is. Reporting whether it was new keeps a caller from paying for
+    /// something the civilization already has. Crate-visible so `src/tui`'s
+    /// tests can stage a rival worth stealing from.
+    pub(crate) fn add_advancement(&mut self, advancement: Advancement) -> bool {
+        if self.has_advancement(advancement) {
+            return false;
+        }
+        self.advances_made.push(advancement);
+        // A stolen advance settles whatever research was under way for it: the
+        // civilization knows it now, so there is nothing left to work towards.
+        if self.advancement_in_progress == Some(advancement) {
+            self.advancement_in_progress = None;
+            self.research_progress = 0;
+        }
+        true
+    }
+
     /// Whether this civilization has been removed from play. An eliminated
     /// civilization gets no further turns and holds no units or cities.
     pub fn eliminated(&self) -> bool {

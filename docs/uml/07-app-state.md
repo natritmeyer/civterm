@@ -3,8 +3,8 @@
 Source: `src/tui/app/mod.rs` (`Phase`), `setup.rs`, `playing.rs`, `dialogs.rs`,
 `pickers.rs`, `mouse.rs`. `App::draw` matches `phase`; `handle_key` dispatches
 per phase. `Playing` keeps modal priority: save prompt swallows everything, then
-research → war notice → diplomacy → command picker → production picker →
-rival replay.
+research → war notice → build notice → diplomat window → diplomacy →
+command picker → production picker → rival replay.
 
 ```mermaid
 stateDiagram-v2
@@ -44,6 +44,16 @@ stateDiagram-v2
         Exploring --> DiplomacyOpen : first contact / peaceful-block
         DiplomacyOpen --> Exploring : DeclareWar (+retry move) / MakePeace / cancel
 
+        Exploring --> DiplomatWindowOpen : a diplomat walks into a foreign city
+        DiplomatWindowOpen --> Exploring : OK — the chosen action happens, the<br/>diplomat is spent; Esc dismisses and spends nobody.
+        note right of DiplomatWindowOpen
+            A blocked row is not a choice: OK on one
+            neither acts nor closes, so an unspent
+            diplomat is never stranded in a rival city.
+            The window sits above DiplomacyOpen, because
+            both can open on the same step.
+        end note
+
         Exploring --> WarNoticeOpen : EndTurn → drain_rival_wars()
         WarNoticeOpen --> Exploring : Enter / Space / Esc (OK); next queued war reopens
 
@@ -72,6 +82,13 @@ stateDiagram-v2
    A window opened this way parks the notice, as does the `research_dialog`
    when the same round advances a technology; closing the city window, or
    confirming the research choice, resumes the loop.
+7. `diplomat_actions` → the five rows are the only thing the keyboard reaches:
+   Up/Down (or `k`/`j`) move the cursor, Enter/Space confirms it, Esc closes
+   without acting. A confirm submits `Command::DiplomatAction` and the window
+   closes; a *blocked* row refuses to confirm and leaves the window up. It
+   guards ahead of `diplomacy` because first contact with the city's owner can
+   be recorded on the very same step, and the more specific window belongs on
+   top.
 8. `diplomacy` → diplomacy keys only.
 9. `command_picker_open` → command picker keys only.
 10. `production_picker_open` → production picker keys only (floats over the
@@ -81,7 +98,7 @@ stateDiagram-v2
     the window acts on its buttons, a press outside dismisses the window and is
     consumed rather than becoming a drag or a click on the map.
 12. `rival_animation` active → swallows game input (modals still capture), pans camera.
-12. Otherwise: unit keys (`arrows/hjkl/yubn`, `Tab` cycle, `space` sentry-wait),
+13. Otherwise: unit keys (`arrows/hjkl/yubn`, `Tab` cycle, `space` sentry-wait),
     `v` found city, `w` command window, `c` cancel order, `e` toggle events, `?` help,
     `S` save, `Enter` end turn, `Esc` deselect/close.
 

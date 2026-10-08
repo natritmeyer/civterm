@@ -14,3 +14,9 @@ ratatui = "0.30.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 strum = { version = "0.28", features = ["derive"] }
+
+# Crash reporting on unix: signal-hook catches the faults a panic hook cannot
+# see (segfault, abort, stack overflow). Already in the tree via crossterm, so
+# naming it here costs no new build.
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"

@@ -1,5 +1,6 @@
+use crate::game_engine::DiplomatAction;
 use crate::model::advancements::Advancement;
-use crate::model::cartography::Direction;
+use crate::model::cartography::{Direction, Location};
 use crate::model::cities::{CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 use crate::model::geography::TerrainImprovement;
@@ -46,6 +47,16 @@ pub enum Command {
     },
     SetResearchTarget {
         advancement: Advancement,
+    },
+    /// Do one of the things a diplomat came into a rival city for.
+    DiplomatAction {
+        unit: UnitId,
+        action: DiplomatAction,
+    },
+    WithdrawDiplomat {
+        unit: UnitId,
+        from: Location,
+        moves_before: u8,
     },
     EndTurn,
 }

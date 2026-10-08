@@ -54,8 +54,49 @@ impl App {
             }
             return false;
         }
+        // While the technology-stolen window is up it captures the keyboard:
+        // enter, space or esc acknowledges the prize and closes the window.
+        // It sits ahead of the diplomacy window because the theft is newer
+        // news than the first contact that may have made the walk-in possible.
+        if self.steal_notice.is_some() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
+                    self.steal_notice_confirm();
+                }
+                _ => {}
+            }
+            return false;
+        }
+        // While the sabotage-report window is up it captures the keyboard:
+        // enter, space or esc acknowledges the damage and closes the window.
+        // It sits ahead of the diplomacy window like the theft's window does,
+        // because the sabotage is newer news than the first contact that may
+        // have made the walk-in possible.
+        if self.sabotage_notice.is_some() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
+                    self.sabotage_notice_confirm();
+                }
+                _ => {}
+            }
+            return false;
+        }
         // While the diplomacy window is open it captures the keyboard: the
         // player may only choose to declare war or remain at peace.
+        // The diplomat window guards the map while it is up: the actions are
+        // chosen here, and a movement key reaching the map underneath would
+        // walk a unit the player is in the middle of spending into a fight.
+        // It sits ahead of the diplomacy guard because a first contact with the
+        // city's owner can be recorded on the very same step, and the more
+        // specific window belongs on top.
+        if self.diplomat_actions.is_some() {
+            // The window consumes the key and says nothing to the run loop:
+            // `true` means quit, and only the quit dialog's QUIT may say that.
+            // Returning it here made every key in this window — Return to confirm
+            // a row, an arrow to choose one — close the game on the spot.
+            self.handle_diplomat_actions_key(key);
+            return false;
+        }
         if self.diplomacy.is_some() {
             self.handle_diplomacy_key(key);
             return false;
@@ -292,6 +333,9 @@ impl App {
     /// underneath it.
     fn modal_open(&self) -> bool {
         self.research_dialog.is_some()
+            || self.diplomat_actions.is_some()
+            || self.steal_notice.is_some()
+            || self.sabotage_notice.is_some()
             || self.diplomacy.is_some()
             || self.war_notice.is_some()
             || self.command_picker_open
@@ -364,8 +408,16 @@ impl App {
                     }
                 })
         });
+        let mut audience = None;
         if let Some(engine) = &mut self.engine {
             let events = engine.submit(Command::Move { unit, direction });
+            // Drained here, while the engine borrow is the live one: the reads of
+            // `self` below (contact, occupant) would otherwise hold it open.
+            // A diplomat who has just walked into a rival city is offered his
+            // five actions, whether or not the move also drew the war-or-peace
+            // choice — the choice is drawn on top, so the player settles the
+            // diplomacy first and finds the window waiting underneath.
+            audience = engine.drain_diplomat_audiences().pop();
             if events
                 .iter()
                 .any(|event| event.message().contains("attacks"))
@@ -415,6 +467,9 @@ impl App {
             }
             self.record_events(events);
         }
+        if let Some(audience) = audience {
+            self.open_diplomat_actions(audience);
+        }
         self.camera_follow.set(true);
         // A move may be the step that spends the focus: schedule the jump to
         // the next unit with budget after a beat.
@@ -459,6 +514,9 @@ impl App {
     /// map drag is in progress.
     fn hover_blocked(&self) -> bool {
         self.research_dialog_rect.get().is_some()
+            || self.diplomat_actions_rect.get().is_some()
+            || self.steal_notice_rect.get().is_some()
+            || self.sabotage_notice_rect.get().is_some()
             || self.diplomacy_rect.get().is_some()
             || self.war_notice_rect.get().is_some()
             || self.build_notice_rect.get().is_some()

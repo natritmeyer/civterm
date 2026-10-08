@@ -14,6 +14,7 @@ use super::command_picker::{self, CommandPicker};
 use super::competition_selector::CompetitionSelector;
 use super::difficulty_selector::DifficultySelector;
 use super::diplomacy_dialog::{self, DiplomacyChoice, DiplomacyDialog, DiplomacyOrigin};
+use super::diplomat_actions_dialog::{self, DiplomatActionsDialog};
 use super::game_over::GameOver;
 use super::game_over::button_rects as game_over_button_rects;
 use super::game_screen::{
@@ -24,15 +25,20 @@ use super::playing_help::PlayingHelp;
 use super::production_picker::{self, ProductionPicker};
 use super::quit_dialog::{self, QuitChoice};
 use super::research_dialog::{self, ResearchDialog};
+use super::sabotage_dialog::{self, SabotageDialog};
 use super::save_load_prompt::{self, SaveLoadKind, SaveLoadPrompt};
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
 use super::status_bar::StatusBar;
+use super::steal_dialog::{self, StealDialog};
 use super::war_dialog::{self, WarDialog};
+use crate::crash_log;
 use crate::game_engine::event::Event as GameEvent;
-use crate::game_engine::{BuildComplete, Engine, GameOutcome, GameView};
+use crate::game_engine::{
+    BuildComplete, DiplomatOption, Engine, GameOutcome, GameView, SabotageNotice, StealOutcome,
+};
 use crate::model::advancements::Advancement;
-use crate::model::cartography::Direction;
+use crate::model::cartography::{Direction, Location};
 use crate::model::cities::CityId;
 use crate::model::civilizations::{Civilization, PlayerId};
 use crate::model::competition::Competition;
@@ -56,7 +62,7 @@ const UNIT_ADVANCE_DELAY: Duration = Duration::from_millis(300);
 #[cfg(test)]
 pub(crate) const TEST_SEED: u64 = 0x5EED;
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Phase {
     Menu,
     ChoosingCiv,
@@ -96,6 +102,24 @@ struct ResearchDialogState {
     choices: Vec<Advancement>,
     cursor: usize,
     scroll: usize,
+}
+
+/// The diplomat window's live state: the unit waiting to be spent, the city he
+/// is standing in, and the cursor among the five actions on offer. The options
+/// are snapshotted here rather than re-read at confirm time, so the window shows
+/// the choice as it stood when the diplomat arrived — but the engine re-checks
+/// the rule before acting, because a snapshot may go stale. The city's name is
+/// carried rather than its id: the window shows the name, and the engine looks
+/// the city up from the unit that is standing in it. The tile left behind and
+/// the move budget at entry are carried so a dismissal can return the
+/// diplomat exactly to where he stepped off.
+struct DiplomatActionsState {
+    unit: UnitId,
+    city_name: String,
+    options: Vec<DiplomatOption>,
+    cursor: usize,
+    from: Location,
+    moves_before: u8,
 }
 
 /// The war-or-peace dialog's live state: who it is about, why it opened, and
@@ -213,6 +237,21 @@ pub struct App {
     diplomacy: Option<DiplomacyState>,
     /// The last-drawn diplomacy-dialog rectangle, for mouse hit-testing.
     diplomacy_rect: Cell<Option<Rect>>,
+    /// The open diplomat window, if the player's own diplomat has just walked
+    /// into a rival city; it offers the five things he came for.
+    diplomat_actions: Option<DiplomatActionsState>,
+    /// The last-drawn diplomat-window rectangle, for mouse hit-testing.
+    diplomat_actions_rect: Cell<Option<Rect>>,
+    /// The open technology-stolen window, if the player's diplomat has just
+    /// bought an advance away from a rival; it reports which and from whom.
+    steal_notice: Option<StealOutcome>,
+    /// The last-drawn technology-stolen rectangle, for mouse hit-testing.
+    steal_notice_rect: Cell<Option<Rect>>,
+    /// The open sabotage-report window, if the player's diplomat has just
+    /// destroyed a rival improvement; it reports what came down and where.
+    sabotage_notice: Option<SabotageNotice>,
+    /// The last-drawn sabotage-report rectangle, for mouse hit-testing.
+    sabotage_notice_rect: Cell<Option<Rect>>,
     /// The open war-declaration window, if a rival has drawn the sword this
     /// round; its queue holds every declaration still to be acknowledged.
     war_notice: Option<WarNoticeState>,
@@ -312,6 +351,12 @@ impl App {
             event_log: Vec::new(),
             research_dialog: None,
             research_dialog_rect: Cell::new(None),
+            diplomat_actions: None,
+            diplomat_actions_rect: Cell::new(None),
+            steal_notice: None,
+            steal_notice_rect: Cell::new(None),
+            sabotage_notice: None,
+            sabotage_notice_rect: Cell::new(None),
             diplomacy: None,
             diplomacy_rect: Cell::new(None),
             war_notice: None,
@@ -342,11 +387,16 @@ impl App {
         &mut self,
         terminal: &mut Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     ) -> io::Result<()> {
+        let mut last_phase = self.phase;
         loop {
             // The quit dialog's QUIT button is a mouse click, which has no
             // return channel from the event dispatch; leave on the next tick.
             if self.exit_requested {
                 return Ok(());
+            }
+            if self.phase != last_phase {
+                last_phase = self.phase;
+                crash_log::breadcrumb(format!("phase {last_phase:?}"));
             }
             terminal.draw(|frame| Self::draw(frame, self))?;
             self.clear_expired_battle_animation(self.started_at.elapsed());
@@ -356,10 +406,22 @@ impl App {
                 continue;
             }
             match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press && self.handle_key(key) => {
-                    return Ok(());
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    // Breadcrumbs are a crash report's account of what led up
+                    // to it, and for a crash nobody can reproduce on demand the
+                    // last input handled is often the whole story.
+                    crash_log::breadcrumb(format!("key {:?} {:?}", key.code, key.modifiers));
+                    if self.handle_key(key) {
+                        return Ok(());
+                    }
                 }
-                Event::Mouse(mouse) => self.handle_mouse(mouse),
+                Event::Mouse(mouse) => {
+                    crash_log::breadcrumb(format!(
+                        "mouse {:?} at ({}, {})",
+                        mouse.kind, mouse.column, mouse.row
+                    ));
+                    self.handle_mouse(mouse);
+                }
                 _ => {}
             }
         }
@@ -507,12 +569,15 @@ impl App {
                             bar,
                         );
                     }
-                    // The city window floats above the whole screen, centred.
+                    // The city window floats above the whole screen, centred. A
+                    // foreign city renders too, but only once it has been
+                    // investigated — its window is the read-only report the
+                    // diplomat bought, not a door that stays open.
                     match app.selected_city {
                         Some(city_id)
-                            if engine
-                                .city(city_id)
-                                .is_some_and(|city| city.owner() == engine.current_player_id()) =>
+                            if engine.city(city_id).is_some_and(|city| {
+                                city.owner() == engine.current_player_id() || city.investigated()
+                            }) =>
                         {
                             let window = city_window::window_rect(area);
                             // Hand the widget the whole frame area — it centres
@@ -613,6 +678,47 @@ impl App {
                     } else {
                         app.build_notice_rect.set(None);
                     }
+                    // The diplomat window floats over the map when the
+                    // player's own diplomat has walked into a rival city. It is
+                    // drawn after the war-declaration and build-completion
+                    // windows, because those are newer news than a step the
+                    // player took on their own.
+                    if let Some(state) = &app.diplomat_actions {
+                        let rect = diplomat_actions_dialog::dialog_rect(area);
+                        frame.render_widget(
+                            DiplomatActionsDialog::new(
+                                &state.city_name,
+                                &state.options,
+                                state.cursor,
+                            ),
+                            rect,
+                        );
+                        app.diplomat_actions_rect.set(Some(rect));
+                    } else {
+                        app.diplomat_actions_rect.set(None);
+                    }
+                    // The technology window floats on top when a diplomat's Steal Technology
+                    // action has just landed: it reports what came away and
+                    // whose it was, or the refusal and the walk back out —
+                    // newer news than the walk-in that made it possible.
+                    if let Some(outcome) = &app.steal_notice {
+                        let rect = steal_dialog::dialog_rect(area);
+                        frame.render_widget(StealDialog::new(outcome.clone()), rect);
+                        app.steal_notice_rect.set(Some(rect));
+                    } else {
+                        app.steal_notice_rect.set(None);
+                    }
+                    // The sabotage-report window floats on top when a diplomat's
+                    // Industrial Sabotage action has just landed: it reports
+                    // what came down and in which city — newer news than the
+                    // walk-in that made it possible.
+                    if let Some(notice) = &app.sabotage_notice {
+                        let rect = sabotage_dialog::dialog_rect(area);
+                        frame.render_widget(SabotageDialog::new(notice.clone()), rect);
+                        app.sabotage_notice_rect.set(Some(rect));
+                    } else {
+                        app.sabotage_notice_rect.set(None);
+                    }
                     // The command picker floats over the map when the player
                     // has asked the focused unit what it can do: fortify,
                     // stand sentry, begin (or cancel) an improvement.
@@ -675,6 +781,12 @@ impl App {
         }
     }
 
+    /// Dispatch one key press for the current phase. The flag says what the
+    /// run loop should do next, and only one thing means quit: `true` ends the
+    /// game, so a window that merely captures input has to return `false`. A
+    /// guard that returns `true` therefore closes the process on any key it
+    /// sees, which reads exactly like a crash and reports nothing, because
+    /// nothing went wrong — the loop simply ran out of loop.
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         // While the save/load prompt is open it captures the keyboard.
         if self.save_prompt.is_some() {
@@ -732,6 +844,9 @@ fn window_is_open(app: &App) -> bool {
         || app.production_picker_open
         || app.command_picker_open
         || app.research_dialog.is_some()
+        || app.diplomat_actions.is_some()
+        || app.steal_notice.is_some()
+        || app.sabotage_notice.is_some()
         || app.diplomacy.is_some()
         || app.war_notice.is_some()
         // A suspended build notice is not on screen — the city window it opened

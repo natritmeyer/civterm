@@ -1,3 +1,4 @@
+use crate::tui::window_geometry::set_cell;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -5,6 +6,7 @@ use ratatui::widgets::Widget;
 
 use crate::game_engine::GameView;
 use crate::model::cities::{CityId, ProductionTarget};
+use crate::tui::window_geometry;
 
 /// The vanilla-yellow backdrop shared with the city window.
 const VANILLA_BG: Color = Color::Rgb(216, 182, 78);
@@ -140,13 +142,6 @@ fn draw_text(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) -> u16 
     cx
 }
 
-fn set_cell(buf: &mut Buffer, x: u16, y: u16, symbol: &str, style: Style) {
-    if let Some(cell) = buf.cell_mut((x, y)) {
-        cell.set_symbol(symbol);
-        cell.set_style(style);
-    }
-}
-
 /// Fill a rectangle with the vanilla background (and clear any prior paint).
 fn fill_rect(buf: &mut Buffer, rect: Rect) {
     for y in rect.y..rect.bottom() {
@@ -160,44 +155,17 @@ fn fill_rect(buf: &mut Buffer, rect: Rect) {
 }
 
 fn draw_border(buf: &mut Buffer, rect: Rect) {
-    let x0 = rect.x;
-    let x1 = rect.right() - 1;
-    let y0 = rect.y;
-    let y1 = rect.bottom() - 1;
-    for x in x0..=x1 {
-        set_cell(buf, x, y0, "─", TEXT);
-        set_cell(buf, x, y1, "─", TEXT);
-    }
-    for y in y0..=y1 {
-        set_cell(buf, x0, y, "│", TEXT);
-        set_cell(buf, x1, y, "│", TEXT);
-    }
-    set_cell(buf, x0, y0, "┌", TEXT);
-    set_cell(buf, x1, y0, "┐", TEXT);
-    set_cell(buf, x0, y1, "└", TEXT);
-    set_cell(buf, x1, y1, "┘", TEXT);
+    window_geometry::draw_border(buf, rect, TEXT);
 }
 
 /// The rectangle the picker panel occupies over `window`, centred across it.
 pub fn picker_rect(window: Rect) -> Rect {
-    let width = (PICKER_WIDTH.min(window.width.saturating_sub(2)).max(8)) & !1;
-    let height = (PICKER_HEIGHT.min(window.height.saturating_sub(2)).max(8)) & !1;
-    Rect {
-        x: window.x + (window.width - width) / 2,
-        y: window.y + (window.height - height) / 2,
-        width,
-        height,
-    }
+    window_geometry::sized(window, PICKER_WIDTH, PICKER_HEIGHT, 8, 8)
 }
 
 /// The interior of the panel, inside its border.
 fn inner(panel: Rect) -> Rect {
-    Rect {
-        x: panel.x + 1,
-        y: panel.y + 1,
-        width: panel.width - 2,
-        height: panel.height - 2,
-    }
+    window_geometry::inner(panel)
 }
 
 /// The shared rows rectangle: header and column titles sit above it, the
@@ -234,13 +202,16 @@ pub fn column_rects(panel: Rect) -> (Rect, Rect) {
 
 /// The y row the Cancel/Save buttons sit on (one above the bottom border).
 fn buttons_y(panel: Rect) -> u16 {
-    panel.y + panel.height - 2
+    window_geometry::button_row_y(panel)
 }
 
 pub fn cancel_button_rect(panel: Rect) -> Rect {
     let inner = inner(panel);
     Rect {
-        x: inner.right() - 17,
+        // Saturating, and never left of the panel's own edge: the mouse guard
+        // computes this from whatever the last frame recorded, and that frame
+        // may have been drawn on a terminal too small to paint the picker.
+        x: inner.right().saturating_sub(17).max(panel.x),
         y: buttons_y(panel),
         width: 6,
         height: 1,

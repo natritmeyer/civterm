@@ -683,33 +683,48 @@ fn a_captured_city_changes_colour_beneath_the_conquering_unit() {
 }
 
 #[test]
-fn a_selected_idle_unit_in_its_own_city_blinks_the_population_in_time() {
+fn a_selected_idle_unit_in_its_own_city_flashes_by_inverting() {
     // In its own city the unit and the tile share the civilization colour, so
-    // the flash's background toggle alone would be invisible. The city blinks
-    // in time with the unit instead: the unit letter shows on the flag colour
-    // during the on phase, then the population digit shows through on the same
-    // colour during the off phase, so the pulse reads as a letter/digit toggle.
+    // the flash's background toggle alone would be invisible. The tile flashes
+    // by inverting instead: during the on phase `REVERSED` makes the terminal
+    // swap the stored foreground and background, so the pulse is the polarity
+    // flip the open-ground flash is. And the unit's own letter stays the glyph
+    // in both phases — the population digit never takes its place, or the unit
+    // would be hidden by its capital exactly when the player must find it.
     let idle = crate::model::units::UnitId::new(1);
     let view = city_and_unit_view();
 
     let (flashing, flashing_name) = painted_cell(&view, Some(idle), true);
     assert_eq!(flashing.symbol(), "M", "on phase shows the unit letter");
+    assert!(
+        flashing.style().add_modifier.contains(Modifier::REVERSED),
+        "on phase inverts the tile so the flash reads against the own flag"
+    );
+    assert!(
+        flashing.style().add_modifier.contains(Modifier::BOLD),
+        "the letter keeps its emphasis under the inversion"
+    );
     assert_eq!(
         flashing.style().bg,
-        Some(civilization_color(Civilization::English))
+        Some(civilization_color(Civilization::English)),
+        "the stored colours keep the flag background the reversal swaps"
     );
     assert_eq!(flashing_name.as_deref(), Some("London"));
 
     let (dimmed, dimmed_name) = painted_cell(&view, Some(idle), false);
     assert_eq!(
         dimmed.symbol(),
-        "1",
-        "off phase lets the city's population digit show through"
+        "M",
+        "off phase keeps the unit letter too, never the population digit"
+    );
+    assert!(
+        !dimmed.style().add_modifier.contains(Modifier::REVERSED),
+        "off phase restores the plain occupied-city display"
     );
     assert_eq!(
         dimmed.style().bg,
         Some(civilization_color(Civilization::English)),
-        "the blinking city keeps its own civilization colour"
+        "the own city keeps its flag colour at rest"
     );
     assert_eq!(dimmed_name.as_deref(), Some("London"));
 }
@@ -717,8 +732,9 @@ fn a_selected_idle_unit_in_its_own_city_blinks_the_population_in_time() {
 #[test]
 fn a_selected_idle_unit_in_a_foreign_city_blinks_against_the_occupation() {
     // A selected unit standing in an enemy city blinks too: the on phase turns
-    // the occupied tile the unit's own flag colour, then the off phase shows
-    // the conquered city's digit in the defender's colour.
+    // the occupied tile the unit's own flag colour, then the off phase reverts
+    // to the conquered city's colour. The unit's own letter stays the glyph in
+    // both phases, so the man taking the city is never masked by its digit.
     let mut foreign = fake_view();
     foreign.city = Some(crate::model::cities::City::new(
         "Glasgow",
@@ -744,7 +760,7 @@ fn a_selected_idle_unit_in_a_foreign_city_blinks_against_the_occupation() {
     );
 
     let (dimmed, dimmed_name) = painted_cell(&foreign, Some(idle), false);
-    assert_eq!(dimmed.symbol(), "1");
+    assert_eq!(dimmed.symbol(), "M", "off phase keeps the unit letter");
     assert_eq!(
         dimmed.style().bg,
         Some(civilization_color(Civilization::Zulu)),

@@ -52,6 +52,13 @@ impl UnitClass {
     pub fn attacks_units(&self) -> bool {
         !matches!(self, UnitClass::Catapult)
     }
+    /// Whether walking a diplomat into an undefended enemy city takes it. A
+    /// diplomat walks in to talk, not to conquer: taking a city by diplomacy is
+    /// Incite a Revolt or Subvert, and both cost gold. Every other unit takes
+    /// the ground it walks on.
+    pub fn enters_to_conquer(&self) -> bool {
+        !matches!(self, UnitClass::Diplomat)
+    }
     /// Whether this class bombards a city instead of fighting its garrison.
     pub fn sieges(&self) -> bool {
         matches!(self, UnitClass::Catapult)
@@ -74,8 +81,8 @@ impl UnitClass {
             | UnitClass::Phalanx
             | UnitClass::Legion
             | UnitClass::Catapult
-            | UnitClass::Diplomat
             | UnitClass::Caravan => 1,
+            UnitClass::Diplomat => 2,
             UnitClass::Cavalry | UnitClass::Chariot | UnitClass::Knight => 3,
             UnitClass::Trireme | UnitClass::Sail | UnitClass::Frigate => 3,
         }
@@ -169,11 +176,11 @@ mod tests {
             UnitClass::Phalanx,
             UnitClass::Legion,
             UnitClass::Catapult,
-            UnitClass::Diplomat,
             UnitClass::Caravan,
         ] {
             assert_eq!(class.moves(), 1);
         }
+        assert_eq!(UnitClass::Diplomat.moves(), 2);
         for class in [
             UnitClass::Cavalry,
             UnitClass::Chariot,

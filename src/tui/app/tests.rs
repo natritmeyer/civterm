@@ -1,7 +1,8 @@
 use super::*;
-use crate::game_engine::{Command, Player};
+use crate::game_engine::{Command, DiplomatAction, Player, SabotageNotice, StealOutcome};
+use crate::model::advancements::Advancement;
 use crate::model::cartography::Location;
-use crate::model::cities::{City, ProductionTarget};
+use crate::model::cities::{City, CityImprovement, ProductionTarget};
 use crate::model::geography::{Terrain, TerrainImprovement};
 use crate::model::units::UnitOrder;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -30,6 +31,14 @@ fn fire_pending_unit_advance(app: &mut App) {
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+/// Run one draw pass. The floating windows record the rectangle they were drawn
+/// into, and that rectangle is what the mouse and hover guards match against, so
+/// a test that wants either has to draw first.
+fn draw(app: &App) {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| App::draw(frame, app)).unwrap();
 }
 
 fn mouse_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
@@ -499,6 +508,26 @@ fn a_floating_window_holds_the_unit_flash_off() {
         "the diplomacy dialog counts as a window"
     );
     app.diplomacy = None;
+
+    app.steal_notice = Some(StealOutcome::Stolen {
+        advancement: Advancement::Wheel,
+        rival: "Zulu".to_string(),
+    });
+    assert!(
+        window_is_open(&app),
+        "the technology window counts as a window"
+    );
+    app.steal_notice = None;
+
+    app.sabotage_notice = Some(SabotageNotice {
+        improvement: CityImprovement::CityWalls,
+        city_name: "Umgungundlovu".to_string(),
+    });
+    assert!(
+        window_is_open(&app),
+        "the sabotage window counts as a window"
+    );
+    app.sabotage_notice = None;
 
     assert!(
         !window_is_open(&app),
@@ -2599,6 +2628,108 @@ fn declaring_war_from_a_contact_makes_the_rival_attackable() {
     );
 }
 
+/// The contact window is modal, so the move that opened it could not arm the
+/// auto-advance. Closing it returns the player to the ordinary run loop: a
+/// unit spent by that move hands the focus on to the next unit with budget.
+#[test]
+fn closing_a_contact_diplomacy_window_resumes_the_unit_auto_advance() {
+    let Some((mut app, settler_id, direction, _)) = app_with_unknown_neighbor() else {
+        return;
+    };
+    let home = {
+        let engine = app.engine.as_ref().unwrap();
+        engine
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == settler_id)
+            .map(|unit| unit.location)
+            .expect("the settler is still on the map")
+    };
+    let extra = app.engine.as_mut().unwrap().game.spawn_unit(
+        UnitClass::Settler,
+        home,
+        PlayerId::new(0),
+        None,
+    );
+    app.move_selected_unit(direction); // meets the rival, dialog opens
+    assert!(app.diplomacy.is_some(), "first contact prompts diplomacy");
+    assert!(
+        app.unit_advance_deadline.is_none(),
+        "the modal window keeps a pending jump from firing under it"
+    );
+    app.handle_key(key(KeyCode::Enter)); // PEACE
+    assert!(app.diplomacy.is_none(), "the dialog has closed");
+    assert!(
+        app.unit_advance_deadline.is_some(),
+        "closing the window re-arms the jump to the next unit"
+    );
+    fire_pending_unit_advance(&mut app);
+    assert_eq!(
+        app.selected_unit,
+        Some(extra),
+        "the focus lands on the next unit that can still take an order"
+    );
+}
+
+/// Esc closes the contact window the same way confirming peace does: the
+/// ordinary run loop resumes, and a spent focus still jumps on.
+#[test]
+fn escaping_the_contact_diplomacy_window_resumes_the_unit_auto_advance() {
+    let Some((mut app, settler_id, direction, _)) = app_with_unknown_neighbor() else {
+        return;
+    };
+    let home = {
+        let engine = app.engine.as_ref().unwrap();
+        engine
+            .player_units()
+            .into_iter()
+            .find(|unit| unit.id() == settler_id)
+            .map(|unit| unit.location)
+            .expect("the settler is still on the map")
+    };
+    let extra = app.engine.as_mut().unwrap().game.spawn_unit(
+        UnitClass::Settler,
+        home,
+        PlayerId::new(0),
+        None,
+    );
+    app.move_selected_unit(direction);
+    assert!(app.diplomacy.is_some());
+    app.handle_key(key(KeyCode::Esc));
+    assert!(app.diplomacy.is_none(), "Esc dismisses the dialog");
+    assert!(app.unit_advance_deadline.is_some());
+    fire_pending_unit_advance(&mut app);
+    assert_eq!(app.selected_unit, Some(extra));
+}
+
+/// A blocked move never spends the unit, so keeping peace must not hand the
+/// focus on: the settler is still the one to command, and its flash resumes
+/// on its own tile.
+#[test]
+fn peace_from_a_blocked_move_keeps_the_focus_on_the_unspent_unit() {
+    let Some((mut app, settler_id, direction, _, _)) = app_with_adjacent_foreigner() else {
+        return;
+    };
+    app.move_selected_unit(direction);
+    assert!(app.diplomacy.is_some());
+    app.handle_key(key(KeyCode::Enter)); // PEACE
+    assert!(app.diplomacy.is_none());
+    assert!(
+        app.unit_advance_deadline.is_none(),
+        "nothing to advance: the blocked unit still owns the focus"
+    );
+    let unit = app
+        .engine
+        .as_ref()
+        .unwrap()
+        .player_units()
+        .into_iter()
+        .find(|unit| unit.id() == settler_id)
+        .unwrap();
+    assert!(unit.moves_remaining() > 0, "the blocked step spent nothing");
+    assert_eq!(app.selected_unit, Some(settler_id));
+}
+
 #[test]
 fn keeping_peace_from_a_contact_still_blocks_foreign_passage() {
     let Some((mut app, settler_id, direction, meet_tile)) = app_with_unknown_neighbor() else {
@@ -4338,4 +4469,857 @@ fn the_event_log_holds_only_the_players_own_events() {
             );
         }
     }
+}
+
+/// A playing app with the player's diplomat standing on open land, a rival city
+/// on the next land tile east of him, and `gold` in the treasury. The two
+/// civilizations have already met, so the step raises the diplomat window on its
+/// own rather than behind the war-or-peace choice.
+fn app_with_diplomat_beside_a_rival_city(gold: u32) -> (App, UnitId, Direction, Location) {
+    let mut app = app_with_settler();
+    let (diplomat_id, city_tile) = {
+        let engine = app.engine.as_mut().expect("a new game has an engine");
+        let (width, height) = (engine.width(), engine.height());
+        engine.game.players[0].set_gold(gold);
+        engine.game.make_peace(PlayerId::new(0), PlayerId::new(1));
+        let land = |location: Location| {
+            let terrain = engine
+                .tile(location.x as usize, location.y as usize)
+                .terrain;
+            terrain.is_land() && terrain.movement_cost() <= 1
+        };
+        let mut site = None;
+        'search: for y in 0..height {
+            for x in 0..width.saturating_sub(1) {
+                let here = Location::new(x as u16, y as u16);
+                let east = Location::new(x as u16 + 1, y as u16);
+                if land(here) && land(east) {
+                    site = Some((here, east));
+                    break 'search;
+                }
+            }
+        }
+        let (diplomat_tile, city_tile) = site.expect("the pinned world has open ground");
+        engine
+            .game
+            .add_city(PlayerId::new(1), "Umgungundlovu", city_tile);
+        let diplomat =
+            engine
+                .game
+                .spawn_unit(UnitClass::Diplomat, diplomat_tile, PlayerId::new(0), None);
+        (diplomat, city_tile)
+    };
+    (app, diplomat_id, Direction::E, city_tile)
+}
+
+/// Stand a rival garrison in the city (the one thing Incite a Revolt and
+/// Subvert a City need; the diplomat acts alone) and a second unit of the
+/// player's own beside him, so tests can pin that the subvert sweep leaves the
+/// player's units standing.
+fn garrison_the_city_with_both_sides(app: &mut App, city_tile: Location) {
+    let engine = app.engine.as_mut().expect("a new game has an engine");
+    engine.game.spawn_unit(
+        UnitClass::Legion,
+        city_tile,
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+    engine
+        .game
+        .spawn_unit(UnitClass::Legion, city_tile, PlayerId::new(0), None);
+}
+
+/// The action rows the open window is offering, as `(label, cost)`.
+fn offered_actions(app: &App) -> Vec<(String, u32)> {
+    app.diplomat_actions
+        .as_ref()
+        .expect("the diplomat window is open")
+        .options
+        .iter()
+        .map(|option| (option.action.label().to_string(), option.cost))
+        .collect()
+}
+
+/// The treasury, as the window's confirmations will find it.
+fn treasury(app: &App) -> u32 {
+    app.engine
+        .as_ref()
+        .expect("a new game has an engine")
+        .game
+        .players[0]
+        .gold()
+}
+
+/// Where `id` is standing, for tests that want to prove it did not move.
+fn unit_location(app: &App, id: UnitId) -> Location {
+    app.engine
+        .as_ref()
+        .and_then(|engine| engine.unit(id))
+        .expect("the unit is still in the game")
+        .location
+}
+
+/// The rival city, as the window's actions will find it.
+fn rival_city(app: &App) -> crate::model::cities::City {
+    app.engine
+        .as_ref()
+        .expect("a new game has an engine")
+        .game
+        .cities[0]
+        .clone()
+}
+
+#[test]
+fn walking_a_diplomat_into_a_rival_city_offers_him_its_five_actions() {
+    let (mut app, diplomat_id, direction, city_tile) = app_with_diplomat_beside_a_rival_city(500);
+    app.move_unit(diplomat_id, direction);
+    let state = app
+        .diplomat_actions
+        .as_ref()
+        .expect("a diplomat who enters a rival city is given the window");
+    assert_eq!(state.unit, diplomat_id);
+    assert_eq!(state.city_name, "Umgungundlovu");
+    assert_eq!(state.cursor, 0, "the window opens on the first action");
+    assert_eq!(
+        offered_actions(&app),
+        vec![
+            ("Investigate City".to_string(), 25),
+            ("Steal Technology".to_string(), 50),
+            ("Industrial Sabotage".to_string(), 50),
+            ("Incite a Revolt".to_string(), 100),
+            ("Subvert City".to_string(), 200),
+        ],
+        "the five things he came for, with what each costs"
+    );
+    let engine = app.engine.as_ref().unwrap();
+    assert_eq!(
+        engine.units_at(city_tile.x as usize, city_tile.y as usize)[0].id(),
+        diplomat_id,
+        "and he did get inside"
+    );
+}
+
+#[test]
+fn the_diplomat_window_is_modal_so_the_map_waits_beneath_it() {
+    let (mut app, diplomat_id, direction, city_tile) = app_with_diplomat_beside_a_rival_city(500);
+    let settler = app
+        .selected_unit
+        .expect("the starting settler is the focused unit");
+    app.move_unit(diplomat_id, direction);
+    assert!(app.diplomat_actions.is_some());
+
+    // Fortifying the settler is a perfectly ordinary move command, and the
+    // window has nothing to say about it — so if the order goes through, the
+    // map got the key.
+    app.handle_key(key(KeyCode::Char('f')));
+    assert_eq!(
+        app.engine.as_ref().unwrap().unit(settler).unwrap().order(),
+        UnitOrder::Idle,
+        "the map never saw the key"
+    );
+    app.handle_key(key(KeyCode::Char('q')));
+    assert!(
+        matches!(app.phase, Phase::Playing),
+        "and q did not reach the quit path either"
+    );
+    assert_eq!(
+        unit_location(&app, diplomat_id),
+        city_tile,
+        "and the diplomat is still standing where the window found him"
+    );
+}
+
+/// A diplomat dismissed at the door goes back to the tile he came from with his
+/// moves restored, so he is unconsumed and can act again.
+#[test]
+fn a_dismissed_diplomat_can_still_walk_out_of_the_city() {
+    let (mut app, diplomat_id, direction, city_tile) = app_with_diplomat_beside_a_rival_city(500);
+    let outside = unit_location(&app, diplomat_id);
+    app.move_unit(diplomat_id, direction);
+    assert_eq!(unit_location(&app, diplomat_id), city_tile);
+    assert!(app.diplomat_actions.is_some());
+
+    app.handle_key(key(KeyCode::Esc));
+    assert_eq!(
+        unit_location(&app, diplomat_id),
+        outside,
+        "esc returns him to the tile he entered from"
+    );
+    // With moves restored he remains unconsumed and can move again.
+    app.move_unit(diplomat_id, Direction::W);
+    assert_ne!(
+        unit_location(&app, diplomat_id),
+        outside,
+        "moves were restored, so he can step away again"
+    );
+    assert!(
+        app.diplomat_actions.is_none(),
+        "and moving out does not raise the window a second time"
+    );
+}
+
+/// The garrison a diplomat buys is the player's unit the moment the window is
+/// confirmed: Tab cycles to it, and while it still stands on the rival's square
+/// the only thing it may do is walk off — no fortify or sentry is taken there.
+#[test]
+fn a_revolted_garrison_joins_the_tab_cycle_and_must_leave_first() {
+    let (mut app, diplomat_id, direction, city_tile) = app_with_diplomat_beside_a_rival_city(500);
+    garrison_the_city_with_both_sides(&mut app, city_tile);
+    let garrison = {
+        let engine = app.engine.as_ref().expect("a new game has an engine");
+        engine
+            .game
+            .units
+            .iter()
+            .find(|unit| unit.owner() == PlayerId::new(1) && unit.unit_class == UnitClass::Legion)
+            .expect("the rival Legion guards the city")
+            .id()
+    };
+    // A real garrison is a fortify order with its turn spent, which is what
+    // the purchase clears: make it look like one before the diplomat arrives.
+    {
+        let engine = app.engine.as_mut().expect("a new game has an engine");
+        let idx = engine
+            .game
+            .units
+            .iter()
+            .position(|unit| unit.id() == garrison)
+            .expect("the garrison exists");
+        let unit = &mut engine.game.units[idx];
+        unit.fortify();
+        unit.spend_turn();
+    }
+    app.move_unit(diplomat_id, direction);
+    assert!(app.diplomat_actions.is_some(), "the window opens");
+    // The cursor starts on Investigate City; Incite a Revolt is the fourth row.
+    for _ in 0..3 {
+        app.handle_key(key(KeyCode::Down));
+    }
+    app.handle_key(key(KeyCode::Enter));
+    assert!(
+        app.diplomat_actions.is_none(),
+        "the action closes the window"
+    );
+    assert!(
+        app.engine
+            .as_ref()
+            .unwrap()
+            .game
+            .at_war(PlayerId::new(0), PlayerId::new(1)),
+        "a coup is a declaration of war"
+    );
+
+    // The bought soldier is in the player's ordinary cycle: Tab reaches it
+    // just like any own unit with moves to spare.
+    let mut seen = Vec::new();
+    for _ in 0..app.engine.as_ref().unwrap().player_units().len() {
+        app.handle_key(key(KeyCode::Tab));
+        seen.push(app.selected_unit);
+    }
+    assert!(
+        seen.contains(&Some(garrison)),
+        "Tab cycles to the bought garrison: {seen:?}"
+    );
+    assert_eq!(
+        app.engine.as_ref().unwrap().unit(garrison).unwrap().order(),
+        UnitOrder::Idle,
+        "and the rival's fortify order was cancelled"
+    );
+
+    // On the rival's own square the only command is the walk-out: fortify is
+    // refused and nothing is applied.
+    app.selected_unit = Some(garrison);
+    app.handle_key(key(KeyCode::Char('f')));
+    assert_eq!(
+        app.engine.as_ref().unwrap().unit(garrison).unwrap().order(),
+        UnitOrder::Idle,
+        "no fortify is taken on the rival square"
+    );
+    assert!(
+        app.event_log
+            .iter()
+            .any(|event| event.message().contains("must leave the city first")),
+        "the refusal reaches the player's log"
+    );
+
+    // A step west clears the city tile, and the order the square refused is
+    // then taken freely on the unit's own ground.
+    app.handle_key(key(KeyCode::Char('h')));
+    assert_ne!(
+        unit_location(&app, garrison),
+        city_tile,
+        "the first act is the walk-out"
+    );
+    app.handle_key(key(KeyCode::Char('f')));
+    assert_eq!(
+        app.engine.as_ref().unwrap().unit(garrison).unwrap().order(),
+        UnitOrder::Fortified,
+        "off the rival square the order is taken"
+    );
+}
+
+/// The window is a window: it counts as one for the map's idle flash, and it
+/// holds the pointer's move hint off, so no click can land on a tile the player
+/// is not looking at while he is still choosing an action.
+#[test]
+fn the_diplomat_window_counts_as_a_window_and_holds_the_hover_off() {
+    let (mut app, diplomat_id, direction, _) = app_with_diplomat_beside_a_rival_city(500);
+    app.camera.set((0, 0));
+    let settler = app
+        .selected_unit
+        .expect("the starting settler is the focused unit");
+    let (sx, sy) = {
+        let location = unit_location(&app, settler);
+        (location.x as usize, location.y as usize)
+    };
+    app.handle_mouse(mouse_event(
+        MouseEventKind::Moved,
+        LEFT_COLUMN_WIDTH + (sx + 1) as u16 * TILE_WIDTH as u16,
+        sy as u16,
+    ));
+    assert!(
+        app.hovered_move_target(app.engine.as_ref().unwrap())
+            .is_some(),
+        "the pointer hints at a move in plain play"
+    );
+
+    app.move_unit(diplomat_id, direction);
+    draw(&app);
+    assert!(
+        window_is_open(&app),
+        "the diplomat window counts as a window"
+    );
+    // The move armed the follow-camera and the draw recentred it, so put it back
+    // where this test put it: the pointer and the settler have both stayed put,
+    // and so `hover_blocked` is the only thing that can suppress the hint.
+    app.camera.set((0, 0));
+    assert!(
+        app.hovered_move_target(app.engine.as_ref().unwrap())
+            .is_none(),
+        "and it holds the move hint off"
+    );
+
+    app.handle_key(key(KeyCode::Esc));
+    draw(&app);
+    assert!(!window_is_open(&app), "closing it re-arms the flash");
+    // The move set the follow-camera, and the draw recentred it on the focused
+    // unit, so put the camera back where this test put it: the pointer has not
+    // moved, and neither has the settler.
+    app.camera.set((0, 0));
+    assert!(
+        app.hovered_move_target(app.engine.as_ref().unwrap())
+            .is_some(),
+        "and the pointer hints at a move again"
+    );
+}
+
+#[test]
+fn confirming_an_action_spends_the_diplomat_and_closes_the_window() {
+    let (mut app, diplomat_id, direction, _) = app_with_diplomat_beside_a_rival_city(500);
+    app.move_unit(diplomat_id, direction);
+    app.handle_key(key(KeyCode::Enter));
+    assert!(app.diplomat_actions.is_none(), "the window closes");
+    let engine = app.engine.as_ref().unwrap();
+    assert!(
+        engine
+            .player_units()
+            .iter()
+            .all(|unit| unit.id() != diplomat_id),
+        "his mission was the action: the diplomat is spent"
+    );
+    assert_eq!(engine.game.players[0].gold(), 475, "and it cost 25 gold");
+    assert!(
+        rival_city(&app).investigated(),
+        "what he learned outlives him"
+    );
+    assert_eq!(
+        app.selected_city,
+        Some(rival_city(&app).id()),
+        "investigating opens the city's window there and then"
+    );
+    draw(&app);
+}
+
+/// Steal Technology closes the diplomat window and announces its prize: which
+/// advance came away and from which rival, in a window of its own whose OK
+/// button dismisses it.
+#[test]
+fn stealing_a_technology_announces_the_prize_in_its_own_window() {
+    let (mut app, diplomat_id, direction, _) = app_with_diplomat_beside_a_rival_city(500);
+    let rival_name = {
+        let engine = app.engine.as_mut().expect("a new game has an engine");
+        // The player's Alphabet and Masonry make the rival's Mathematics
+        // researchable, so the theft has a takeable prize to come away with.
+        engine.game.players[PlayerId::new(0).index()].add_advancement(Advancement::Alphabet);
+        engine.game.players[PlayerId::new(0).index()].add_advancement(Advancement::Masonry);
+        engine.game.players[PlayerId::new(1).index()].add_advancement(Advancement::Mathematics);
+        engine.game.players[PlayerId::new(1).index()]
+            .civilization
+            .display_name()
+            .to_string()
+    };
+    app.move_unit(diplomat_id, direction);
+    assert!(app.diplomat_actions.is_some(), "the window opens");
+    // The cursor starts on Investigate City; Steal Technology is the second row.
+    app.handle_key(key(KeyCode::Down));
+    app.handle_key(key(KeyCode::Enter));
+    assert!(
+        app.diplomat_actions.is_none(),
+        "confirming the theft closes the diplomat window"
+    );
+    let engine = app.engine.as_ref().expect("a new game has an engine");
+    assert!(
+        engine
+            .player_units()
+            .iter()
+            .all(|unit| unit.id() != diplomat_id),
+        "the theft spends its diplomat"
+    );
+    assert!(
+        engine.game.players[PlayerId::new(0).index()].has_advancement(Advancement::Mathematics),
+        "and the advance comes away"
+    );
+    let notice = app
+        .steal_notice
+        .as_ref()
+        .expect("the theft is announced in a window of its own");
+    assert_eq!(
+        notice,
+        &StealOutcome::Stolen {
+            advancement: Advancement::Mathematics,
+            rival: rival_name,
+        },
+        "it names the prize and its former owner"
+    );
+    assert!(window_is_open(&app), "the announcement counts as a window");
+
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(app.steal_notice, None, "OK acknowledges the prize");
+    assert!(!window_is_open(&app), "and the map is free again");
+}
+
+/// A Steal Technology attempt against a rival that knows nothing the player
+/// could take reports itself in a window of its own and then hands the
+/// diplomat back the way he came in: nothing was bought, so nothing is spent —
+/// not the gold, not the man.
+#[test]
+fn an_empty_theft_reports_itself_and_withdraws_the_diplomat() {
+    let (mut app, diplomat_id, direction, city_tile) = app_with_diplomat_beside_a_rival_city(500);
+    {
+        let engine = app.engine.as_mut().expect("a new game has an engine");
+        // The player already knows everything the rival does, so there is no
+        // takeable advance left in the cup — the refusal is all that remains.
+        let rival_advances = engine.game.players[PlayerId::new(1).index()]
+            .advances_made()
+            .to_vec();
+        for advancement in rival_advances {
+            engine.game.players[PlayerId::new(0).index()].add_advancement(advancement);
+        }
+    }
+    let entrant_tile = Location::new(city_tile.x - 1, city_tile.y);
+    app.move_unit(diplomat_id, direction);
+    assert!(app.diplomat_actions.is_some(), "the action window opens");
+    // The cursor starts on Investigate City; Steal Technology is the second row.
+    app.handle_key(key(KeyCode::Down));
+    app.handle_key(key(KeyCode::Enter));
+    assert!(
+        app.diplomat_actions.is_none(),
+        "confirming the theft closes the action window"
+    );
+    let engine = app.engine.as_ref().expect("a new game has an engine");
+    let diplomat = engine
+        .unit(diplomat_id)
+        .expect("an empty theft spends no diplomat");
+    assert_eq!(
+        diplomat.location, entrant_tile,
+        "and he steps back onto the tile he walked in from"
+    );
+    assert_eq!(
+        engine.game.players[PlayerId::new(0).index()].gold(),
+        500,
+        "and no gold leaves the treasury"
+    );
+    let notice = app
+        .steal_notice
+        .as_ref()
+        .expect("the empty theft reports itself in a window of its own");
+    assert!(
+        matches!(notice, StealOutcome::NothingToSteal { .. }),
+        "the window is the refusal, not a prize"
+    );
+    assert!(window_is_open(&app), "the report counts as a window");
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(app.steal_notice, None, "OK acknowledges the report");
+    assert!(!window_is_open(&app), "and the map is free again");
+}
+
+/// Industrial Sabotage closes the diplomat window and reports the damage in a
+/// window of its own: which improvement came down and in which city, dismissed
+/// by its OK button.
+#[test]
+fn sabotaging_reports_what_was_destroyed_in_its_own_window() {
+    let (mut app, diplomat_id, direction, city_tile) = app_with_diplomat_beside_a_rival_city(500);
+    {
+        let engine = app.engine.as_mut().expect("a new game has an engine");
+        engine
+            .game
+            .cities
+            .iter_mut()
+            .find(|city| city.location == city_tile && city.owner() == PlayerId::new(1))
+            .expect("the rival city exists")
+            .add_improvement(CityImprovement::CityWalls);
+    }
+    app.move_unit(diplomat_id, direction);
+    assert!(app.diplomat_actions.is_some(), "the window opens");
+    // The cursor starts on Investigate City; Industrial Sabotage is the third row.
+    app.handle_key(key(KeyCode::Down));
+    app.handle_key(key(KeyCode::Down));
+    app.handle_key(key(KeyCode::Enter));
+    assert!(
+        app.diplomat_actions.is_none(),
+        "confirming the sabotage closes the diplomat window"
+    );
+    let engine = app.engine.as_ref().expect("a new game has an engine");
+    assert!(
+        engine
+            .player_units()
+            .iter()
+            .all(|unit| unit.id() != diplomat_id),
+        "the sabotage spends its diplomat"
+    );
+    assert!(
+        !engine
+            .game
+            .cities
+            .iter()
+            .find(|city| city.location == city_tile && city.owner() == PlayerId::new(1))
+            .expect("the rival city survives")
+            .improvements()
+            .contains(&CityImprovement::CityWalls),
+        "and the walls come down"
+    );
+    assert_eq!(
+        app.sabotage_notice,
+        Some(SabotageNotice {
+            improvement: CityImprovement::CityWalls,
+            city_name: "Umgungundlovu".to_string(),
+        }),
+        "the window names what was destroyed and where"
+    );
+    assert!(window_is_open(&app), "the report counts as a window");
+
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(app.sabotage_notice, None, "OK acknowledges the damage");
+    assert!(!window_is_open(&app), "and the map is free again");
+}
+
+/// The report is a single showing: a plain map click cannot open an
+/// investigated foreign city's window, because a foreign city stays
+/// unselectable and the investigation flow is the only way one gets in.
+#[test]
+fn an_investigated_foreign_city_window_cannot_be_reopened() {
+    let (mut app, diplomat_id, direction, city_tile) = app_with_diplomat_beside_a_rival_city(500);
+    app.move_unit(diplomat_id, direction);
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        app.selected_city,
+        Some(rival_city(&app).id()),
+        "the investigation opened the intel window"
+    );
+    app.handle_key(key(KeyCode::Esc));
+    assert_eq!(
+        app.selected_city, None,
+        "dismissing it clears the selection"
+    );
+
+    app.map_pane
+        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
+    app.left_click(
+        (LEFT_COLUMN_WIDTH as usize + city_tile.x as usize * TILE_WIDTH) as u16,
+        city_tile.y,
+    );
+    assert_eq!(
+        app.selected_city, None,
+        "a foreign city stays unselectable: the window is not coming back"
+    );
+}
+
+/// A city can be investigated again and again: `investigated` records what was
+/// learned, it never bars the purchase, and a second diplomat walking into the
+/// same city buys the same look — the report opens again, at the same price.
+#[test]
+fn a_second_diplomat_can_investigate_the_same_city() {
+    let (mut app, first, direction, city_tile) = app_with_diplomat_beside_a_rival_city(500);
+    app.move_unit(first, direction);
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        app.selected_city,
+        Some(rival_city(&app).id()),
+        "the first look opens the report window"
+    );
+    app.handle_key(key(KeyCode::Esc));
+    assert_eq!(app.selected_city, None, "dismissing the report clears it");
+    let second = {
+        let engine = app.engine.as_mut().expect("a new game has an engine");
+        engine.game.spawn_unit(
+            UnitClass::Diplomat,
+            Location::new(city_tile.x - 1, city_tile.y),
+            PlayerId::new(0),
+            None,
+        )
+    };
+    app.move_unit(second, direction);
+    assert!(
+        app.diplomat_actions.is_some(),
+        "the second man walking into the same city is offered his five actions"
+    );
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        app.selected_city,
+        Some(rival_city(&app).id()),
+        "and the second purchase opens the report window again"
+    );
+    assert_eq!(
+        treasury(&app),
+        450,
+        "each look is bought at the same 25 gold"
+    );
+    assert!(
+        rival_city(&app).investigated(),
+        "and what the first man learned still stands"
+    );
+}
+
+/// The flag `handle_key` hands back is the run loop's instruction to quit the
+/// process, and every test in this file throws it away. So the one that has to
+/// read it is this: pressing Return to confirm a row used to end the game as
+/// happily as confirming it, and nothing else in the suite would have noticed.
+#[test]
+fn a_key_in_the_diplomat_window_leaves_the_game_running() {
+    let (mut app, diplomat_id, direction, _) = app_with_diplomat_beside_a_rival_city(500);
+    app.move_unit(diplomat_id, direction);
+    assert!(app.diplomat_actions.is_some());
+
+    // A cursor step is ordinary input, and must not end the run either.
+    assert!(
+        !app.handle_key(key(KeyCode::Down)),
+        "moving the cursor must not end the game"
+    );
+    assert!(app.diplomat_actions.is_some(), "and the window stays up");
+    // Back to the first row, which is the one this fixture can afford.
+    app.handle_key(key(KeyCode::Up));
+    assert_eq!(app.diplomat_actions.as_ref().unwrap().cursor, 0);
+
+    assert!(
+        !app.handle_key(key(KeyCode::Enter)),
+        "confirming with Return must not end the game"
+    );
+    assert!(app.diplomat_actions.is_none(), "the action went through");
+    assert_eq!(
+        app.engine.as_ref().unwrap().game.players[0].gold(),
+        475,
+        "and it cost the 25 gold of the row on the cursor"
+    );
+    assert!(matches!(app.phase, Phase::Playing), "and play continues");
+}
+
+#[test]
+fn ok_does_nothing_at_all_for_a_row_the_engine_refuses() {
+    let (mut app, diplomat_id, direction, _) = app_with_diplomat_beside_a_rival_city(0);
+    app.move_unit(diplomat_id, direction);
+    assert!(
+        app.diplomat_actions.as_ref().unwrap().options[0]
+            .blocked
+            .is_some(),
+        "with an empty treasury the first action is out of reach"
+    );
+    app.handle_key(key(KeyCode::Enter));
+    assert!(
+        app.diplomat_actions.is_some(),
+        "confirming it neither acts nor closes the window"
+    );
+    assert_eq!(
+        app.engine.as_ref().unwrap().game.players[0].gold(),
+        0,
+        "and nothing was spent"
+    );
+    assert!(
+        app.engine
+            .as_ref()
+            .unwrap()
+            .player_units()
+            .iter()
+            .any(|unit| unit.id() == diplomat_id),
+        "so the player is left holding an unspent diplomat, which is the point"
+    );
+}
+
+#[test]
+fn esc_closes_the_window_without_spending_the_diplomat() {
+    let (mut app, diplomat_id, direction, _) = app_with_diplomat_beside_a_rival_city(500);
+    app.move_unit(diplomat_id, direction);
+    app.handle_key(key(KeyCode::Esc));
+    assert!(app.diplomat_actions.is_none());
+    assert_eq!(treasury(&app), 500, "nothing was spent");
+    assert!(
+        app.engine
+            .as_ref()
+            .unwrap()
+            .player_units()
+            .iter()
+            .any(|unit| unit.id() == diplomat_id),
+        "and the diplomat is still standing in the city"
+    );
+}
+
+#[test]
+fn the_cursor_wraps_over_the_five_actions() {
+    let (mut app, diplomat_id, direction, _) = app_with_diplomat_beside_a_rival_city(500);
+    app.move_unit(diplomat_id, direction);
+    let cursor = |app: &App| app.diplomat_actions.as_ref().unwrap().cursor;
+    for _ in 0..DiplomatAction::ALL.len() {
+        app.handle_key(key(KeyCode::Down));
+    }
+    assert_eq!(cursor(&app), 0, "down past the last action wraps round");
+    for _ in 0..DiplomatAction::ALL.len() {
+        app.handle_key(key(KeyCode::Up));
+    }
+    assert_eq!(cursor(&app), 0, "and so does up past the first");
+    app.handle_key(key(KeyCode::Down));
+    app.handle_key(key(KeyCode::Down));
+    assert_eq!(cursor(&app), 2);
+    app.handle_key(key(KeyCode::Up));
+    assert_eq!(cursor(&app), 1);
+}
+
+#[test]
+fn a_click_picks_the_row_and_a_second_click_on_ok_acts_on_it() {
+    let (mut app, diplomat_id, direction, city_tile) = app_with_diplomat_beside_a_rival_city(500);
+    garrison_the_city_with_both_sides(&mut app, city_tile);
+    app.move_unit(diplomat_id, direction);
+    draw(&app);
+    let panel = app
+        .diplomat_actions_rect
+        .get()
+        .expect("the drawn window records its rectangle");
+
+    // A click on the Subvert row moves the cursor onto it and does nothing else.
+    let subvert = app
+        .diplomat_actions
+        .as_ref()
+        .unwrap()
+        .options
+        .iter()
+        .position(|option| option.action == DiplomatAction::SubvertCity)
+        .unwrap();
+    let row = diplomat_actions_dialog::row_rect(panel, subvert).expect("the row was drawn");
+    app.handle_mouse(mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        row.x + 1,
+        row.y,
+    ));
+    assert_eq!(
+        app.diplomat_actions.as_ref().unwrap().cursor,
+        subvert,
+        "the click selected the row it landed on"
+    );
+    assert_eq!(
+        rival_city(&app).owner(),
+        PlayerId::new(1),
+        "and acted on nothing"
+    );
+
+    // The OK button is what performs it, and the window closes as it does.
+    let ok = diplomat_actions_dialog::ok_button_rect(panel);
+    app.handle_mouse(mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        ok.x + 1,
+        ok.y,
+    ));
+    assert!(app.diplomat_actions.is_none(), "the window closes");
+    assert_eq!(treasury(&app), 300, "for 200 gold");
+    // A city of population one falls outright rather than changing hands, so
+    // the tile is bare — and the garrison the subversion was aimed at went with
+    // it, while the player's own second unit did not.
+    assert!(
+        app.engine.as_ref().unwrap().game.cities.is_empty(),
+        "the subverted city is gone"
+    );
+    let engine = app.engine.as_ref().unwrap();
+    assert!(
+        engine
+            .game
+            .units
+            .iter()
+            .all(|unit| unit.owner() != PlayerId::new(1)),
+        "and so is the garrison that held it"
+    );
+    assert!(
+        engine
+            .game
+            .units
+            .iter()
+            .any(|unit| unit.owner() == PlayerId::new(0) && unit.unit_class == UnitClass::Legion),
+        "but the player's own unit standing beside him is untouched"
+    );
+}
+
+#[test]
+fn the_open_diplomat_window_draws_over_the_map() {
+    let (mut app, diplomat_id, direction, _) = app_with_diplomat_beside_a_rival_city(500);
+    app.move_unit(diplomat_id, direction);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+    let panel = app
+        .diplomat_actions_rect
+        .get()
+        .expect("the drawn window records its rectangle");
+    let buffer = terminal.backend().buffer();
+
+    let row = diplomat_actions_dialog::row_rect(panel, 0).expect("the first row is drawn");
+    let text: String = (0..row.width - 1)
+        .map(|i| buffer.cell((row.x + 1 + i, row.y)).unwrap().symbol())
+        .collect();
+    assert!(
+        text.contains("Investigate City"),
+        "the window names what it is offering, drew {text:?}"
+    );
+}
+
+/// The bug the player hit: the diplomat window's rectangle is computed on every
+/// frame it is up, and a terminal dragged down to a column or two used to
+/// overflow that subtraction and take the game down mid-decision. Every size a
+/// player can produce by resizing has to draw, and be clickable, without a
+/// panic.
+#[test]
+fn the_diplomat_window_survives_a_terminal_squeezed_to_nothing() {
+    let (mut app, diplomat_id, direction, _) = app_with_diplomat_beside_a_rival_city(500);
+    app.move_unit(diplomat_id, direction);
+    for (width, height) in [(120u16, 40u16), (80, 24), (20, 8), (10, 5), (4, 3), (1, 1)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+        // The click guard works from the rect the draw just recorded, so the
+        // press below is matched against the degenerate panel.
+        for (column, row) in [
+            (0u16, 0u16),
+            (0, height - 1),
+            (width - 1, 0),
+            (width / 2, height / 2),
+        ] {
+            app.handle_mouse(mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+            ));
+            app.handle_mouse(mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                column,
+                row,
+            ));
+        }
+    }
+    // Esc still closes it, so a squeezed terminal cannot trap the player.
+    app.handle_key(key(KeyCode::Esc));
+    assert!(app.diplomat_actions.is_none());
+    draw(&app);
 }

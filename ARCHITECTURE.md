@@ -33,17 +33,26 @@ The crate is split into four top-level modules (`src/lib.rs`):
       draws from: tiles, units, cities, income, research, calendar year.
 - `tui` — the terminal UI: menu/setup flows, dialogs, and the map renderer.
   It sends `Command`s and consumes returned `Event`s; it reads world state
-  only through `GameView`.
+  only through `GameView`. Every floating window takes its size and position
+  from `tui/window_geometry.rs`, which is total over any `Rect` — a terminal
+  is the one input a player controls down to nothing, so the arithmetic that
+  lays a window out has to survive it.
 - `utils` — shared plumbing (`Rng`, `random_seed`), free of game concepts.
+- `crash_log` — the crash reporter: a panic hook, a signal handler, and a
+  breadcrumb ring. A leaf that depends on nothing in the crate, so `game_engine`
+  and `tui` can both leave a trail for it without either of them knowing about
+  the other.
 
 ## Command / event flow
 
 Every action is a `Command` (`game_engine/command.rs`): move, fortify, work,
 found a city, set production, declare war, make peace, set a research target,
-or end the turn. `Engine::submit` dispatches to the concern-specific
-implementation (`movement.rs`, `combat.rs`, `cities.rs`, `diplomacy.rs`,
-`research.rs`, `turns.rs`), appends human-readable `Event::new(...)` messages
-to its internal log, and hands the batch back for the UI to display.
+spend a diplomat on one of his five actions, or end the turn. `Engine::submit`
+dispatches to the concern-specific implementation (`movement.rs`,
+`combat.rs`, `cities.rs`, `diplomacy.rs`, `research.rs`,
+`diplomat_actions.rs`, `turns.rs`), appends human-readable
+`Event::new(...)` messages to its internal log, and hands the batch back for
+the UI to display.
 
 The turn loop (`turns.rs`):
 1. `end_turn` resolves the **whole round** back to the human: each rival

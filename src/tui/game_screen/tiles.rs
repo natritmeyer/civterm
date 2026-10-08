@@ -83,11 +83,12 @@ pub(crate) fn tile_style(explored: bool, terrain: Terrain) -> Style {
 /// `selected_city` outlines the matching city tile; `flashing` gates the
 /// selected-unit flash, which itself must be the selected unit with moves left.
 /// A selected idle unit's tile turns the flag colour for half a second, then
-/// dims; on a city tile the population digit blinks in time with that off
-/// phase, so the pulse stays visible on an own city whose colour already
-/// matches the flag. A unit's letter always wears its owner's banner colour
-/// (bold), except where the tile itself already carries that banner, where
-/// the terrain text colour keeps it legible. `hover_target` (world tile,
+/// dims; on an own city, which already wears that flag, the pulse instead
+/// shows by inverting the tile. In every phase — city tile or open ground —
+/// the unit's own letter is the glyph, so the population digit never masks the
+/// unit the player is hunting. A unit's letter always wears its owner's banner
+/// colour (bold), except where the tile itself already carries that banner,
+/// where the terrain text colour keeps it legible. `hover_target` (world tile,
 /// wrapped horizontally) hatches
 /// that tile with `▓` so the player can see where clicking would move the
 /// selected unit.
@@ -174,21 +175,12 @@ pub(crate) fn paint_tile(
         } else if explored && let Some(u) = visible_unit {
             // A unit always shows its class letter ahead of the terrain, even
             // when it stands on a city tile; the city keeps its name label
-            // beneath. When that unit is the selected one awaiting instruction
-            // in a city, the tile blinks the population digit in time with the
-            // flash's off phase: the city shows through between pulses, so the
-            // pulse is visible even on an own city whose colour matches the
-            // flag flash exactly.
+            // beneath. The selected unit awaiting instruction is no
+            // exception: its letter stays the glyph in both flash phases, or
+            // it would vanish into the city's display exactly when the player
+            // needs to find it.
             let city_name = city.as_ref().map(|c| c.name.clone());
-            let symbol = if selected_idle_here
-                && !flashing
-                && let Some(city) = city
-            {
-                population_text(city.population())
-            } else {
-                first_letter(u.unit_class).to_string()
-            };
-            (symbol, city_name)
+            (first_letter(u.unit_class).to_string(), city_name)
         } else if explored {
             (terrain.as_char().to_string(), None)
         } else {
@@ -233,17 +225,27 @@ pub(crate) fn paint_tile(
 
         // The selected unit awaiting instruction flashes once per second: its
         // tile turns the civilization flag colour then dims back to terrain.
-        // The lookup is gated on `selected_idle_here` (which itself goes
-        // through `view.unit`, not `units_at`, so a unit being ferried aboard
-        // a ship still flashes its carrier's tile; it has no map square of its
-        // own but is still awaiting orders to disembark).
+        // On a foreign city the flag colour visibly replaces the occupier's;
+        // on an own city the tile already wears the flag, so that toggle would
+        // be dead — the tile flashes by inverting instead, the same polarity
+        // flip the open-ground flash is. In both cases the unit's own letter
+        // stays the glyph: the population digit never takes its place, or the
+        // unit would be hidden by its own capital exactly when it must be
+        // found. The lookup is gated on `selected_idle_here` (which itself
+        // goes through `view.unit`, not `units_at`, so a unit being ferried
+        // aboard a ship still flashes its carrier's tile; it has no map square
+        // of its own but is still awaiting orders to disembark).
         if flashing && selected_idle_here {
-            style = style.bg(civilization_color(view.current_player()));
-            // The letter wears its own flag colour, so on this phase the text
-            // falls back to the terrain colour rather than disappearing into
-            // the flag background the flash just painted.
-            if let Some(terrain_fg) = terrain_fg {
-                style = style.fg(terrain_fg);
+            if city.is_some_and(|c| view.civilization_of(c.owner()) == view.current_player()) {
+                style = style.add_modifier(Modifier::REVERSED);
+            } else {
+                style = style.bg(civilization_color(view.current_player()));
+                // The letter wears its own flag colour, so on this phase the
+                // text falls back to the terrain colour rather than
+                // disappearing into the flag background the flash just painted.
+                if let Some(terrain_fg) = terrain_fg {
+                    style = style.fg(terrain_fg);
+                }
             }
         }
 

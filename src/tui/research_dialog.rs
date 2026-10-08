@@ -5,6 +5,7 @@ use ratatui::widgets::Widget;
 
 use crate::game_engine::GameView;
 use crate::model::advancements::Advancement;
+use crate::tui::window_geometry;
 
 /// The vanilla-yellow backdrop shared with the city window.
 const VANILLA_BG: Color = Color::Rgb(216, 182, 78);
@@ -87,13 +88,6 @@ fn draw_text(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) {
     }
 }
 
-fn set_cell(buf: &mut Buffer, x: u16, y: u16, symbol: &str, style: Style) {
-    if let Some(cell) = buf.cell_mut((x, y)) {
-        cell.set_symbol(symbol);
-        cell.set_style(style);
-    }
-}
-
 /// Fill a rectangle with the vanilla background (and clear any prior paint).
 fn fill_rect(buf: &mut Buffer, rect: Rect) {
     for y in rect.y..rect.bottom() {
@@ -107,49 +101,22 @@ fn fill_rect(buf: &mut Buffer, rect: Rect) {
 }
 
 fn draw_border(buf: &mut Buffer, rect: Rect) {
-    let x0 = rect.x;
-    let x1 = rect.right() - 1;
-    let y0 = rect.y;
-    let y1 = rect.bottom() - 1;
-    for x in x0..=x1 {
-        set_cell(buf, x, y0, "─", TEXT);
-        set_cell(buf, x, y1, "─", TEXT);
-    }
-    for y in y0..=y1 {
-        set_cell(buf, x0, y, "│", TEXT);
-        set_cell(buf, x1, y, "│", TEXT);
-    }
-    set_cell(buf, x0, y0, "┌", TEXT);
-    set_cell(buf, x1, y0, "┐", TEXT);
-    set_cell(buf, x0, y1, "└", TEXT);
-    set_cell(buf, x1, y1, "┘", TEXT);
+    window_geometry::draw_border(buf, rect, TEXT);
 }
 
 /// The rectangle the dialog occupies over `area`, centred across it.
 pub fn dialog_rect(area: Rect) -> Rect {
-    let width = (IDEAL_WIDTH.min(area.width.saturating_sub(2)).max(2)) & !1;
-    let height = (IDEAL_HEIGHT.min(area.height.saturating_sub(2)).max(2)) & !1;
-    Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    }
+    window_geometry::centered(area, IDEAL_WIDTH, IDEAL_HEIGHT)
 }
 
 /// The interior of the dialog, inside its border.
 fn inner(panel: Rect) -> Rect {
-    Rect {
-        x: panel.x + 1,
-        y: panel.y + 1,
-        width: panel.width - 2,
-        height: panel.height - 2,
-    }
+    window_geometry::inner(panel)
 }
 
 /// The y row the OK button sits on (one above the bottom border).
 fn buttons_y(panel: Rect) -> u16 {
-    panel.y + panel.height - 2
+    window_geometry::button_row_y(panel)
 }
 
 /// The rectangle of the OK button, right-aligned on the button row.
