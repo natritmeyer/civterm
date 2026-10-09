@@ -19,7 +19,24 @@ pub struct BuildComplete {
     pub target: ProductionTarget,
 }
 
+/// A city of the player's that lost a citizen to starvation during the last
+/// round: the name to show for it. The TUI announces it with a window once the
+/// round resolves back to the human, so the player learns which city is
+/// hungry. The name is snapshotted because the city itself may be gone by the
+/// time the window is answered.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StarvationNotice {
+    pub city_name: String,
+}
+
 impl Engine {
+    /// Drain the record of every city of the player's that starved during the
+    /// last round, in the order the cities were processed. The TUI walks this
+    /// queue one window at a time.
+    pub fn drain_starvations(&mut self) -> Vec<StarvationNotice> {
+        std::mem::take(&mut self.starvations)
+    }
+
     /// Drain the record of every city of the player's that finished building
     /// during the last round, in the order the cities were processed. The TUI
     /// walks this queue one window at a time.
@@ -67,10 +84,11 @@ impl Engine {
         ));
     }
     pub(super) fn set_production(&mut self, city: CityId, target: ProductionTarget) {
+        let owner = self.current_player_index;
         if !self
             .game
             .players
-            .get(self.current_player_index.index())
+            .get(owner.index())
             .is_some_and(|p| p.can_build(target))
         {
             let reason = match target.required_advancement() {
@@ -83,16 +101,39 @@ impl Engine {
             )));
             return;
         }
+        let location = match self
+            .game
+            .cities
+            .iter()
+            .find(|c| c.id() == city && c.owner() == owner)
+        {
+            Some(city) => city.location,
+            None => {
+                self.events.push(Event::new("No such city"));
+                return;
+            }
+        };
+        // A city away from the sea cannot launch a ship: with no water one step
+        // away the vessel would be stranded on land the moment it was built.
+        if matches!(target, ProductionTarget::Unit(class) if class.can_travel_water())
+            && !self.game.borders_water(location)
+        {
+            self.events.push(Event::new(format!(
+                "Cannot produce {:?}: the city is not on the coast",
+                target
+            )));
+            return;
+        }
         match self
             .game
             .cities
             .iter_mut()
-            .find(|c| c.id() == city && c.owner() == self.current_player_index)
+            .find(|c| c.id() == city && c.owner() == owner)
         {
             Some(city) => {
                 city.set_production(target);
                 self.events.push(Event::for_player(
-                    self.current_player_index,
+                    owner,
                     format!("{} begins producing {:?}", city.name, target),
                 ));
             }
@@ -176,6 +217,16 @@ impl Engine {
                     owner,
                     format!("{} is starving", city_name),
                 ));
+            }
+            // A city that actually lost a citizen is announced by a window, and
+            // only the human's own counts: a rival's hungry city is news, not a
+            // decision for the player. A size-one city that cannot lose its last
+            // citizen gets the log line but no window, because no population was
+            // lost to report.
+            if result.lost_citizen && owner == PlayerId::new(0) {
+                self.starvations.push(StarvationNotice {
+                    city_name: city_name.clone(),
+                });
             }
         }
     }

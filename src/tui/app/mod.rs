@@ -29,13 +29,15 @@ use super::sabotage_dialog::{self, SabotageDialog};
 use super::save_load_prompt::{self, SaveLoadKind, SaveLoadPrompt};
 use super::splash::SplashScreen;
 use super::start_confirm::StartConfirm;
+use super::starvation_dialog::{self, StarvationDialog};
 use super::status_bar::StatusBar;
 use super::steal_dialog::{self, StealDialog};
 use super::war_dialog::{self, WarDialog};
 use crate::crash_log;
 use crate::game_engine::event::Event as GameEvent;
 use crate::game_engine::{
-    BuildComplete, DiplomatOption, Engine, GameOutcome, GameView, SabotageNotice, StealOutcome,
+    BuildComplete, DiplomatOption, Engine, GameOutcome, GameView, SabotageNotice, StarvationNotice,
+    StealOutcome,
 };
 use crate::model::advancements::Advancement;
 use crate::model::cartography::{Direction, Location};
@@ -139,6 +141,15 @@ struct DiplomacyState {
 /// closes once the queue empties.
 struct WarNoticeState {
     queue: VecDeque<PlayerId>,
+}
+
+/// The starvation window's live state: every one of the player's cities that
+/// lost a citizen to starvation during the round just resolved, in the order
+/// the cities were processed. Each is announced by its own window;
+/// acknowledging one moves on to the next, and the window closes once the
+/// queue empties.
+struct StarvationNoticeState {
+    queue: VecDeque<StarvationNotice>,
 }
 
 /// The build-completion window's live state: every one of the player's cities
@@ -257,6 +268,11 @@ pub struct App {
     war_notice: Option<WarNoticeState>,
     /// The last-drawn war-declaration rectangle, for mouse hit-testing.
     war_notice_rect: Cell<Option<Rect>>,
+    /// The open starvation window, if one of the player's cities starved this
+    /// round; its queue holds every hungry city still to be announced.
+    starvation_notice: Option<StarvationNoticeState>,
+    /// The last-drawn starvation rectangle, for mouse hit-testing.
+    starvation_notice_rect: Cell<Option<Rect>>,
     /// The open build-completion window, if one of the player's cities
     /// finished building this round; its queue holds every completion still to
     /// be announced.
@@ -361,6 +377,8 @@ impl App {
             diplomacy_rect: Cell::new(None),
             war_notice: None,
             war_notice_rect: Cell::new(None),
+            starvation_notice: None,
+            starvation_notice_rect: Cell::new(None),
             build_notice: None,
             build_notice_rect: Cell::new(None),
             save_prompt: None,
@@ -664,6 +682,19 @@ impl App {
                     } else {
                         app.war_notice_rect.set(None);
                     }
+                    // The starvation window floats over the map when one of the
+                    // player's cities lost a citizen this round. Each hungry
+                    // city is announced by its own window, acknowledged one at
+                    // a time.
+                    if let Some(notice) = &app.starvation_notice
+                        && let Some(starved) = notice.queue.front()
+                    {
+                        let rect = starvation_dialog::dialog_rect(area);
+                        frame.render_widget(StarvationDialog::new(starved.clone()), rect);
+                        app.starvation_notice_rect.set(Some(rect));
+                    } else {
+                        app.starvation_notice_rect.set(None);
+                    }
                     // The build-completion window floats over the map when one of the
                     // player's cities finished building this round. It is
                     // suspended while the player is inside a city window it
@@ -849,6 +880,7 @@ fn window_is_open(app: &App) -> bool {
         || app.sabotage_notice.is_some()
         || app.diplomacy.is_some()
         || app.war_notice.is_some()
+        || app.starvation_notice.is_some()
         // A suspended build notice is not on screen — the city window it opened
         // is — so only a notice actually showing counts as a window.
         || app.current_build_notice().is_some()

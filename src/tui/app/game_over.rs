@@ -40,6 +40,8 @@ impl App {
         self.steal_notice_rect = Cell::new(None);
         self.sabotage_notice = None;
         self.sabotage_notice_rect = Cell::new(None);
+        self.starvation_notice = None;
+        self.starvation_notice_rect = Cell::new(None);
         self.diplomacy = None;
         self.diplomacy_rect = Cell::new(None);
         self.command_picker_open = false;

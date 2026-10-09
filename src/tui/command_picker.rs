@@ -101,7 +101,13 @@ pub fn available_commands(view: &dyn GameView, unit: UnitId) -> Vec<CommandChoic
             if in_foreign_city {
                 return Vec::new();
             }
-            let mut commands = vec![CommandChoice::Fortify, CommandChoice::Sentry];
+            let mut commands = Vec::new();
+            // A ship cannot fortify on open water, but it may still stand
+            // sentry: only the land classes get the fortify row.
+            if unit.unit_class.can_fortify() {
+                commands.push(CommandChoice::Fortify);
+            }
+            commands.push(CommandChoice::Sentry);
             if unit.unit_class == UnitClass::Settler {
                 let tile = view.tile(unit.location.x as usize, unit.location.y as usize);
                 commands.extend(
@@ -578,6 +584,17 @@ mod tests {
             .map(|i| buf.cell((rows.x + i, rows.y)).unwrap().symbol())
             .collect();
         assert_eq!(first_row.trim(), "Unfortify", "row was {first_row:?}");
+    }
+
+    #[test]
+    fn an_idle_ship_offers_sentry_but_not_fortify() {
+        let view =
+            FakeView::new(Terrain::Ocean).with_unit(make_unit(UnitClass::Trireme, UnitOrder::Idle));
+        assert_eq!(
+            available_commands(&view, UnitId::new(0)),
+            vec![CommandChoice::Sentry],
+            "a ship may stand sentry but cannot fortify on open water"
+        );
     }
 
     #[test]

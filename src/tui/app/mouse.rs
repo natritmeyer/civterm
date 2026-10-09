@@ -68,6 +68,12 @@ impl App {
             self.handle_war_notice_mouse(mouse);
             return;
         }
+        // The starvation window floats above the map: its OK button is the only
+        // thing a click can act on until the queue empties.
+        if self.starvation_notice_rect.get().is_some() {
+            self.handle_starvation_notice_mouse(mouse);
+            return;
+        }
         // The build-completion window floats above the map: its buttons are the
         // only thing a click can act on until the queue empties.
         if self.build_notice_rect.get().is_some() {

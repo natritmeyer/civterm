@@ -175,6 +175,19 @@ impl App {
         }
     }
 
+    /// Acknowledge the starvation window currently showing: drop the announced
+    /// city and close the window once no hungry city remains.
+    pub(super) fn starvation_notice_confirm(&mut self) {
+        let Some(notice) = &mut self.starvation_notice else {
+            return;
+        };
+        notice.queue.pop_front();
+        if notice.queue.is_empty() {
+            self.starvation_notice = None;
+            self.starvation_notice_rect.set(None);
+        }
+    }
+
     /// Acknowledge the technology-stolen window currently showing: the prize
     /// has been read, and the window closes.
     pub(super) fn steal_notice_confirm(&mut self) {
@@ -321,6 +334,22 @@ impl App {
         }
         if war_dialog::ok_button_rect(panel).contains((mouse.column, mouse.row).into()) {
             self.war_notice_confirm();
+        }
+    }
+
+    /// A click on the starvation window's OK button acknowledges it.
+    pub(super) fn handle_starvation_notice_mouse(&mut self, mouse: MouseEvent) {
+        let Some(panel) = self.starvation_notice_rect.get() else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        if starvation_dialog::ok_button_rect(panel).contains((mouse.column, mouse.row).into()) {
+            self.starvation_notice_confirm();
         }
     }
 

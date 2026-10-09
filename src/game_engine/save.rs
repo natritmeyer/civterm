@@ -70,6 +70,7 @@ impl SaveData {
                 motion: Vec::new(),
                 rival_wars: Vec::new(),
                 builds: Vec::new(),
+                starvations: Vec::new(),
                 audiences: Vec::new(),
                 investigation: None,
                 steal: None,

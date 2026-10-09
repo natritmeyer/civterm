@@ -23,7 +23,7 @@ mod turns;
 #[cfg(test)]
 mod engine_tests;
 
-pub use cities::BuildComplete;
+pub use cities::{BuildComplete, StarvationNotice};
 pub use city_income::CityIncome;
 pub use command::Command;
 pub use diplomat_actions::{

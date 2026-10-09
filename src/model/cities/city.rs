@@ -164,7 +164,15 @@ impl City {
             grew = true;
         }
 
+        // A city with an empty granary and a food deficit is starving. The last
+        // citizen is never taken — a city cannot starve out of existence — so a
+        // size-one city needs the warning but simply survives on nothing, and
+        // `lost_citizen` stays false.
         let starving = net_food < 0 && self.food == 0;
+        let lost_citizen = starving && self.population > 1;
+        if lost_citizen {
+            self.shrink();
+        }
         let completed = match self.production {
             Some(target) if self.resource_stored >= target.resource_cost() => {
                 self.resource_stored = 0;
@@ -185,6 +193,7 @@ impl City {
             grew,
             completed,
             starving,
+            lost_citizen,
         }
     }
 
@@ -514,6 +523,41 @@ mod tests {
         let raised = city.tick(3, 1);
         assert!(raised.grew);
         assert_eq!(city.population(), 2);
+    }
+
+    #[test]
+    fn a_starving_city_loses_a_citizen() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        for _ in 0..3 {
+            city.grow();
+        }
+        assert_eq!(city.population(), 4);
+        // Pop 4 consumes 8 food; an income of 6 leaves a deficit with an empty
+        // granary, so a citizen starves.
+        let tick = city.tick(6, 1);
+        assert!(tick.starving);
+        assert!(tick.lost_citizen);
+        assert_eq!(city.population(), 3);
+        assert_eq!(city.food(), 0);
+    }
+
+    #[test]
+    fn a_size_one_city_cannot_starve_out_of_existence() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        let tick = city.tick(0, 0);
+        assert!(tick.starving, "a one-city still reports the deficit");
+        assert!(!tick.lost_citizen, "the last citizen is never taken");
+        assert_eq!(city.population(), 1);
     }
 
     #[test]

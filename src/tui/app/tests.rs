@@ -3681,6 +3681,57 @@ fn a_rival_attack_replays_as_a_battle_frame() {
 }
 
 #[test]
+fn a_city_that_starved_is_announced_by_its_own_window() {
+    let mut app = App::new();
+    at_start(&mut app);
+    app.phase = Phase::Playing;
+    let mut engine = Engine::new(
+        5,
+        3,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    // A mountain centre yields no food, so a size-two city starves each round
+    // and loses a citizen.
+    engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Mountain;
+    let mut london = City::new(
+        "London",
+        Location::new(2, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    london.grow();
+    engine.game.cities.push(london);
+    // A rival city keeps the round from ending on the human's turn alone.
+    engine.game.cities.push(City::new(
+        "Zimbabwe",
+        Location::new(0, 0),
+        PlayerId::new(1),
+        CityId::new(1),
+    ));
+    app.engine = Some(engine);
+
+    app.end_turn();
+
+    assert!(
+        app.starvation_notice.is_some(),
+        "the lost citizen is announced by a window"
+    );
+    assert!(window_is_open(&app), "which counts as a window");
+    assert_eq!(
+        app.engine.as_ref().unwrap().player_cities()[0].population(),
+        1,
+        "and the citizen is actually lost"
+    );
+
+    app.handle_key(key(KeyCode::Enter));
+    assert!(
+        app.starvation_notice.is_none(),
+        "OK acknowledges the loss and closes the window"
+    );
+}
+
+#[test]
 fn a_rival_step_leaving_sight_is_replayed() {
     // The human has spied the starting tile (around (4,1)) but nothing the
     // legion walks onto, so the single step is shown vanishing into the fog.

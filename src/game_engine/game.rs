@@ -1,12 +1,13 @@
 use crate::game_engine::CityIncome;
 use crate::game_engine::player::Player;
 use crate::model::advancements::Advancement;
-use crate::model::cartography::{Location, Map};
+use crate::model::cartography::{Direction, Location, Map};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 use crate::model::geography::SpecialResource;
 use crate::model::units::{Unit, UnitClass, UnitId};
 use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Game {
@@ -292,6 +293,17 @@ impl Game {
         self.players[owner.index()].advance_research(research)
     }
 
+    /// Whether `location` stands on the coast: at least one of its eight
+    /// neighbours is water. A city founded here can launch ocean-going units,
+    /// because a ship built at the city can step straight onto the sea.
+    pub fn borders_water(&self, location: Location) -> bool {
+        Direction::iter().any(|direction| {
+            self.map
+                .destination(location, direction)
+                .is_some_and(|neighbour| self.map.tile_at(neighbour).terrain.is_water())
+        })
+    }
+
     /// The Chebyshev radius-2 footprint around a city (the 21 fog-reveal tiles),
     /// wrapped east/west and clamped north/south.
     pub fn city_footprint(&self, location: Location) -> Vec<Location> {
@@ -368,6 +380,7 @@ impl Game {
             grew: tick.grew,
             completed: tick.completed,
             starving: tick.starving,
+            lost_citizen: tick.lost_citizen,
         }
     }
 }
@@ -379,6 +392,7 @@ pub(crate) struct CityProcess {
     pub grew: bool,
     pub completed: Option<ProductionTarget>,
     pub starving: bool,
+    pub lost_citizen: bool,
 }
 
 #[cfg(test)]
@@ -1009,6 +1023,22 @@ mod tests {
         assert!(footprint.contains(&Location::new(4, 2)));
         assert!(footprint.contains(&Location::new(1, 2)));
         assert_eq!(footprint.len(), 21);
+    }
+
+    #[test]
+    fn borders_water_is_true_only_beside_ocean() {
+        let mut game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
+        // The map is ocean by default, so a lone land tile sits on the coast.
+        game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
+        assert!(game.borders_water(Location::new(1, 1)));
+
+        // Fill the tile and all eight neighbours: now it is inland.
+        for y in 2..=4 {
+            for x in 2..=4 {
+                game.map.tile_at_mut(Location::new(x, y)).terrain = Terrain::Grassland;
+            }
+        }
+        assert!(!game.borders_water(Location::new(3, 3)));
     }
 
     #[test]

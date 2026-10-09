@@ -335,6 +335,41 @@ fn fortify_command_orders_the_unit_and_reports_an_event() {
 }
 
 #[test]
+fn fortifying_a_ship_at_sea_is_refused() {
+    let mut engine = ferry_map();
+    let trireme = engine.game.spawn_unit(
+        UnitClass::Trireme,
+        Location::new(1, 1),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    let moves = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == trireme)
+        .unwrap()
+        .moves_remaining();
+    let events = engine.submit(Command::Fortify { unit: trireme });
+    assert_eq!(
+        events[0].message(),
+        format!("Unit {} cannot fortify at sea", trireme.index())
+    );
+    let ship = engine
+        .game
+        .units
+        .iter()
+        .find(|unit| unit.id() == trireme)
+        .unwrap();
+    assert_eq!(ship.order(), UnitOrder::Idle, "the order was not taken");
+    assert_eq!(
+        ship.moves_remaining(),
+        moves,
+        "a refused fortify spends nothing"
+    );
+}
+
+#[test]
 fn sentry_command_orders_the_unit() {
     let mut engine = test_engine();
     engine.submit(Command::Sentry {
@@ -3247,6 +3282,85 @@ fn production_choices_hide_improvements_the_city_already_owns() {
     assert!(engine.production_choices(york).contains(&barracks));
 }
 
+/// Two English cities with BronzeWorking discovered: `London` on a lone land
+/// tile in the sea (coastal) and `York` hemmed in by land on every side
+/// (inland). Returns the engine and both city ids.
+fn coastal_and_inland_cities() -> (Engine, CityId, CityId) {
+    let mut engine = Engine::new(7, 7, Player::new(Civilization::English), Vec::new());
+    // London sits alone in the ocean, so all eight of its neighbours are water.
+    engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
+    // York's tile and all eight neighbours are land, so it is inland.
+    for y in 2..=4 {
+        for x in 2..=4 {
+            engine.game.map.tile_at_mut(Location::new(x, y)).terrain = Terrain::Grassland;
+        }
+    }
+    for location in [Location::new(1, 1), Location::new(3, 3)] {
+        engine.game.spawn_unit(
+            UnitClass::Settler,
+            location,
+            PlayerId::new(0),
+            Some(CityId::new(0)),
+        );
+    }
+    engine.submit(Command::FoundCity {
+        unit: UnitId::new(0),
+        name: "London".to_string(),
+    });
+    engine.submit(Command::FoundCity {
+        unit: UnitId::new(1),
+        name: "York".to_string(),
+    });
+    // BronzeWorking opens the Trireme, so the only thing keeping it off a
+    // list is the coastline.
+    engine
+        .game
+        .set_research_target(PlayerId::new(0), Advancement::BronzeWorking);
+    engine.game.players[0].advance_research(u32::MAX);
+    let london = engine.game.cities[0].id();
+    let york = engine.game.cities[1].id();
+    (engine, london, york)
+}
+
+#[test]
+fn production_choices_offer_ocean_going_units_only_on_the_coast() {
+    let (engine, london, york) = coastal_and_inland_cities();
+    let trireme = ProductionTarget::Unit(UnitClass::Trireme);
+    assert!(
+        engine.production_choices(london).contains(&trireme),
+        "a coastal city can launch a ship"
+    );
+    assert!(
+        !engine.production_choices(york).contains(&trireme),
+        "an inland city cannot, so it is offered none"
+    );
+    // Every other unit is offered at both: the rule is the ship's alone.
+    let militia = ProductionTarget::Unit(UnitClass::Militia);
+    assert!(engine.production_choices(london).contains(&militia));
+    assert!(engine.production_choices(york).contains(&militia));
+}
+
+#[test]
+fn setting_production_rejects_a_ship_in_an_inland_city() {
+    let (mut engine, _london, york) = coastal_and_inland_cities();
+    let events = engine.submit(Command::SetProductionTarget {
+        city: york,
+        target: ProductionTarget::Unit(UnitClass::Trireme),
+    });
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message() == "Cannot produce Unit(Trireme): the city is not on the coast"),
+        "got {:?}",
+        events.iter().map(|e| e.message()).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        engine.game.cities[1].production_target(),
+        None,
+        "and nothing is queued"
+    );
+}
+
 fn research_engine() -> Engine {
     let mut engine = Engine::new(3, 2, Player::new(Civilization::English), Vec::new());
     engine.game.map.tile_at_mut(Location::new(1, 1)).terrain = Terrain::Grassland;
@@ -3376,6 +3490,35 @@ fn a_city_starves_without_food() {
         "expected starvation, got {:?}",
         events.iter().map(|e| e.message()).collect::<Vec<_>>()
     );
+    assert_eq!(engine.game.cities[0].population(), 4, "a citizen starved");
+    let notices = engine.drain_starvations();
+    assert_eq!(notices.len(), 1, "the human is told about it");
+    assert_eq!(notices[0].city_name, "London");
+    assert!(
+        engine.drain_starvations().is_empty(),
+        "the record is one-shot"
+    );
+}
+
+#[test]
+fn a_size_one_city_is_not_announced_as_starving() {
+    let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Mountain;
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(2, 2),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    engine.submit(Command::FoundCity {
+        unit: UnitId::new(0),
+        name: "London".to_string(),
+    });
+    // A lone mountain city starves, but it cannot lose its last citizen, so no
+    // population is lost and no window belongs over the map.
+    engine.submit(Command::EndTurn);
+    assert_eq!(engine.game.cities[0].population(), 1);
+    assert!(engine.drain_starvations().is_empty());
 }
 
 #[test]
@@ -4568,7 +4711,10 @@ fn a_catapult_bombards_an_undefended_city_before_taking_it() {
 fn a_catapult_walks_into_a_city_with_nothing_left_to_break() {
     let (mut engine, catapult) = a_catapult_besieging_a_walled_city();
     engine.game.remove_unit(UnitId::new(0));
-    // Grown past one so the conquest captures it rather than razing it.
+    // Grown well past one: the city starves a citizen during the siege's
+    // intervening round, and the conquest must still capture rather than raze
+    // it.
+    engine.game.cities[0].grow();
     engine.game.cities[0].grow();
     // The first turn takes the walls down.
     engine.submit(Command::Move {
@@ -4665,6 +4811,11 @@ fn a_rival_catapult_beside_a_walled_human_city(at_war: bool) -> (Engine, UnitId)
     engine
         .game
         .add_city(PlayerId::new(0), "Londinium", Location::new(2, 0));
+    // Grown well past one: the fixture assigns no worked tiles, so the city
+    // starves a citizen each round it is processed, and it must still be large
+    // enough to be captured rather than razed after several rounds.
+    engine.game.cities[0].grow();
+    engine.game.cities[0].grow();
     engine.game.cities[0].grow();
     engine.game.cities[0].add_improvement(CityImprovement::CityWalls);
     engine.game.spawn_unit(

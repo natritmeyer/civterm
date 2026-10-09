@@ -37,6 +37,18 @@ impl App {
             }
             return false;
         }
+        // While a starvation window is up it captures the keyboard: enter, space
+        // or esc acknowledges the lost citizen and moves on to the next hungry
+        // city.
+        if self.starvation_notice.is_some() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
+                    self.starvation_notice_confirm();
+                }
+                _ => {}
+            }
+            return false;
+        }
         // While a build-completion window is up it captures the keyboard: enter
         // or space moves on to the next city that finished, and `n` opens this
         // city's window instead so the player can set its next order. Either
@@ -338,6 +350,7 @@ impl App {
             || self.sabotage_notice.is_some()
             || self.diplomacy.is_some()
             || self.war_notice.is_some()
+            || self.starvation_notice.is_some()
             || self.command_picker_open
             || self.production_picker_open
             || self.save_prompt.is_some()
@@ -519,6 +532,7 @@ impl App {
             || self.sabotage_notice_rect.get().is_some()
             || self.diplomacy_rect.get().is_some()
             || self.war_notice_rect.get().is_some()
+            || self.starvation_notice_rect.get().is_some()
             || self.build_notice_rect.get().is_some()
             || self.command_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
@@ -617,6 +631,13 @@ impl App {
             let wars = engine.drain_rival_wars();
             self.war_notice = (!wars.is_empty()).then(|| WarNoticeState {
                 queue: wars.into_iter().map(|war| war.rival).collect(),
+            });
+            // A city that starved this round is announced by a window the
+            // player acknowledges; several hungry cities queue up one after
+            // another.
+            let starved = engine.drain_starvations();
+            self.starvation_notice = (!starved.is_empty()).then(|| StarvationNoticeState {
+                queue: starved.into(),
             });
             // A city that finished building this round is announced by a
             // window offering OK (move to the next such city) or Next Order

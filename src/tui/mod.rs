@@ -17,6 +17,7 @@ pub mod sabotage_dialog;
 pub mod save_load_prompt;
 pub mod splash;
 pub mod start_confirm;
+pub mod starvation_dialog;
 pub mod status_bar;
 pub mod steal_dialog;
 pub mod theme;

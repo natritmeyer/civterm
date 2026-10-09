@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 783 passing unit
+Run `make build` after any change. Current test baseline: 795 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -419,6 +419,32 @@ a hard boundary; keep it by convention.
   outright (`MoveError::CannotAttackUnits`) — it has no quarrel with a
   garrison and nowhere to bombard from.
 
+## Coastal shipbuilding
+
+- A city may only build an ocean-going unit (`UnitClass::can_travel_water`:
+  trireme, sail, frigate) if it stands on the coast — `Game::borders_water`
+  is true when any of the city tile's eight neighbours is ocean, wrapping
+  east/west exactly as movement does. A ship built inland would have no tile
+  to step onto and sit stranded on land forever, so the city is offered none.
+- The rule is enforced in both the list and the command, the same two-place
+  discipline as `diplomat_blocker`. `GameView::production_choices` filters the
+  naval classes out for an inland city, so the production picker never shows a
+  ship it cannot launch; `Engine::set_production` re-checks and rejects with
+  `"Cannot produce …: the city is not on the coast"` (event-only, like every
+  other production rejection), so a stale picker, a save, or a direct command
+  cannot slip a ship past the list.
+- Because the rival AI picks its production from `production_choices`, it
+  inherits the rule for free: a rival inland city builds no navy. No separate
+  AI check is needed, and none is written.
+- A ship cannot take the `f` fortify order: `UnitClass::can_fortify` is false
+  for `can_travel_water` classes, since there is no ground at sea to dig into.
+  A ship may still stand sentry. The rule is enforced in the same two places —
+  `command_picker::available_commands` omits the Fortify row for a ship, and
+  `Engine::fortify` re-checks and rejects with `"Unit N cannot fortify at
+  sea"` (event-only), spending nothing — so the direct `f` key cannot slip a
+  fortify past the picker. No AI change is needed: `is_military` already
+  excludes naval units, so `rival_garrison` never tries to fortify one.
+
 ## Transport invariants
 
 - A naval transport (trireme, sail, frigate) carries at most
@@ -512,6 +538,34 @@ a hard boundary; keep it by convention.
   dropping, for the same reason `Next Order` parks rather than drops.
 - The notice is modal while it shows, exactly like the war-declaration window:
   `q` does not reach the quit path until the queue is answered.
+
+## City starvation
+
+- A city with an empty granary and a food deficit is starving. The model
+  reports that raw condition on `CityTick.starving` — a size-one city needs the
+  warning too — but the population loss is a separate flag, `lost_citizen`,
+  which is only set when the city actually shrinks. The last citizen is never
+  taken, so a size-one city survives on nothing and `lost_citizen` stays false.
+  The window reports a loss from `lost_citizen`, never from `starving`: a
+  "lost 10,000 population" message must never be told about a city that kept
+  everyone.
+- `City::tick` does the shrinking itself when `lost_citizen`; the engine only
+  records and announces. `process_cities` logs the event
+  `"{city_name} is starving"` whenever the city is starving (human or rival,
+  filtered at the TUI like every event), and pushes a `StarvationNotice` onto
+  the transient `Engine.starvations` when a citizen was lost — human only,
+  like every rival-motion filter, because a rival's hungry city is news, not a
+  decision for the player.
+- The TUI drains the record (`drain_starvations`, oldest first) on EndTurn into
+  a loop of single-OK windows, one per hungry city, in the same shape as the
+  war-declaration and build-completion loops. OK acknowledges the loss and
+  shows the next; the window closes once the queue empties. It is modal while
+  it shows — `window_is_open`, `modal_open`, `hover_blocked`, a key guard ahead
+  of the build-completion guard and a mouse guard ahead of the diplomacy guard
+  — and both the queue and its rectangle are cleared by `reset_setup` and
+  `check_game_over`.
+- `StarvationNotice` is transient: `Engine.starvations` is rebuilt empty by
+  `Engine::into_loaded` and never pushed into `SaveData`.
 
 ## Save and load impact
 

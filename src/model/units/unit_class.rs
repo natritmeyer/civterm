@@ -74,6 +74,13 @@ impl UnitClass {
         )
     }
 
+    /// Whether this class may take the `f` fortify order. A ship cannot dig in
+    /// on open water — there is no ground to entrench — so it may stand sentry
+    /// but never fortify.
+    pub fn can_fortify(&self) -> bool {
+        !self.can_travel_water()
+    }
+
     pub fn moves(&self) -> u8 {
         match self {
             UnitClass::Settler
@@ -299,6 +306,27 @@ mod tests {
             UnitClass::Caravan,
         ] {
             assert!(!class.can_travel_water());
+        }
+    }
+
+    #[test]
+    fn only_land_units_can_fortify() {
+        for class in [
+            UnitClass::Settler,
+            UnitClass::Militia,
+            UnitClass::Phalanx,
+            UnitClass::Legion,
+            UnitClass::Cavalry,
+            UnitClass::Chariot,
+            UnitClass::Knight,
+            UnitClass::Catapult,
+            UnitClass::Diplomat,
+            UnitClass::Caravan,
+        ] {
+            assert!(class.can_fortify(), "{class:?} is a land unit");
+        }
+        for class in [UnitClass::Trireme, UnitClass::Sail, UnitClass::Frigate] {
+            assert!(!class.can_fortify(), "{class:?} cannot dig in at sea");
         }
     }
 

@@ -142,16 +142,22 @@ impl GameView for Engine {
 
     fn production_choices(&self, city: CityId) -> Vec<ProductionTarget> {
         let player = &self.game.players[self.current_player_index.index()];
-        let owned_improvements = self
+        let owned = self
             .game
             .cities
             .iter()
-            .find(|owned| owned.id() == city && owned.owner() == self.current_player_index)
+            .find(|owned| owned.id() == city && owned.owner() == self.current_player_index);
+        let owned_improvements = owned
             .map(|owned| owned.improvements().to_vec())
             .unwrap_or_default();
+        // An ocean-going unit needs a sea tile one step from its home city, or
+        // it would sit stranded on land the moment it was built: a city away
+        // from the coast is offered no ship.
+        let borders_water = owned.is_some_and(|owned| self.game.borders_water(owned.location));
         player
             .available_unit_classes()
             .into_iter()
+            .filter(|class| !class.can_travel_water() || borders_water)
             .map(ProductionTarget::Unit)
             .chain(
                 player

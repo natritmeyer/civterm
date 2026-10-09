@@ -378,6 +378,12 @@ impl Engine {
                     unit.index()
                 )));
             }
+            Some(u) if !u.unit_class.can_fortify() => {
+                self.events.push(Event::new(format!(
+                    "Unit {} cannot fortify at sea",
+                    unit.index()
+                )));
+            }
             Some(u) => {
                 let owner = u.owner();
                 u.fortify();
