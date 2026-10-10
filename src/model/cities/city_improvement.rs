@@ -57,6 +57,18 @@ impl CityImprovement {
         }
     }
 
+    /// How many of a city's content citizens this improvement makes happy.
+    /// Happiness is a pure bonus here — no citizen is ever unhappy — so the
+    /// three culture buildings simply lift citizens into the productive tier.
+    pub fn happiness_bonus(&self) -> u32 {
+        match self {
+            CityImprovement::Temple => 1,
+            CityImprovement::Colosseum => 3,
+            CityImprovement::Cathedral => 4,
+            _ => 0,
+        }
+    }
+
     pub fn resource_cost(&self) -> u32 {
         match self {
             CityImprovement::Library
@@ -119,6 +131,27 @@ mod tests {
     #[test]
     fn improvements_without_a_required_advancement() {
         assert_eq!(CityImprovement::Barracks.required_advancement(), None);
+    }
+
+    #[test]
+    fn only_culture_improvements_make_citizens_happy() {
+        assert_eq!(CityImprovement::Temple.happiness_bonus(), 1);
+        assert_eq!(CityImprovement::Colosseum.happiness_bonus(), 3);
+        assert_eq!(CityImprovement::Cathedral.happiness_bonus(), 4);
+        for improvement in [
+            CityImprovement::Aqueduct,
+            CityImprovement::Bank,
+            CityImprovement::Barracks,
+            CityImprovement::CityWalls,
+            CityImprovement::Courthouse,
+            CityImprovement::Granary,
+            CityImprovement::Library,
+            CityImprovement::Marketplace,
+            CityImprovement::Palace,
+            CityImprovement::University,
+        ] {
+            assert_eq!(improvement.happiness_bonus(), 0, "{improvement:?}");
+        }
     }
 
     #[test]

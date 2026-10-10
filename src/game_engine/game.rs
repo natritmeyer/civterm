@@ -206,7 +206,7 @@ impl Game {
             food += tile.yields_food() as u32;
             resources += tile.yields_resources() as u32;
         }
-        (city.food_income(food), resources)
+        (city.food_income(food), city.resource_income(resources))
     }
 
     /// The full per-turn harvest of a city for display: food, resources and
@@ -242,7 +242,7 @@ impl Game {
         special_resources.sort_by_key(|resource| format!("{resource:?}"));
         CityIncome {
             food: city.food_income(food),
-            resources,
+            resources: city.resource_income(resources),
             trade,
             gold: city.gold_income(gold),
             research: city.research(),
@@ -922,6 +922,19 @@ mod tests {
         game.cities[0].add_worked_tile(Location::new(3, 2));
         // centre ocean 2/0 + grassland 2/0 + irrigated plains 3/1
         assert_eq!(game.city_income(london), (7, 1));
+    }
+
+    #[test]
+    fn happy_citizens_raise_a_citys_resource_income() {
+        let mut game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
+        let london = game.add_city(player(), "London", Location::new(2, 2));
+        *game.map.tile_at_mut(Location::new(2, 2)) = Tile::new(Terrain::Hills);
+        // A lone citizen works the hills centre: one resource, no bonus yet.
+        assert_eq!(game.city_income(london), (1, 1));
+        // A Temple makes that citizen happy, doubling the production.
+        game.cities[0].add_improvement(CityImprovement::Temple);
+        assert_eq!(game.city_income(london), (1, 2));
+        assert_eq!(game.city_breakdown(london).resources, 2);
     }
 
     #[test]

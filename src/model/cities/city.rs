@@ -250,6 +250,31 @@ impl City {
         }
         raw * numerator / denominator
     }
+
+    /// How many of the city's citizens the culture improvements make happy.
+    /// Every citizen starts content; Temple, Colosseum and Cathedral lift
+    /// citizens into the happy tier, but never more than the population.
+    pub fn happy_citizens(&self) -> u32 {
+        let bonus: u32 = self
+            .improvements
+            .iter()
+            .map(CityImprovement::happiness_bonus)
+            .sum();
+        bonus.min(self.population)
+    }
+
+    /// The citizens left content once the happy ones are taken out.
+    pub fn content_citizens(&self) -> u32 {
+        self.population - self.happy_citizens()
+    }
+
+    /// The city's shield harvest on top of the raw worked-tile yield. A happy
+    /// citizen is twice as productive as a content one, so the raw resources
+    /// are scaled by `(content + 2 * happy) / population`.
+    pub fn resource_income(&self, raw: u32) -> u32 {
+        let population = self.population.max(1);
+        raw * (self.content_citizens() + 2 * self.happy_citizens()) / population
+    }
 }
 
 #[cfg(test)]
@@ -478,6 +503,56 @@ mod tests {
         assert_eq!(city.gold_income(2), 3);
         city.add_improvement(CityImprovement::Bank);
         assert_eq!(city.gold_income(2), 4);
+    }
+
+    #[test]
+    fn culture_improvements_make_citizens_happy_without_exceeding_population() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        // A fresh city is a single content citizen.
+        assert_eq!(city.happy_citizens(), 0);
+        assert_eq!(city.content_citizens(), 1);
+
+        // A Temple makes one citizen happy.
+        city.add_improvement(CityImprovement::Temple);
+        assert_eq!(city.happy_citizens(), 1);
+        assert_eq!(city.content_citizens(), 0);
+
+        // Grow to seven: 1 + 3 + 4 = 8 worth of happiness, capped at seven.
+        for _ in 0..6 {
+            city.grow();
+        }
+        city.add_improvement(CityImprovement::Colosseum);
+        city.add_improvement(CityImprovement::Cathedral);
+        assert_eq!(city.population(), 7);
+        assert_eq!(
+            city.happy_citizens(),
+            7,
+            "happy can never exceed population"
+        );
+        assert_eq!(city.content_citizens(), 0);
+    }
+
+    #[test]
+    fn happy_citizens_double_the_citys_production() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        // Grow to seven: seven content citizens, base production.
+        for _ in 1..7 {
+            city.grow();
+        }
+        assert_eq!(city.resource_income(7), 7);
+        // Three of them happy: 4 content + 3 happy * 2 = 10.
+        city.add_improvement(CityImprovement::Colosseum);
+        assert_eq!(city.resource_income(7), 10);
     }
 
     #[test]

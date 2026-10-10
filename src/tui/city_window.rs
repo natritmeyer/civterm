@@ -27,7 +27,11 @@ const FA_PRODUCTION: char = '🔧';
 const FA_TRADE: char = '🛒';
 const FA_RESEARCH: char = '💡';
 const FA_GOLD: char = '💰';
+/// A content citizen, drawn as a standing person.
 const FA_POP: char = '🧍';
+/// A happy citizen, drawn as a dancer. Happy citizens are twice as productive,
+/// so they are listed before the content ones.
+const FA_HAPPY: char = '🕺';
 
 const CLOSE_TEXT: &str = "✕ Close";
 const CLOSE_WIDTH: u16 = 7;
@@ -285,10 +289,14 @@ impl<'a> CityWindow<'a> {
             CLOSE_TEXT,
             TEXT.add_modifier(Modifier::UNDERLINED),
         );
+        // Happy citizens first, each a dancer, then the content ones, each a
+        // standing person; the two lists together are the whole population.
         let mut cx = rect.x;
-        let count = pop as u16;
-        for _ in 0..count.min(rect.width / 2) {
-            cx = draw_text(buf, cx, rect.y + 1, &FA_POP.to_string(), TEXT);
+        let capacity = (rect.width / 2) as usize;
+        let mut citizens = vec![FA_HAPPY; city.happy_citizens() as usize];
+        citizens.extend(vec![FA_POP; city.content_citizens() as usize]);
+        for glyph in citizens.into_iter().take(capacity) {
+            cx = draw_text(buf, cx, rect.y + 1, &glyph.to_string(), TEXT);
         }
     }
 
@@ -798,6 +806,30 @@ mod tests {
             row_text(&buf, x, y, 18).contains(&format!("{FA_POP} {FA_POP} {FA_POP}")),
             "row was {:?}",
             row_text(&buf, x, y, 18)
+        );
+    }
+
+    #[test]
+    fn happy_citizens_are_drawn_before_content_citizens() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        for _ in 0..6 {
+            city.grow();
+        }
+        // A Colosseum makes three of the seven citizens happy.
+        city.add_improvement(CityImprovement::Colosseum);
+        let buf = render(city, 0);
+        let (x, y) = pos_of(1, 2);
+        let row = row_text(&buf, x, y, 16);
+        assert!(
+            row.contains(&format!(
+                "{FA_HAPPY} {FA_HAPPY} {FA_HAPPY} {FA_POP} {FA_POP} {FA_POP} {FA_POP}"
+            )),
+            "row was {row:?}"
         );
     }
 

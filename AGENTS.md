@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 795 passing unit
+Run `make build` after any change. Current test baseline: 800 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -566,6 +566,26 @@ a hard boundary; keep it by convention.
   `check_game_over`.
 - `StarvationNotice` is transient: `Engine.starvations` is rebuilt empty by
   `Engine::into_loaded` and never pushed into `SaveData`.
+
+## Happiness and production
+
+- Every citizen starts content. The culture improvements lift citizens into the
+  happy tier and no further — Temple (1), Colosseum (3), Cathedral (4) — stacking
+  but never exceeding the population. `CityImprovement::happiness_bonus` is the
+  single source of those numbers, and `City::happy_citizens` /
+  `City::content_citizens` are the derived counts; nothing stores happiness, it
+  is recomputed from `population` and `improvements`.
+- A happy citizen is twice as productive as a content one, so the city's raw
+  shield yield is scaled by `(content + 2 * happy) / population`. The rule lives
+  in `City::resource_income`, called from both `Game::city_income` (the real
+  per-turn harvest `City::tick` spends) and `Game::city_breakdown` (the window's
+  figures), so the two can never disagree. It affects resources only: food,
+  trade, research and gold are untouched, and this is a deliberate house rule —
+  Civ 1 happy citizens are not more productive.
+- The city window draws happy citizens first as 🕺 and content ones after as
+  🧍 (`FA_HAPPY` / `FA_POP`), capped at half the panel's width so a wide-glyph
+  row cannot spill past the border. A population of seven with three happy
+  reads `🕺🕺🕺🧍🧍🧍🧍`.
 
 ## Save and load impact
 
