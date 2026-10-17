@@ -74,11 +74,15 @@ fn cell_width(ch: char) -> u16 {
 }
 
 /// Draw `text` starting at `(x, y)`, advancing past the continuation cells of
-/// any wide glyphs.
-fn draw_text(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) {
+/// any wide glyphs, and stopping at the panel's right edge (`limit`) rather
+/// than spilling over the window's border.
+fn draw_text(buf: &mut Buffer, x: u16, y: u16, limit: u16, text: &str, style: Style) {
     let mut cx = x;
     for ch in text.chars() {
         let width = cell_width(ch);
+        if cx.saturating_add(width) > limit {
+            return;
+        }
         if let Some(cell) = buf.cell_mut((cx, y)) {
             cell.set_symbol(&ch.to_string());
             cell.set_style(style);
@@ -152,13 +156,15 @@ impl Widget for DiplomacyDialog {
         draw_border(buf, area);
 
         let inner = inner(area);
-        draw_text(buf, inner.x + 1, inner.y, "Diplomacy", BOLD);
+        let limit = inner.right();
+        draw_text(buf, inner.x + 1, inner.y, limit, "Diplomacy", BOLD);
         match self.origin {
             DiplomacyOrigin::Contact => {
                 draw_text(
                     buf,
                     inner.x + 1,
                     inner.y + 1,
+                    limit,
                     &format!("The {:?} have been discovered!", self.opponent),
                     BOLD,
                 );
@@ -166,6 +172,7 @@ impl Widget for DiplomacyDialog {
                     buf,
                     inner.x + 1,
                     inner.y + 2,
+                    limit,
                     "We may declare war or make peace with them.",
                     TEXT,
                 );
@@ -175,6 +182,7 @@ impl Widget for DiplomacyDialog {
                     buf,
                     inner.x + 1,
                     inner.y + 1,
+                    limit,
                     &format!("Your unit may not enter {:?} land.", self.opponent),
                     BOLD,
                 );
@@ -182,6 +190,7 @@ impl Widget for DiplomacyDialog {
                     buf,
                     inner.x + 1,
                     inner.y + 2,
+                    limit,
                     "Declare war to attack, or remain at peace.",
                     TEXT,
                 );
@@ -200,8 +209,8 @@ impl Widget for DiplomacyDialog {
         if peace_selected {
             fill_row(buf, peace, SELECTED);
         }
-        draw_text(buf, war.x + 1, war.y, WAR_TEXT, LINK);
-        draw_text(buf, peace.x + 1, peace.y, PEACE_TEXT, LINK);
+        draw_text(buf, war.x + 1, war.y, limit, WAR_TEXT, LINK);
+        draw_text(buf, peace.x + 1, peace.y, limit, PEACE_TEXT, LINK);
     }
 }
 
@@ -289,6 +298,30 @@ mod tests {
             row_text(&buf, peace.x + 1, peace.y, PEACE_TEXT.len() as u16),
             PEACE_TEXT
         );
+    }
+
+    /// The second body line is wider than the window's interior, so it must be
+    /// clipped at the border rather than painted over it and out into the map.
+    #[test]
+    fn a_long_message_is_clipped_to_the_window() {
+        let buf = render(DiplomacyOrigin::Contact, DiplomacyChoice::Peace);
+        let panel = panel();
+        for y in panel.y + 1..panel.bottom() - 1 {
+            assert_eq!(
+                buf.cell((panel.right() - 1, y)).unwrap().symbol(),
+                "│",
+                "the right border survives on row {y}"
+            );
+        }
+        for y in panel.y..panel.bottom() {
+            for x in panel.right()..120 {
+                assert_eq!(
+                    buf.cell((x, y)).unwrap().symbol(),
+                    " ",
+                    "nothing spills past the border at ({x}, {y})"
+                );
+            }
+        }
     }
 
     #[test]
