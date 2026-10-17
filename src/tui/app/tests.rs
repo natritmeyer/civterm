@@ -4101,10 +4101,46 @@ fn ok_is_reachable_from_the_keyboard() {
         ),
     ]);
 
-    app.handle_key(key(KeyCode::Enter));
-    assert_eq!(app.current_build_notice().unwrap().city_name, "York");
     app.handle_key(key(KeyCode::Char(' ')));
+    assert_eq!(app.current_build_notice().unwrap().city_name, "York");
+    app.handle_key(key(KeyCode::Esc));
     assert!(app.current_build_notice().is_none());
+}
+
+/// Return takes the window's offered action, opening the announced city's own
+/// window exactly as clicking "Next Order" does — it must not merely dismiss
+/// the completion and move on.
+#[test]
+fn return_key_opens_the_announced_city_window() {
+    let (mut app, cities) = app_with_cities(2);
+    app.open_build_notices(vec![
+        build(
+            cities[0],
+            "London",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+        build(
+            cities[1],
+            "York",
+            ProductionTarget::Unit(crate::model::units::UnitClass::Militia),
+        ),
+    ]);
+
+    app.handle_key(key(KeyCode::Enter));
+
+    assert_eq!(
+        app.selected_city,
+        Some(cities[0]),
+        "Return opens the announced city's window"
+    );
+    assert!(
+        app.current_build_notice().is_none(),
+        "the parked window yields the screen to the city window"
+    );
+    assert!(
+        app.build_notice.is_some(),
+        "the remaining city is still queued"
+    );
 }
 
 #[test]
@@ -4305,7 +4341,7 @@ fn the_build_window_is_modal_until_the_queue_is_answered() {
         "the game keys do not reach the quit path behind the window"
     );
 
-    app.handle_key(key(KeyCode::Enter));
+    app.handle_key(key(KeyCode::Char(' ')));
     assert!(
         app.current_build_notice().is_none(),
         "the queue is answered"

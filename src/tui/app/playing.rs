@@ -49,18 +49,20 @@ impl App {
             }
             return false;
         }
-        // While a build-completion window is up it captures the keyboard: enter
-        // or space moves on to the next city that finished, and `n` opens this
-        // city's window instead so the player can set its next order. Either
-        // way the queue advances by one city, and the loop resumes when a city
-        // window opened this way closes.
+        // While a build-completion window is up it captures the keyboard.
+        // Return takes the window's offered action — opening the announced
+        // city so its next order can be set — exactly as clicking "Next
+        // Order" does. Space or esc acknowledges the completion and moves on
+        // to the next city without opening it. Either way the queue advances
+        // by one city, and the loop resumes when a city window opened this way
+        // closes.
         if self.current_build_notice().is_some() {
             match key.code {
-                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
-                    self.build_notice_confirm();
-                }
-                KeyCode::Char('n') | KeyCode::Char('N') => {
+                KeyCode::Enter | KeyCode::Char('n') | KeyCode::Char('N') => {
                     self.build_notice_next_order();
+                }
+                KeyCode::Char(' ') | KeyCode::Esc => {
+                    self.build_notice_confirm();
                 }
                 _ => {}
             }

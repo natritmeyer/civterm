@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 821 passing unit
+Run `make build` after any change. Current test baseline: 822 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -571,6 +571,11 @@ a hard boundary; keep it by convention.
   own window, one after another, oldest first. `OK` pops the front and shows
   the next (closing the window once the queue empties); `Next Order` pops it
   too and opens *that* city's window instead.
+- The keyboard mirrors the buttons: **Return** (and `n`/`N`) takes the window's
+  offered action — opening the announced city, exactly as clicking `Next Order`
+  does — while Space and Esc acknowledge the completion and move on. Return must
+  not merely dismiss the notice, or a player reaching for the city's next order
+  loses the window and is left hunting for the city on the map.
 - `Next Order` sets `BuildNoticeState::suspended`, which parks the queue: the
   notice neither draws nor takes input, so the city window owns the screen.
   `close_city_window` calls `resume_build_notice`, so closing the city window
