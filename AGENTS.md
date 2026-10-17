@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 800 passing unit
+Run `make build` after any change. Current test baseline: 821 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -329,8 +329,10 @@ a hard boundary; keep it by convention.
 - A rival fights only fights it expects to win: it declares war on the human
   when one of its military units stands beside (any of the 8 neighbours, wrap
   included) a human unit or city whose strongest defender its power outguns
-  (`attacker_power > defender_power`; an undefended city counts as a trivial
-  win), and it never attacks below `RIVAL_MINIMUM_WIN_CHANCE` (10%).
+  (`attacker_power > defender_power`, unless the difficulty settles for an
+  even fight; an undefended city counts as a trivial win), and it never
+  attacks below the difficulty's minimum win chance. On Easy it never declares
+  war at all; the whole policy is `## Difficulty`'s.
   War is faction-wide: the first winnable encounter draws the whole rival into
   it, and other units may then attack freely on the same and later turns.
   Every declaration is recorded as a transient `RivalWar { rival }` that the
@@ -343,6 +345,53 @@ a hard boundary; keep it by convention.
   fight is fought (and the RNG stream advanced) exactly as the human's would
   be. Every rival step still goes out through the ordinary `move_unit` path,
   so the movement/reveal/transport/combat invariants hold.
+
+## Difficulty
+
+- `Difficulty` lives in `model` (`src/model/difficulty.rs`) as an `Easy` /
+  `Normal` / `Hard` enum, `Normal` by default, and its policy knobs are methods
+  on it rather than scattered constants: `starting_gold` (Easy 50, Normal and
+  Hard 0), `rivals_initiate_war` (false only on Easy),
+  `rivals_attack_at_even_odds` (true only on Hard),
+  `rival_minimum_win_chance` (Hard 0, otherwise 10), and the three rival
+  economy multipliers `rival_production_scale`, `rival_research_scale` and
+  `rival_growth_scale` (collected by `rival_economy`). The TUI's selector is the
+  only place the player sets it; it is orthogonal to `Competition`, which
+  picks the rival count, not their appetite.
+- `Engine.difficulty` carries the choice and `Engine::set_difficulty` is the
+  single setter: it stores the level and stakes the human's opening treasury
+  from it (player index 0 gets `starting_gold`, every rival 0). It is
+  construction-time only — `start_game` calls it once before
+  `populate_starting_world`, because it re-stakes every treasury and a save
+  carries the level rather than a re-stake. The engine is the only consumer —
+  `rival_player_engine` asks the difficulty before it declares a war or accepts
+  an even fight, so the war policy has exactly two call sites and no duplicated
+  thresholds.
+- The Hard lever is real but narrow: allowing even odds is what lets the
+  rival fall on the player far more often. Its win-chance floor is 0, but that
+  is a no-op in practice, because the `attacker_power >= defender_power` edge
+  test already refuses every fight *under* even odds and any strict edge
+  already clears any floor. On Easy `rivals_initiate_war` is false, so the
+  rival never opens a war; a war the human declares still proceeds normally.
+- The level is persisted with the rest of the metadata: `SaveData` holds
+  `difficulty` and `SaveData::capture` copies it, while `into_loaded` threads
+  the same value into both `LoadedGame` and the rebuilt `Engine` so the loaded
+  game resumes at the level it was saved at.
+- The rival economy is scaled by three exact ratios — `Scale` (numerator over
+  denominator, in `difficulty.rs`) applied to a rival city's shield output
+  (`production`), research output (`research`) and the food it must store to
+  grow (`growth`): Easy 3/4, 3/4, 3/2; Normal identity throughout; Hard 5/4,
+  5/4, 3/4. `Scale::apply` never cuts a nonzero yield to zero, so a size-one
+  rival city still banks a shield and a research point. Easy therefore widens
+  the growth box (slower), Hard narrows it (faster).
+- The human is **never** scaled. `Engine::economy_scales(owner)` is the single
+  place the split is decided: `Scales::IDENTITY` for player zero, the
+  difficulty's `rival_economy()` otherwise. `begin_turn`'s
+  `process_cities`/`process_research` thread it to `Game::process_city` (which
+  scales shields and hands the growth scale to `City::tick_scaled`) and
+  `Game::advance_research` (which scales the research banked). The model holds
+  no copy of the difficulty — the ratios are `Difficulty` methods, and only the
+  engine knows which player is at the keyboard.
 
 ## Defence
 
@@ -381,10 +430,11 @@ a hard boundary; keep it by convention.
   not forty in a hundred. Anything reasoning about combat odds must go
   through `win_chance_percent`.
 - The function lives with the fight, but the rival's *policy* stays in
-  `rival_player_engine.rs`: `attacker_power > defender_power` plus
-  `RIVAL_MINIMUM_WIN_CHANCE`. Note that the power comparison is the binding
-  constraint in practice, since it already refuses every fight at or under
-  even odds and the chance floor sits well beneath that.
+  `rival_player_engine.rs`: the difficulty's edge test (`attacker_power >
+  defender_power`, relaxed to `>=` on Hard) plus its minimum win chance. Note
+  that the power comparison is the binding constraint in practice, since it
+  already refuses every fight at or under even odds and the chance floor sits
+  well beneath that.
 
 ## Siege
 
@@ -671,6 +721,13 @@ New features are judged for their save impact before they are built:
 - Wide (two-cell) glyphs such as 💥 must anchor in a tile's _left_ column; a
   wide glyph placed in the tile's right column spills a cell into the
   eastern neighbour. Tests assert the neighbour tile stays untouched.
+- A window's own `draw_text` clips to the panel's right edge — a `limit`, the
+  interior's `right()` — so a body line wider than the window stops at the
+  border instead of painting over it and out into the map. The diplomacy
+  window's "We may declare war or make peace with them." is long enough to
+  bite on a 42-column window; the newer windows (build-complete, steal,
+  sabotage, starvation) took the `limit` from the start, and a test pins the
+  border against the one that did not.
 - While the rival-move replay runs, units with frames still to play are
   lifted off their game-state squares (`hidden_units` fed through
   `paint_tile`) so only the overlay paints them — a unit "in transit" must

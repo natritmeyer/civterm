@@ -32,14 +32,6 @@ const CITY_FOOTPRINT_MAX_OVERLAP: usize = 3;
 /// The best decent site is chosen before any frontier-push.
 const CITY_FOOTPRINT_ACCEPTABLE_OVERLAP: usize = 6;
 
-/// The lowest odds, as a percentage, at which a rival will initiate a fight
-/// against an enemy it faces. A rival picks its wars carefully — it only
-/// declares war when the encounter it would start is one it wins — but this
-/// floor is the absolute bar beneath which no attack at all is made, so a
-/// rival never throws its warriors at an engagement it almost certainly
-/// loses even mid-war.
-const RIVAL_MINIMUM_WIN_CHANCE: u32 = 10;
-
 /// The rival's preferred research ladder, cheapest useful goals first so a
 /// rival fields Bronze-gated troops early and then pursues its economy. When
 /// none of these are researchable yet, the rival falls back to the cheapest
@@ -532,14 +524,19 @@ impl Engine {
             })
     }
 
-    /// A rival's army fights when it has the local advantage: every idle,
-    /// land-borne warrior standing beside a human unit or city sizes up the
-    /// fight it would pick against the strongest defender there. A fight the
-    /// unit would not win, or whose odds fall under `RIVAL_MINIMUM_WIN_CHANCE`,
-    /// is left alone. The first winnable encounter makes the rival declare
-    /// war on the human (a `RivalWar` the TUI announces) and then step onto
-    /// the target through the ordinary `move_unit` path, so combat, reveal
-    /// and conquest work exactly as they do for the player.
+    /// A rival's army fights when it has the advantage the difficulty allows:
+    /// every idle, land-borne warrior standing beside a human unit or city
+    /// sizes up the fight it would pick against the strongest defender there.
+    /// A fight below the difficulty's bar is left alone. The first winnable
+    /// encounter makes the rival declare war on the human (a `RivalWar` the TUI
+    /// announces) and then step onto the target through the ordinary
+    /// `move_unit` path, so combat, reveal and conquest work exactly as they do
+    /// for the player.
+    ///
+    /// Difficulty decides whether a war may begin here at all: on Easy a rival
+    /// never starts one, so the declaration branch is skipped outright. A war
+    /// the human declares is unaffected — `at_war` is already true, so the
+    /// rival still fights, under the same thresholds it would use to defend.
     fn rival_warfare(&mut self, ai: PlayerId) {
         let human = PlayerId::new(0);
         let unit_ids = self.game.owned_units(ai);
@@ -557,6 +554,11 @@ impl Engine {
                 continue;
             };
             if !self.game.at_war(ai, human) {
+                // Easy: the neighbors never start a war, however tempting the
+                // target beside them.
+                if !self.difficulty.rivals_initiate_war() {
+                    continue;
+                }
                 if !starts_war {
                     // Siege follows a war already declared; it is no reason
                     // to begin one.
@@ -623,10 +625,19 @@ impl Engine {
                     .max()
                     .unwrap_or(0);
                 let attacker = self.attacker_power(unit);
-                if attacker <= defender {
+                // Normal holds out for a strict edge; Hard settles for an even
+                // fight, which is what fills the map with rival wars.
+                let has_edge = if self.difficulty.rivals_attack_at_even_odds() {
+                    attacker >= defender
+                } else {
+                    attacker > defender
+                };
+                if !has_edge {
                     return None;
                 }
-                if Self::win_chance_percent(attacker, defender) < RIVAL_MINIMUM_WIN_CHANCE {
+                if Self::win_chance_percent(attacker, defender)
+                    < self.difficulty.rival_minimum_win_chance()
+                {
                     return None;
                 }
                 let margin = attacker.saturating_sub(defender);

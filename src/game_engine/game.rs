@@ -4,6 +4,7 @@ use crate::model::advancements::Advancement;
 use crate::model::cartography::{Direction, Location, Map};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
+use crate::model::difficulty::Scales;
 use crate::model::geography::SpecialResource;
 use crate::model::units::{Unit, UnitClass, UnitId};
 use serde::{Deserialize, Serialize};
@@ -288,8 +289,12 @@ impl Game {
         self.players[owner.index()].set_research_target(advancement);
     }
 
-    pub(crate) fn advance_research(&mut self, owner: PlayerId) -> Option<Advancement> {
-        let research = self.research_income(owner);
+    pub(crate) fn advance_research(
+        &mut self,
+        owner: PlayerId,
+        scales: Scales,
+    ) -> Option<Advancement> {
+        let research = scales.research.apply(self.research_income(owner));
         self.players[owner.index()].advance_research(research)
     }
 
@@ -366,15 +371,19 @@ impl Game {
         }
     }
 
-    /// Tick a city for one turn, delegating the economy to the model.
-    pub(crate) fn process_city(&mut self, city_id: CityId) -> CityProcess {
+    /// Tick a city for one turn, delegating the economy to the model. The
+    /// difficulty's rival handicaps arrive as `scales`: a rival's shield output
+    /// is scaled here and its growth box is scaled in the model, while the
+    /// human's cities always pass [`Scales::IDENTITY`].
+    pub(crate) fn process_city(&mut self, city_id: CityId, scales: Scales) -> CityProcess {
         let (food_income, resource_income) = self.city_income(city_id);
+        let resource_income = scales.production.apply(resource_income);
         let tick = self
             .cities
             .iter_mut()
             .find(|city| city.id() == city_id)
             .expect("city to process exists")
-            .tick(food_income, resource_income);
+            .tick_scaled(food_income, resource_income, scales.growth);
         CityProcess {
             produced: tick.produced,
             grew: tick.grew,
@@ -401,6 +410,7 @@ mod tests {
     use crate::model::cartography::Tile;
     use crate::model::cities::CityImprovement;
     use crate::model::civilizations::Civilization;
+    use crate::model::difficulty::Scale;
     use crate::model::geography::Terrain;
 
     fn player() -> PlayerId {
@@ -967,12 +977,15 @@ mod tests {
         assert!(!game.can_research(player(), Advancement::Astronomy));
 
         game.set_research_target(player(), Advancement::Wheel);
-        assert_eq!(game.advance_research(player()), Some(Advancement::Wheel));
+        assert_eq!(
+            game.advance_research(player(), Scales::IDENTITY),
+            Some(Advancement::Wheel)
+        );
         assert!(!game.can_research(player(), Advancement::Wheel));
 
         game.set_research_target(player(), Advancement::BronzeWorking);
         assert_eq!(
-            game.advance_research(player()),
+            game.advance_research(player(), Scales::IDENTITY),
             Some(Advancement::BronzeWorking)
         );
         assert!(game.can_research(player(), Advancement::Currency));
@@ -1006,10 +1019,10 @@ mod tests {
         assert_eq!(game.research_income(player()), 6);
 
         game.set_research_target(player(), Advancement::Wheel);
-        game.advance_research(player());
+        game.advance_research(player(), Scales::IDENTITY);
         assert_eq!(game.research_progress(player()), 6);
         for _ in 0..6 {
-            game.advance_research(player());
+            game.advance_research(player(), Scales::IDENTITY);
         }
         assert_eq!(game.research_progress(player()), 0);
         assert_eq!(game.advancement_in_progress(player()), None);
@@ -1096,10 +1109,10 @@ mod tests {
         centre.irrigate().unwrap();
         *game.map.tile_at_mut(Location::new(1, 0)) = centre;
         let london = game.add_city(player(), "London", Location::new(1, 0));
-        let first = game.process_city(london);
+        let first = game.process_city(london, Scales::IDENTITY);
         assert!(!first.grew);
         assert!(!first.starving);
-        let second = game.process_city(london);
+        let second = game.process_city(london, Scales::IDENTITY);
         assert!(second.grew);
         assert_eq!(game.cities[0].population(), 2);
     }
@@ -1109,7 +1122,7 @@ mod tests {
         let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
         *game.map.tile_at_mut(Location::new(1, 0)) = Tile::new(Terrain::Mountain);
         let london = game.add_city(player(), "London", Location::new(1, 0));
-        let outcome = game.process_city(london);
+        let outcome = game.process_city(london, Scales::IDENTITY);
         assert!(outcome.starving);
         assert_eq!(outcome.produced, 1);
         assert!(!outcome.grew);
@@ -1125,15 +1138,86 @@ mod tests {
         let london = game.add_city(player(), "London", Location::new(1, 0));
         game.cities[0].set_production(ProductionTarget::Unit(UnitClass::Militia));
         for _ in 0..4 {
-            let outcome = game.process_city(london);
+            let outcome = game.process_city(london, Scales::IDENTITY);
             assert_eq!(outcome.completed, None);
         }
-        let fifth = game.process_city(london);
+        let fifth = game.process_city(london, Scales::IDENTITY);
         assert_eq!(
             fifth.completed,
             Some(ProductionTarget::Unit(UnitClass::Militia))
         );
         assert_eq!(game.cities[0].production_target(), None);
         assert_eq!(game.cities[0].resource_stored(), 0);
+    }
+
+    fn mountain_city() -> (Game, CityId) {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        let mut centre = Tile::new(Terrain::Mountain);
+        centre.mine().unwrap();
+        *game.map.tile_at_mut(Location::new(1, 0)) = centre;
+        let london = game.add_city(player(), "London", Location::new(1, 0));
+        (game, london)
+    }
+
+    #[test]
+    fn a_production_handicap_banks_fewer_shields_each_turn() {
+        let (mut game, london) = mountain_city();
+        let full = game.process_city(london, Scales::IDENTITY).produced;
+        let handicapped = game
+            .process_city(
+                london,
+                Scales {
+                    production: Scale::new(3, 4),
+                    ..Scales::IDENTITY
+                },
+            )
+            .produced;
+        assert_eq!(full, 2);
+        assert_eq!(handicapped, 1);
+    }
+
+    #[test]
+    fn a_research_handicap_advances_more_slowly() {
+        let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+        game.add_city(player(), "London", Location::new(1, 0));
+        for _ in 0..3 {
+            game.cities[0].grow();
+        }
+        game.cities[0].add_improvement(CityImprovement::Library);
+        assert_eq!(game.research_income(player()), 6);
+        game.set_research_target(player(), Advancement::Wheel);
+        game.advance_research(
+            player(),
+            Scales {
+                research: Scale::new(3, 4),
+                ..Scales::IDENTITY
+            },
+        );
+        assert_eq!(game.research_progress(player()), 4);
+    }
+
+    #[test]
+    fn a_growth_handicap_delays_a_citys_next_citizen() {
+        let grassland_city = || {
+            let mut game = Game::new(3, 2, Player::new(Civilization::English), Vec::new());
+            let mut centre = Tile::new(Terrain::Grassland);
+            centre.irrigate().unwrap();
+            *game.map.tile_at_mut(Location::new(1, 0)) = centre;
+            let london = game.add_city(player(), "London", Location::new(1, 0));
+            (game, london)
+        };
+
+        let (mut ordinary, london) = grassland_city();
+        let seas = Scales {
+            growth: Scale::new(3, 2),
+            ..Scales::IDENTITY
+        };
+        let (mut delayed, rival) = grassland_city();
+
+        assert!(!ordinary.process_city(london, Scales::IDENTITY).grew);
+        assert!(ordinary.process_city(london, Scales::IDENTITY).grew);
+        assert!(!delayed.process_city(rival, seas).grew);
+        assert!(!delayed.process_city(rival, seas).grew);
+        assert!(delayed.process_city(rival, seas).grew);
     }
 }

@@ -75,6 +75,7 @@ impl SaveData {
                 investigation: None,
                 steal: None,
                 sabotage: None,
+                difficulty: self.difficulty,
             },
             competition: self.competition,
             difficulty: self.difficulty,
@@ -189,6 +190,11 @@ mod tests {
         );
         assert_eq!(loaded.competition, Competition::new(2));
         assert_eq!(loaded.difficulty, Difficulty::Hard);
+        assert_eq!(
+            loaded.engine.difficulty,
+            Difficulty::Hard,
+            "the engine carries the difficulty the game was saved at"
+        );
 
         // The RNG restores to the same point in its stream, so the world keeps
         // drawing the same numbers after the load.

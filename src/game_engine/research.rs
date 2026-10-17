@@ -8,7 +8,8 @@ impl Engine {
     /// Aggregate one turn of civilisations' city research into advancement
     /// progress at the player level.
     pub(super) fn process_research(&mut self, owner: PlayerId) {
-        if let Some(advancement) = self.game.advance_research(owner) {
+        let scales = self.economy_scales(owner);
+        if let Some(advancement) = self.game.advance_research(owner, scales) {
             self.events.push(Event::for_player(
                 owner,
                 format!(

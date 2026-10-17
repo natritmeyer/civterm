@@ -141,6 +141,7 @@ impl Engine {
         }
     }
     pub(super) fn process_cities(&mut self, owner: PlayerId) {
+        let scales = self.economy_scales(owner);
         let city_ids: Vec<CityId> = self
             .game
             .cities
@@ -157,7 +158,7 @@ impl Engine {
                 .unwrap()
                 .name
                 .clone();
-            let result = self.game.process_city(city_id);
+            let result = self.game.process_city(city_id, scales);
             if result.grew {
                 self.game.auto_assign_work(city_id);
                 self.events.push(Event::for_player(

@@ -210,6 +210,7 @@ impl App {
             rivals.into_iter().map(Player::new).collect(),
             seed,
         );
+        engine.set_difficulty(self.chosen_difficulty.unwrap_or(Difficulty::Normal));
         engine.populate_starting_world();
         self.engine = Some(engine);
         self.game_competition = self.chosen_competition;

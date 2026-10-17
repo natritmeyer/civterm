@@ -8,6 +8,7 @@ use crate::model::cartography::Location;
 use crate::model::cities::{City, CityId, CityImprovement, ProductionTarget};
 use crate::model::civilizations::Civilization;
 use crate::model::civilizations::PlayerId;
+use crate::model::difficulty::{Difficulty, Scales};
 use crate::model::geography::SpecialResource;
 use crate::model::geography::Terrain;
 use crate::model::geography::TerrainImprovement;
@@ -908,6 +909,222 @@ fn a_rival_does_not_declare_war_on_a_fight_it_would_lose() {
         Location::new(1, 0),
         "the militia does not step onto a fight it would lose"
     );
+}
+
+/// Two militia of equal power side by side on open ground: the human at
+/// (0, 0), a rival at (1, 0). Even odds, so the difficulty alone decides
+/// whether the rival attacks.
+fn even_odds_duel(difficulty: Difficulty) -> Engine {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.set_difficulty(difficulty);
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(0, 0),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+    engine
+}
+
+/// On Easy the neighbors never draw the sword, even beside a target they
+/// would beat: the same legion-versus-militia matchup that starts a war on
+/// Normal leaves the human in peace.
+#[test]
+fn easy_rivals_never_declare_war() {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.set_difficulty(Difficulty::Easy);
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(0, 0),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+
+    engine.submit(Command::EndTurn);
+
+    assert!(
+        !engine.game.at_war(PlayerId::new(0), PlayerId::new(1)),
+        "an Easy rival never declares war, however weak its neighbor"
+    );
+    assert!(
+        engine.drain_rival_wars().is_empty(),
+        "no war is announced on Easy"
+    );
+    assert!(
+        engine
+            .game
+            .units
+            .iter()
+            .any(|unit| unit.owner() == PlayerId::new(0) && unit.location == Location::new(0, 0)),
+        "the human is left standing in peace"
+    );
+}
+
+/// Easy stops a rival *starting* a war, not fighting one: when the human opens
+/// hostilities, the legion beside the militia still attacks on its turn.
+#[test]
+fn easy_rivals_still_fight_a_war_the_human_declares() {
+    let mut engine = Engine::new(
+        5,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.set_difficulty(Difficulty::Easy);
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(0, 0),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+    engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+
+    engine.submit(Command::EndTurn);
+
+    assert!(
+        engine
+            .drain_rival_motion()
+            .iter()
+            .any(|motion| motion.battle),
+        "on Easy the rival still attacks a war the human began"
+    );
+}
+
+/// Normal holds out for a strict edge, so an even-power neighbor is refused.
+#[test]
+fn normal_rivals_will_not_attack_at_even_odds() {
+    let mut engine = even_odds_duel(Difficulty::Normal);
+
+    engine.submit(Command::EndTurn);
+
+    assert!(
+        !engine.game.at_war(PlayerId::new(0), PlayerId::new(1)),
+        "Normal will not start a fight it does not have the edge in"
+    );
+    assert!(engine.drain_rival_wars().is_empty(), "no war is announced");
+}
+
+/// Hard settles for an even fight, which is what makes its rivals so much
+/// more likely to fall on the player.
+#[test]
+fn hard_rivals_attack_at_even_odds() {
+    let mut engine = even_odds_duel(Difficulty::Hard);
+
+    engine.submit(Command::EndTurn);
+
+    assert!(
+        engine.game.at_war(PlayerId::new(0), PlayerId::new(1)),
+        "a Hard rival takes an even fight"
+    );
+    assert_eq!(
+        engine.drain_rival_wars(),
+        vec![RivalWar {
+            rival: PlayerId::new(1)
+        }],
+        "the war is announced for the window"
+    );
+}
+
+/// Adopting a difficulty stakes the human's opening treasury from it and
+/// leaves the rivals empty-handed.
+#[test]
+fn setting_difficulty_stakes_the_starting_treasury() {
+    let mut engine = Engine::new(
+        3,
+        1,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.set_difficulty(Difficulty::Easy);
+    assert_eq!(
+        engine.game.players[0].gold(),
+        50,
+        "Easy stakes the human a treasury"
+    );
+    assert_eq!(engine.game.players[1].gold(), 0, "rivals start empty");
+    engine.set_difficulty(Difficulty::Hard);
+    assert_eq!(
+        engine.game.players[0].gold(),
+        0,
+        "Hard empties the human's treasury"
+    );
+}
+
+/// The difficulty's economic handicap is a property of the rival, never of the
+/// player: the human's cities always run at identity, however the match is set.
+#[test]
+fn only_rival_cities_wear_the_difficulty_economy() {
+    let mut engine = Engine::new(
+        3,
+        2,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.set_difficulty(Difficulty::Easy);
+    assert_eq!(engine.economy_scales(PlayerId::new(0)), Scales::IDENTITY);
+    assert_eq!(
+        engine.economy_scales(PlayerId::new(1)),
+        Difficulty::Easy.rival_economy()
+    );
+
+    engine.set_difficulty(Difficulty::Normal);
+    assert_eq!(engine.economy_scales(PlayerId::new(1)), Scales::IDENTITY);
+    assert_eq!(engine.economy_scales(PlayerId::new(0)), Scales::IDENTITY);
 }
 
 /// An undefended, grown human city next to a rival legion falls the moment

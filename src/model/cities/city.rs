@@ -1,6 +1,7 @@
 use crate::model::cartography::Location;
 use crate::model::cities::{CityId, CityImprovement, CityTick, ProductionTarget};
 use crate::model::civilizations::PlayerId;
+use crate::model::difficulty::Scale;
 use serde::{Deserialize, Serialize};
 
 /// The largest a city can ever be. Growth stops here rather than running on,
@@ -142,6 +143,18 @@ impl City {
 
     /// Advance the city one turn given this turn's food and resource income.
     pub fn tick(&mut self, food_income: u32, resource_income: u32) -> CityTick {
+        self.tick_scaled(food_income, resource_income, Scale::IDENTITY)
+    }
+
+    /// As [`City::tick`], with the food needed to grow multiplied by `growth` —
+    /// a rival's difficulty handicap. The human's cities always pass
+    /// [`Scale::IDENTITY`].
+    pub fn tick_scaled(
+        &mut self,
+        food_income: u32,
+        resource_income: u32,
+        growth: Scale,
+    ) -> CityTick {
         let consumption = self.food_consumption();
         let net_food = food_income as i32 - consumption as i32;
         let produced = resource_income;
@@ -156,7 +169,7 @@ impl City {
         self.resources = self.resources.saturating_add(produced);
         self.resource_stored = self.resource_stored.saturating_add(produced);
 
-        let growth_need = self.population * 2;
+        let growth_need = growth.apply(self.growth_target());
         let mut grew = false;
         if net_food >= 0 && self.food >= growth_need {
             self.food -= growth_need;

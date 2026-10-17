@@ -8,6 +8,7 @@ use crate::model::cartography::Location;
 use crate::model::cartography::generation::MapGenerator;
 use crate::model::cities::CityId;
 use crate::model::civilizations::{Civilization, PlayerId};
+use crate::model::difficulty::{Difficulty, Scales};
 use crate::model::geography::Terrain;
 use crate::model::units::UnitClass;
 #[cfg(test)]
@@ -67,6 +68,10 @@ pub struct Engine {
     /// it in a window of its own; drained by `drain_sabotage_notice`, never
     /// persisted.
     pub(crate) sabotage: Option<SabotageNotice>,
+    /// The difficulty the game runs at. Tunes how aggressively rivals play —
+    /// whether they declare war at all, and how readily they attack — and the
+    /// human's starting treasury. Persisted with the save.
+    pub(crate) difficulty: Difficulty,
 }
 
 impl Default for Engine {
@@ -114,6 +119,40 @@ impl Engine {
             investigation: None,
             steal: None,
             sabotage: None,
+            difficulty: Difficulty::Normal,
+        }
+    }
+
+    /// Adopt `difficulty` for the game and stake each civilization's opening
+    /// treasury. The human — always player zero — draws the difficulty's
+    /// starting gold; rivals begin empty, as they did in Civ 1. Gold only buys
+    /// the human's diplomat actions today, so the rival figure is a placeholder
+    /// for a future where rivals spend too.
+    ///
+    /// This is a construction-time setter: it re-stakes every treasury, so
+    /// `start_game` calls it once, before `populate_starting_world`, rather than
+    /// there being any mid-game use. Saving carries the level, not a re-stake.
+    pub fn set_difficulty(&mut self, difficulty: Difficulty) {
+        self.difficulty = difficulty;
+        for (index, player) in self.game.players.iter_mut().enumerate() {
+            let gold = if index == PlayerId::new(0).index() {
+                difficulty.starting_gold()
+            } else {
+                0
+            };
+            player.set_gold(gold);
+        }
+    }
+
+    /// The economic multipliers `owner`'s cities run at: the human — always
+    /// player zero — at identity, a rival at the difficulty's handicap. The
+    /// single place the human/rival split is decided, so no city-processing
+    /// path can scale the player by accident.
+    pub(super) fn economy_scales(&self, owner: PlayerId) -> Scales {
+        if owner == PlayerId::new(0) {
+            Scales::IDENTITY
+        } else {
+            self.difficulty.rival_economy()
         }
     }
 

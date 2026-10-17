@@ -7,7 +7,10 @@ use crate::model::units::UnitClass;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
-/// The gold a civilization begins a new game with.
+/// The gold a fresh `Player` is minted with, before difficulty is chosen. A
+/// real game overwrites it: `Engine::set_difficulty` stakes `Difficulty`'s
+/// opening treasury (Easy 50, Normal and Hard 0), so this is only the fallback
+/// an engine built without one keeps.
 pub const STARTING_GOLD: u32 = 50;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -54,7 +57,8 @@ impl Player {
         true
     }
 
-    #[cfg(test)]
+    /// Overwrite the treasury outright. The one non-test caller is the engine
+    /// staking a difficulty's opening gold at the start of a game.
     pub(crate) fn set_gold(&mut self, gold: u32) {
         self.gold = gold;
     }
