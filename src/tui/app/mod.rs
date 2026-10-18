@@ -32,12 +32,13 @@ use super::start_confirm::StartConfirm;
 use super::starvation_dialog::{self, StarvationDialog};
 use super::status_bar::StatusBar;
 use super::steal_dialog::{self, StealDialog};
+use super::upkeep_dialog::{self, UpkeepDialog};
 use super::war_dialog::{self, WarDialog};
 use crate::crash_log;
 use crate::game_engine::event::Event as GameEvent;
 use crate::game_engine::{
     BuildComplete, DiplomatOption, Engine, GameOutcome, GameView, SabotageNotice, StarvationNotice,
-    StealOutcome,
+    StealOutcome, UpkeepNotice,
 };
 use crate::model::advancements::Advancement;
 use crate::model::cartography::{Direction, Location};
@@ -150,6 +151,14 @@ struct WarNoticeState {
 /// queue empties.
 struct StarvationNoticeState {
     queue: VecDeque<StarvationNotice>,
+}
+
+/// The upkeep window's live state: every round the player could not pay their
+/// improvements' upkeep during the round just resolved, oldest first. Each is
+/// announced by its own window; acknowledging one moves on to the next, and the
+/// window closes once the queue empties.
+struct UpkeepNoticeState {
+    queue: VecDeque<UpkeepNotice>,
 }
 
 /// The build-completion window's live state: every one of the player's cities
@@ -273,6 +282,11 @@ pub struct App {
     starvation_notice: Option<StarvationNoticeState>,
     /// The last-drawn starvation rectangle, for mouse hit-testing.
     starvation_notice_rect: Cell<Option<Rect>>,
+    /// The open upkeep window, if the player's treasury ran dry this round; its
+    /// queue holds every shortfall still to be announced.
+    upkeep_notice: Option<UpkeepNoticeState>,
+    /// The last-drawn upkeep rectangle, for mouse hit-testing.
+    upkeep_notice_rect: Cell<Option<Rect>>,
     /// The open build-completion window, if one of the player's cities
     /// finished building this round; its queue holds every completion still to
     /// be announced.
@@ -379,6 +393,8 @@ impl App {
             war_notice_rect: Cell::new(None),
             starvation_notice: None,
             starvation_notice_rect: Cell::new(None),
+            upkeep_notice: None,
+            upkeep_notice_rect: Cell::new(None),
             build_notice: None,
             build_notice_rect: Cell::new(None),
             save_prompt: None,
@@ -695,6 +711,18 @@ impl App {
                     } else {
                         app.starvation_notice_rect.set(None);
                     }
+                    // The upkeep window floats over the map when the player's
+                    // treasury could not pay its improvements this round; the
+                    // queue announces each shortfall in turn.
+                    if let Some(notice) = &app.upkeep_notice
+                        && let Some(shortfall) = notice.queue.front()
+                    {
+                        let rect = upkeep_dialog::dialog_rect(area);
+                        frame.render_widget(UpkeepDialog::new(shortfall.clone()), rect);
+                        app.upkeep_notice_rect.set(Some(rect));
+                    } else {
+                        app.upkeep_notice_rect.set(None);
+                    }
                     // The build-completion window floats over the map when one of the
                     // player's cities finished building this round. It is
                     // suspended while the player is inside a city window it
@@ -881,6 +909,7 @@ fn window_is_open(app: &App) -> bool {
         || app.diplomacy.is_some()
         || app.war_notice.is_some()
         || app.starvation_notice.is_some()
+        || app.upkeep_notice.is_some()
         // A suspended build notice is not on screen — the city window it opened
         // is — so only a notice actually showing counts as a window.
         || app.current_build_notice().is_some()

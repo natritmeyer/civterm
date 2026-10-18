@@ -188,6 +188,35 @@ impl App {
         }
     }
 
+    /// Acknowledge the upkeep window currently showing: drop the announced
+    /// shortfall and close the window once none remains.
+    pub(super) fn upkeep_notice_confirm(&mut self) {
+        let Some(notice) = &mut self.upkeep_notice else {
+            return;
+        };
+        notice.queue.pop_front();
+        if notice.queue.is_empty() {
+            self.upkeep_notice = None;
+            self.upkeep_notice_rect.set(None);
+        }
+    }
+
+    /// The `b` key on the city window: pay gold to finish the open city's build
+    /// at once. It acts only on the player's own city — the engine re-checks
+    /// the ownership and the treasury and rejects with an event if either
+    /// fails, so a foreign report cannot be rushed and a poor treasury is told
+    /// why.
+    pub(super) fn buy_production(&mut self) {
+        let Some(city) = self.selected_city else {
+            return;
+        };
+        let Some(engine) = self.engine.as_mut() else {
+            return;
+        };
+        let events = engine.submit(Command::BuyProduction { city });
+        self.record_events(events);
+    }
+
     /// Acknowledge the technology-stolen window currently showing: the prize
     /// has been read, and the window closes.
     pub(super) fn steal_notice_confirm(&mut self) {
@@ -350,6 +379,22 @@ impl App {
         }
         if starvation_dialog::ok_button_rect(panel).contains((mouse.column, mouse.row).into()) {
             self.starvation_notice_confirm();
+        }
+    }
+
+    /// A click on the upkeep window's OK button acknowledges it.
+    pub(super) fn handle_upkeep_notice_mouse(&mut self, mouse: MouseEvent) {
+        let Some(panel) = self.upkeep_notice_rect.get() else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        if upkeep_dialog::ok_button_rect(panel).contains((mouse.column, mouse.row).into()) {
+            self.upkeep_notice_confirm();
         }
     }
 

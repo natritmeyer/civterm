@@ -186,20 +186,7 @@ impl City {
         if lost_citizen {
             self.shrink();
         }
-        let completed = match self.production {
-            Some(target) if self.resource_stored >= target.resource_cost() => {
-                self.resource_stored = 0;
-                self.production = None;
-                match target {
-                    ProductionTarget::Improvement(improvement) => {
-                        self.add_improvement(improvement);
-                        Some(target)
-                    }
-                    ProductionTarget::Unit(_) => Some(target),
-                }
-            }
-            _ => None,
-        };
+        let completed = self.complete_if_ready();
 
         CityTick {
             produced,
@@ -216,6 +203,50 @@ impl City {
 
     pub fn resource_stored(&self) -> u32 {
         self.resource_stored
+    }
+
+    /// The gold this city's improvements cost to keep each turn: the sum of
+    /// their maintenance, charged once against the owner's treasury.
+    pub fn upkeep(&self) -> u32 {
+        self.improvements
+            .iter()
+            .map(|improvement| improvement.upkeep())
+            .sum()
+    }
+
+    /// Complete the current build if enough shields are stored: the order is
+    /// cleared, an improvement is installed, and a unit is handed back for the
+    /// engine to muster. Returns what was built, if anything.
+    fn complete_if_ready(&mut self) -> Option<ProductionTarget> {
+        let target = self.production?;
+        if self.resource_stored < target.resource_cost() {
+            return None;
+        }
+        self.resource_stored = 0;
+        self.production = None;
+        match target {
+            ProductionTarget::Improvement(improvement) => {
+                self.add_improvement(improvement);
+                Some(target)
+            }
+            ProductionTarget::Unit(_) => Some(target),
+        }
+    }
+
+    /// The gold a rush purchase of the current build costs: twice the shields
+    /// still needed, and never less than one. `None` when the city is idle.
+    pub fn rush_cost(&self) -> Option<u32> {
+        self.production
+            .map(|target| (2 * target.resource_cost().saturating_sub(self.resource_stored)).max(1))
+    }
+
+    /// Finish the current build at once, as a rush purchase does: the store is
+    /// filled to the target's cost and the build completes. Returns what was
+    /// built, if the city was building anything.
+    pub fn rush_production(&mut self) -> Option<ProductionTarget> {
+        let target = self.production?;
+        self.resource_stored = target.resource_cost();
+        self.complete_if_ready()
     }
 
     pub fn research(&self) -> u32 {
@@ -248,8 +279,9 @@ impl City {
         raw * numerator / denominator
     }
 
-    /// Gold minted on top of the raw special-resource yield. A Marketplace
-    /// adds half again to it and a Bank adds half again to that.
+    /// Gold minted from a city's raw tax base: its worked-tile trade arrows
+    /// plus any special-resource gold. A Marketplace adds half again to it and
+    /// a Bank adds half again to that.
     pub fn gold_income(&self, raw: u32) -> u32 {
         let mut numerator = 1u32;
         let mut denominator = 1u32;
@@ -692,6 +724,55 @@ mod tests {
             city.production_target(),
             Some(ProductionTarget::Improvement(CityImprovement::Library))
         );
+        assert_eq!(city.resource_stored(), 0);
+    }
+
+    #[test]
+    fn upkeep_sums_the_maintenance_of_held_improvements() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert_eq!(city.upkeep(), 0);
+        city.add_improvement(CityImprovement::Temple); // 1
+        city.add_improvement(CityImprovement::Colosseum); // 4
+        city.add_improvement(CityImprovement::Bank); // 3
+        assert_eq!(city.upkeep(), 8);
+    }
+
+    #[test]
+    fn rush_cost_is_twice_the_shields_remaining() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        assert_eq!(city.rush_cost(), None, "an idle city has nothing to rush");
+        city.set_production(ProductionTarget::Unit(UnitClass::Militia)); // cost 10
+        assert_eq!(city.rush_cost(), Some(20));
+        city.tick(0, 4); // 4 stored
+        assert_eq!(city.rush_cost(), Some(12));
+    }
+
+    #[test]
+    fn a_rushed_build_completes_at_once() {
+        let mut city = City::new(
+            "London",
+            Location::new(0, 0),
+            PlayerId::new(0),
+            CityId::new(0),
+        );
+        city.set_production(ProductionTarget::Improvement(CityImprovement::Temple));
+        city.tick(0, 5); // half built
+        assert_eq!(
+            city.rush_production(),
+            Some(ProductionTarget::Improvement(CityImprovement::Temple))
+        );
+        assert!(city.improvements().contains(&CityImprovement::Temple));
+        assert_eq!(city.production_target(), None);
         assert_eq!(city.resource_stored(), 0);
     }
 }

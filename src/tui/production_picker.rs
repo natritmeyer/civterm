@@ -90,7 +90,18 @@ impl<'a> ProductionPicker<'a> {
                     SELECTED,
                 );
             }
-            let text = format!("{} ({})", entry.label, entry.target.resource_cost());
+            // An improvement that costs gold to keep each round shows its
+            // upkeep beside its build price, so the buy and the ongoing bill
+            // are read together.
+            let text = match entry.target {
+                ProductionTarget::Improvement(improvement) if improvement.upkeep() > 0 => format!(
+                    "{} ({}, {}g/turn)",
+                    entry.label,
+                    entry.target.resource_cost(),
+                    improvement.upkeep()
+                ),
+                _ => format!("{} ({})", entry.label, entry.target.resource_cost()),
+            };
             draw_text(buf, column.x + 2, row, &text, style);
         }
     }
@@ -491,6 +502,28 @@ mod tests {
         let (_, improvements) = pick_rows(&view, CityId::new(0));
         let names: Vec<&str> = improvements.iter().map(|row| row.label.as_str()).collect();
         assert_eq!(names, vec!["Barracks", "Marketplace"]);
+    }
+
+    #[test]
+    fn an_improvement_row_shows_its_upkeep() {
+        let buf = render(picker_panel(), 0, 0, 0);
+        let panel = picker_panel();
+        let improvements_col = column_rects(panel).1;
+        let rows = rows_rect(panel);
+        let arrows = (0..24)
+            .map(|i| buf.cell((improvements_col.x + i, rows.y)).unwrap().symbol())
+            .collect::<String>();
+        let barracks = (0..24)
+            .map(|i| {
+                buf.cell((improvements_col.x + i, rows.y + 1))
+                    .unwrap()
+                    .symbol()
+            })
+            .collect::<String>();
+        assert!(
+            arrows.contains("1g/turn") || barracks.contains("1g/turn"),
+            "an improvement row names its upkeep: {arrows:?} / {barracks:?}"
+        );
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub mod starvation_dialog;
 pub mod status_bar;
 pub mod steal_dialog;
 pub mod theme;
+pub mod upkeep_dialog;
 pub mod war_dialog;
 pub mod window_geometry;
 pub use app::App;

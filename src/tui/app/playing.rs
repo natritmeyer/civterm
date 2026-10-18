@@ -49,6 +49,18 @@ impl App {
             }
             return false;
         }
+        // While an upkeep window is up it captures the keyboard: enter, space
+        // or esc acknowledges the empty treasury and the disbanded unit and
+        // moves on to the next shortfall.
+        if self.upkeep_notice.is_some() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
+                    self.upkeep_notice_confirm();
+                }
+                _ => {}
+            }
+            return false;
+        }
         // While a build-completion window is up it captures the keyboard.
         // Return takes the window's offered action — opening the announced
         // city so its next order can be set — exactly as clicking "Next
@@ -145,8 +157,10 @@ impl App {
         // a stray space cannot end the turn and the movement keys cannot act on
         // the tile the window is covering.
         if self.selected_city.is_some() {
-            if key.code == KeyCode::Esc {
-                self.close_city_window();
+            match key.code {
+                KeyCode::Esc => self.close_city_window(),
+                KeyCode::Char('b') | KeyCode::Char('B') => self.buy_production(),
+                _ => {}
             }
             return false;
         }
@@ -353,6 +367,7 @@ impl App {
             || self.diplomacy.is_some()
             || self.war_notice.is_some()
             || self.starvation_notice.is_some()
+            || self.upkeep_notice.is_some()
             || self.command_picker_open
             || self.production_picker_open
             || self.save_prompt.is_some()
@@ -535,6 +550,7 @@ impl App {
             || self.diplomacy_rect.get().is_some()
             || self.war_notice_rect.get().is_some()
             || self.starvation_notice_rect.get().is_some()
+            || self.upkeep_notice_rect.get().is_some()
             || self.build_notice_rect.get().is_some()
             || self.command_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
@@ -640,6 +656,13 @@ impl App {
             let starved = engine.drain_starvations();
             self.starvation_notice = (!starved.is_empty()).then(|| StarvationNoticeState {
                 queue: starved.into(),
+            });
+            // A round the player could not pay for is announced by a window the
+            // player acknowledges; several shortfalls queue up one after
+            // another.
+            let shortfalls = engine.drain_upkeep_notices();
+            self.upkeep_notice = (!shortfalls.is_empty()).then(|| UpkeepNoticeState {
+                queue: shortfalls.into(),
             });
             // A city that finished building this round is announced by a
             // window offering OK (move to the next such city) or Next Order

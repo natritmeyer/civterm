@@ -74,6 +74,13 @@ impl App {
             self.handle_starvation_notice_mouse(mouse);
             return;
         }
+        // The upkeep window floats above the map like the starvation window:
+        // its OK button is the only thing a click can act on until the queue
+        // empties.
+        if self.upkeep_notice_rect.get().is_some() {
+            self.handle_upkeep_notice_mouse(mouse);
+            return;
+        }
         // The build-completion window floats above the map: its buttons are the
         // only thing a click can act on until the queue empties.
         if self.build_notice_rect.get().is_some() {
@@ -197,6 +204,43 @@ impl App {
         self.resume_build_notice();
     }
 
+    /// A click on the city window's "Buy" button: pays the city's rush price in
+    /// gold to finish its build at once. Only the owner's own city has the
+    /// button, so a foreign report never spends the player's treasury. Returns
+    /// whether the click landed on it.
+    fn buy_click(&mut self, window: Rect) -> bool {
+        let Some((column, row)) = self.mouse_position.get() else {
+            return false;
+        };
+        if column == u16::MAX || row == u16::MAX {
+            return false;
+        }
+        let Some(city_id) = self.selected_city else {
+            return false;
+        };
+        let owns = self
+            .engine
+            .as_ref()
+            .and_then(|engine| {
+                let city = engine.city(city_id)?;
+                Some(city.owner() == engine.current_player_id())
+            })
+            .unwrap_or(false);
+        if !owns {
+            return false;
+        }
+        let buy = city_window::buy_button_rect(city_window::production_panel_rect(window));
+        if !buy.contains((column, row).into()) {
+            return false;
+        }
+        let Some(engine) = self.engine.as_mut() else {
+            return false;
+        };
+        let events = engine.submit(Command::BuyProduction { city: city_id });
+        self.record_events(events);
+        true
+    }
+
     /// A left press over the map pane begins a click-or-drag gesture. Presses
     /// over the city window or its buttons act immediately, and presses over
     /// the left column just clear the city selection.
@@ -213,6 +257,9 @@ impl App {
         // anywhere else inside it are consumed rather than reaching the map.
         if let Some((window, close)) = self.moused_window.get() {
             if self.unfortify_click(window) {
+                return;
+            }
+            if self.buy_click(window) {
                 return;
             }
             let change =

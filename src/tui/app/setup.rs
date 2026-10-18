@@ -253,6 +253,8 @@ impl App {
         self.war_notice_rect = Cell::new(None);
         self.starvation_notice = None;
         self.starvation_notice_rect = Cell::new(None);
+        self.upkeep_notice = None;
+        self.upkeep_notice_rect = Cell::new(None);
         self.build_notice = None;
         self.build_notice_rect = Cell::new(None);
         self.command_picker_open = false;

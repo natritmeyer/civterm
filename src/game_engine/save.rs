@@ -75,6 +75,7 @@ impl SaveData {
                 investigation: None,
                 steal: None,
                 sabotage: None,
+                upkeeps: Vec::new(),
                 difficulty: self.difficulty,
             },
             competition: self.competition,
@@ -141,7 +142,7 @@ pub fn load_game(path: impl AsRef<Path>) -> Result<LoadedGame, SaveError> {
 mod tests {
     use super::*;
     use crate::game_engine::command::Command;
-    use crate::game_engine::{BuildComplete, Event, GameView, Player};
+    use crate::game_engine::{BuildComplete, Event, GameView, Player, TradeRoute};
     use crate::model::cartography::{Direction, Location};
     use crate::model::cities::{CityId, ProductionTarget};
     use crate::model::civilizations::{Civilization, PlayerId};
@@ -244,6 +245,54 @@ mod tests {
             "a homeless settler loads homeless"
         );
         assert_eq!(loaded.engine.game, engine.game);
+    }
+
+    /// A trade route is model state on the `Game`, so it must come back exactly
+    /// as it went down — including the terms it quoted when it was opened.
+    #[test]
+    fn a_trade_route_survives_save_and_load() {
+        let mut engine = engine();
+        let home = engine
+            .game
+            .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+        let target = engine
+            .game
+            .add_city(PlayerId::new(1), "Zimbabwe", Location::new(6, 2));
+        engine.game.trade_routes.push(TradeRoute {
+            from: home,
+            to: target,
+            gold: 8,
+        });
+
+        let data = SaveData::capture(&engine, Competition::new(2), Difficulty::Hard);
+        let restored: SaveData =
+            serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap();
+        let loaded = restored.into_loaded().unwrap();
+
+        assert_eq!(loaded.engine.game, engine.game);
+        assert_eq!(loaded.engine.game.trade_routes.len(), 1);
+        assert_eq!(loaded.engine.game.trade_routes[0].gold, 8);
+    }
+
+    /// A file written before trade routes existed has no `trade_routes` field
+    /// at all; the `#[serde(default)]` on the field is what keeps it loading
+    /// rather than breaking every older save the moment the feature landed.
+    #[test]
+    fn a_save_written_before_trade_routes_were_added_still_loads() {
+        let engine = engine();
+        let data = SaveData::capture(&engine, Competition::new(1), Difficulty::Normal);
+        let json = serde_json::to_string(&data).unwrap();
+        let older = json.replace("\"trade_routes\":[],", "");
+
+        let loaded = serde_json::from_str::<SaveData>(&older)
+            .unwrap()
+            .into_loaded()
+            .unwrap();
+
+        assert!(
+            loaded.engine.game.trade_routes.is_empty(),
+            "an older file loads with no routes"
+        );
     }
 
     #[test]

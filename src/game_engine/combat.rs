@@ -227,6 +227,9 @@ impl Engine {
         let loser = self.game.players[old_owner.index()].civilization;
         if overrun {
             self.game.cities.retain(|c| c.id() != city_id);
+            // A route cannot outlive an endpoint: destroying the city breaks
+            // every trade link that ended here.
+            self.game.remove_trade_routes_touching(city_id);
             self.events.push(Event::between(
                 self.current_player_index,
                 old_owner,

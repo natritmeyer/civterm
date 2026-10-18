@@ -63,6 +63,12 @@ impl UnitClass {
     pub fn sieges(&self) -> bool {
         matches!(self, UnitClass::Catapult)
     }
+    /// Whether this class enters a foreign city to trade rather than to fight.
+    /// A Caravan, like a diplomat, may walk into a peaceful neighbour's city;
+    /// unlike one it is spent on arrival, turning the walk into a trade route.
+    pub fn trades(&self) -> bool {
+        matches!(self, UnitClass::Caravan)
+    }
     pub fn can_found_city(&self) -> bool {
         matches!(self, UnitClass::Settler)
     }
@@ -173,6 +179,21 @@ mod tests {
         assert_eq!(UnitClass::Sail.defence(), 1);
         assert_eq!(UnitClass::Frigate.attack(), 2);
         assert_eq!(UnitClass::Frigate.defence(), 2);
+    }
+
+    #[test]
+    fn only_the_caravan_trades() {
+        assert!(UnitClass::Caravan.trades());
+        assert!(
+            !UnitClass::Diplomat.trades(),
+            "a diplomat walks in to talk, not to trade"
+        );
+        assert!(!UnitClass::Settler.trades());
+        assert!(!UnitClass::Militia.trades());
+        assert!(
+            UnitClass::Caravan.enters_to_conquer(),
+            "a caravan is still a unit that takes the ground it walks on"
+        );
     }
 
     #[test]

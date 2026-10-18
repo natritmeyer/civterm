@@ -1,11 +1,11 @@
 use crate::game_engine::CityIncome;
 use crate::game_engine::player::Player;
+use crate::game_engine::trade::TradeRoute;
 use crate::model::advancements::Advancement;
 use crate::model::cartography::{Direction, Location, Map};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
 use crate::model::difficulty::Scales;
-use crate::model::geography::SpecialResource;
 use crate::model::units::{Unit, UnitClass, UnitId};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
@@ -16,6 +16,10 @@ pub struct Game {
     pub players: Vec<Player>,
     pub units: Vec<Unit>,
     pub cities: Vec<City>,
+    /// The lasting trade links between cities. Model state, not engine state:
+    /// it round-trips through a save inside `Game`.
+    #[serde(default)]
+    pub trade_routes: Vec<TradeRoute>,
     next_unit_id: usize,
     next_city_id: usize,
 }
@@ -35,6 +39,7 @@ impl Game {
             players,
             units: Vec::new(),
             cities: Vec::new(),
+            trade_routes: Vec::new(),
             next_unit_id: 0,
             next_city_id: 0,
         }
@@ -212,7 +217,7 @@ impl Game {
 
     /// The full per-turn harvest of a city for display: food, resources and
     /// trade from its worked tiles (the city centre is always the first of
-    /// them), gold from the Gold resource, research from cities, and the
+    /// them), the gold it banks for its owner, research from cities, and the
     /// distinct special resources being worked.
     pub fn city_breakdown(&self, city_id: CityId) -> CityIncome {
         let city = self
@@ -223,32 +228,50 @@ impl Game {
         let mut food = 0u32;
         let mut resources = 0u32;
         let mut trade = 0u32;
-        let mut gold = 0u32;
-        let mut special_resources: Vec<SpecialResource> = Vec::new();
-        let mut consider = |location: Location| {
-            let tile = self.map.tile_at(location);
+        let mut special_resources = Vec::new();
+        for location in city.worked_tiles() {
+            let tile = self.map.tile_at(*location);
             food += tile.yields_food() as u32;
             resources += tile.yields_resources() as u32;
             trade += tile.yields_trade() as u32;
-            if let Some(resource) = tile.resource() {
-                gold += resource.yields_gold() as u32;
-                if !special_resources.contains(&resource) {
-                    special_resources.push(resource);
-                }
+            if let Some(resource) = tile.resource()
+                && !special_resources.contains(&resource)
+            {
+                special_resources.push(resource);
             }
-        };
-        for location in city.worked_tiles() {
-            consider(*location);
         }
         special_resources.sort_by_key(|resource| format!("{resource:?}"));
         CityIncome {
             food: city.food_income(food),
             resources: city.resource_income(resources),
             trade,
-            gold: city.gold_income(gold),
+            // Read back through the same helper the turn loop banks from, so
+            // the window's Gold row can never drift from the real take.
+            gold: self.city_gold_income(city_id),
             research: city.research(),
             special_resources,
         }
+    }
+
+    /// The gold a city banks for its owner in one turn. Its raw tax base is the
+    /// worked-tile trade arrows plus any special-resource gold, scaled by the
+    /// city's Marketplace/Bank bonuses — the single source the turn loop banks
+    /// and the city window's Gold row reports.
+    pub fn city_gold_income(&self, city_id: CityId) -> u32 {
+        let city = self
+            .cities
+            .iter()
+            .find(|city| city.id() == city_id)
+            .expect("city to read income from exists");
+        let mut raw = 0u32;
+        for location in city.worked_tiles() {
+            let tile = self.map.tile_at(*location);
+            raw += tile.yields_trade() as u32;
+            if let Some(resource) = tile.resource() {
+                raw += resource.yields_gold() as u32;
+            }
+        }
+        city.gold_income(raw)
     }
 
     /// Total research produced by all of a player's cities this turn.
@@ -373,17 +396,27 @@ impl Game {
 
     /// Tick a city for one turn, delegating the economy to the model. The
     /// difficulty's rival handicaps arrive as `scales`: a rival's shield output
-    /// is scaled here and its growth box is scaled in the model, while the
-    /// human's cities always pass [`Scales::IDENTITY`].
+    /// and gold take are scaled here and its growth box is scaled in the model,
+    /// while the human's cities always pass [`Scales::IDENTITY`]. The city's
+    /// gold take is banked to its owner here, so a city's whole turn lands
+    /// atomically.
     pub(crate) fn process_city(&mut self, city_id: CityId, scales: Scales) -> CityProcess {
         let (food_income, resource_income) = self.city_income(city_id);
         let resource_income = scales.production.apply(resource_income);
+        let gold = scales.gold.apply(self.city_gold_income(city_id));
+        let owner = self
+            .cities
+            .iter()
+            .find(|city| city.id() == city_id)
+            .expect("city to process exists")
+            .owner();
         let tick = self
             .cities
             .iter_mut()
             .find(|city| city.id() == city_id)
             .expect("city to process exists")
             .tick_scaled(food_income, resource_income, scales.growth);
+        self.players[owner.index()].add_gold(gold);
         CityProcess {
             produced: tick.produced,
             grew: tick.grew,
@@ -932,6 +965,37 @@ mod tests {
         game.cities[0].add_worked_tile(Location::new(3, 2));
         // centre ocean 2/0 + grassland 2/0 + irrigated plains 3/1
         assert_eq!(game.city_income(london), (7, 1));
+    }
+
+    #[test]
+    fn a_city_banks_its_trade_as_gold() {
+        let mut game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
+        let grassland = Location::new(1, 2);
+        *game.map.tile_at_mut(Location::new(2, 2)) = Tile::new(Terrain::Grassland);
+        *game.map.tile_at_mut(grassland) = Tile::new(Terrain::Grassland);
+        let london = game.add_city(player(), "London", Location::new(2, 2));
+        game.cities[0].add_worked_tile(grassland);
+        // Grassland centre (1 trade) + grassland tile (1 trade), no multiplier.
+        assert_eq!(game.city_gold_income(london), 2);
+        // The window reads the same take back through the breakdown.
+        assert_eq!(game.city_breakdown(london).gold, 2);
+        // A Marketplace adds half again: 2 -> 3.
+        game.cities[0].add_improvement(CityImprovement::Marketplace);
+        assert_eq!(game.city_gold_income(london), 3);
+        assert_eq!(game.city_breakdown(london).gold, 3);
+    }
+
+    #[test]
+    fn processing_a_city_pays_its_gold_take_to_the_owner() {
+        let mut game = Game::new(5, 5, Player::new(Civilization::English), Vec::new());
+        let grassland = Location::new(1, 2);
+        *game.map.tile_at_mut(Location::new(2, 2)) = Tile::new(Terrain::Grassland);
+        *game.map.tile_at_mut(grassland) = Tile::new(Terrain::Grassland);
+        let london = game.add_city(player(), "London", Location::new(2, 2));
+        game.cities[0].add_worked_tile(grassland);
+        let before = game.players[0].gold();
+        game.process_city(london, Scales::IDENTITY);
+        assert_eq!(game.players[0].gold(), before + 2);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::game_engine::calendar::calendar_year;
-use crate::game_engine::{CityIncome, Engine, GameView};
+use crate::game_engine::{CityIncome, Engine, GameView, TradeRoute};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::{Location, Tile};
 use crate::model::cities::{City, CityId, ProductionTarget};
@@ -88,6 +88,10 @@ impl GameView for Engine {
             .iter()
             .filter(|unit| unit.home_city() == Some(city))
             .collect()
+    }
+
+    fn trade_routes_for(&self, city: CityId) -> Vec<&TradeRoute> {
+        self.game.trade_routes_for(city)
     }
 
     fn player_units(&self) -> Vec<&Unit> {

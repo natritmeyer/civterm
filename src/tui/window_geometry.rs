@@ -215,7 +215,7 @@ mod every_window {
     use crate::tui::{
         build_complete_dialog, city_window, command_picker, diplomacy_dialog,
         diplomat_actions_dialog, production_picker, quit_dialog, research_dialog, sabotage_dialog,
-        save_load_prompt, starvation_dialog, steal_dialog, war_dialog,
+        save_load_prompt, starvation_dialog, steal_dialog, upkeep_dialog, war_dialog,
     };
 
     /// Every terminal a player can produce by dragging a window down, and then
@@ -287,6 +287,7 @@ mod every_window {
                 let _ = steal_dialog::ok_button_rect(panel);
                 let _ = sabotage_dialog::ok_button_rect(panel);
                 let _ = starvation_dialog::ok_button_rect(panel);
+                let _ = upkeep_dialog::ok_button_rect(panel);
                 let _ = command_picker::rows_rect(panel);
                 let _ = command_picker::cancel_button_rect(panel);
                 let _ = command_picker::save_button_rect(panel);
@@ -297,6 +298,9 @@ mod every_window {
                 let _ = city_window::production_panel_rect(panel);
                 let _ = city_window::bottom_panels(panel);
                 let _ = city_window::change_button_rect(city_window::production_panel_rect(panel));
+                let _ = city_window::buy_button_rect(city_window::production_panel_rect(panel));
+                let _ = city_window::minimap_rect(panel);
+                let _ = city_window::resources_rect(panel);
             }
         }
     }

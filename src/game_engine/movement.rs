@@ -130,6 +130,12 @@ impl Engine {
         // where the window's record is made, along with the tile he left and
         // the budget he carried, for the dismissal that walks him back.
         self.record_diplomat_audience(unit, origin, destination, moves_before);
+        // A caravan that has just walked into a city turns the journey into a
+        // lasting trade route: the unit is consumed and never reappears, so
+        // this returns before the ordinary move is announced.
+        if self.try_establish_trade_route(unit, destination) {
+            return;
+        }
         self.events.push(Event::for_player(
             owner,
             if was_transported {
@@ -288,10 +294,12 @@ impl Engine {
             }
         }
         // A diplomat enters a foreign city whether the two are at peace or at
-        // war: walking in unannounced is what he is for. Anyone else is held
-        // out of a peaceful neighbour's city, and a unit's presence is settled
-        // by the war rather than by asking.
-        if !unit.unit_class.enters_to_conquer()
+        // war: walking in unannounced is what he is for. A caravan enters a
+        // foreign city too, but only in peace — a route is a trade, not a
+        // provocation — and its entry is what opens the route. Anyone else is
+        // held out of a peaceful neighbour's city, and a unit's presence is
+        // settled by the war rather than by asking.
+        if (!unit.unit_class.enters_to_conquer() || unit.unit_class.trades())
             && self
                 .game
                 .cities

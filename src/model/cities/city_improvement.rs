@@ -57,6 +57,20 @@ impl CityImprovement {
         }
     }
 
+    /// The gold this improvement costs to keep each turn, charged against the
+    /// owner's treasury as maintenance. The Civ 1 table, trimmed to the
+    /// improvements that exist here; the Palace is the seat of government and
+    /// costs nothing to keep.
+    pub fn upkeep(&self) -> u32 {
+        match self {
+            CityImprovement::Colosseum => 4,
+            CityImprovement::Cathedral | CityImprovement::Bank | CityImprovement::University => 3,
+            CityImprovement::Aqueduct => 2,
+            CityImprovement::Palace => 0,
+            _ => 1,
+        }
+    }
+
     /// How many of a city's content citizens this improvement makes happy.
     /// Happiness is a pure bonus here — no citizen is ever unhappy — so the
     /// three culture buildings simply lift citizens into the productive tier.
@@ -152,6 +166,24 @@ mod tests {
         ] {
             assert_eq!(improvement.happiness_bonus(), 0, "{improvement:?}");
         }
+    }
+
+    #[test]
+    fn improvement_maintenance_costs() {
+        assert_eq!(CityImprovement::Colosseum.upkeep(), 4);
+        assert_eq!(CityImprovement::Cathedral.upkeep(), 3);
+        assert_eq!(CityImprovement::Bank.upkeep(), 3);
+        assert_eq!(CityImprovement::University.upkeep(), 3);
+        assert_eq!(CityImprovement::Aqueduct.upkeep(), 2);
+        assert_eq!(CityImprovement::Temple.upkeep(), 1);
+        assert_eq!(CityImprovement::Library.upkeep(), 1);
+        assert_eq!(CityImprovement::Marketplace.upkeep(), 1);
+        assert_eq!(CityImprovement::Granary.upkeep(), 1);
+        assert_eq!(CityImprovement::Courthouse.upkeep(), 1);
+        assert_eq!(CityImprovement::CityWalls.upkeep(), 1);
+        assert_eq!(CityImprovement::Barracks.upkeep(), 1);
+        // The Palace is free to keep.
+        assert_eq!(CityImprovement::Palace.upkeep(), 0);
     }
 
     #[test]

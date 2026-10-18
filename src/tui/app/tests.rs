@@ -3732,6 +3732,106 @@ fn a_city_that_starved_is_announced_by_its_own_window() {
 }
 
 #[test]
+fn a_treasury_that_cannot_pay_upkeep_is_announced_by_its_own_window() {
+    let mut app = App::new();
+    at_start(&mut app);
+    app.phase = Phase::Playing;
+    let mut engine = Engine::new(
+        5,
+        3,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    // A forest centre yields no trade, so nothing is banked against the
+    // Barracks' maintenance and the treasury comes up short each round.
+    engine.game.map.tile_at_mut(Location::new(2, 1)).terrain = Terrain::Forest;
+    let mut london = City::new(
+        "London",
+        Location::new(2, 1),
+        PlayerId::new(0),
+        CityId::new(0),
+    );
+    london.add_improvement(CityImprovement::Barracks);
+    engine.game.cities.push(london);
+    // The only unit in the field is the one the shortfall disbands.
+    engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(2, 1),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    // A rival city keeps the round from ending on the human's turn alone.
+    engine.game.cities.push(City::new(
+        "Zimbabwe",
+        Location::new(0, 0),
+        PlayerId::new(1),
+        CityId::new(1),
+    ));
+    engine.game.players[0].set_gold(0);
+    app.engine = Some(engine);
+
+    app.end_turn();
+
+    assert!(
+        app.upkeep_notice.is_some(),
+        "the shortfall is announced by a window"
+    );
+    assert!(window_is_open(&app), "which counts as a window");
+    assert_eq!(
+        app.engine.as_ref().unwrap().game.players[0].gold(),
+        0,
+        "the treasury is clamped to zero"
+    );
+    assert!(
+        app.engine.as_ref().unwrap().player_units().is_empty(),
+        "and the costliest unit is disbanded"
+    );
+
+    app.handle_key(key(KeyCode::Enter));
+    assert!(
+        app.upkeep_notice.is_none(),
+        "OK acknowledges the empty treasury and closes the window"
+    );
+}
+
+#[test]
+fn the_buy_key_rush_buys_the_open_citys_build() {
+    let (mut app, _, _, _) = with_city_window_open();
+    let city_id = app.selected_city.unwrap();
+    {
+        let engine = app.engine.as_mut().unwrap();
+        engine.game.players[0].set_gold(100);
+        let city = engine
+            .game
+            .cities
+            .iter_mut()
+            .find(|c| c.id() == city_id)
+            .unwrap();
+        city.set_production(ProductionTarget::Unit(UnitClass::Militia));
+    }
+
+    app.handle_key(key(KeyCode::Char('b')));
+
+    let engine = app.engine.as_ref().unwrap();
+    assert_eq!(
+        engine.city(city_id).unwrap().production_target(),
+        None,
+        "the build completes at once"
+    );
+    assert!(
+        engine
+            .player_units()
+            .iter()
+            .any(|unit| unit.unit_class == UnitClass::Militia),
+        "and the unit musters"
+    );
+    assert!(
+        engine.game.players[0].gold() < 100,
+        "the treasury paid for the rush"
+    );
+}
+
+#[test]
 fn a_rival_step_leaving_sight_is_replayed() {
     // The human has spied the starting tile (around (4,1)) but nothing the
     // legion walks onto, so the single step is shown vanishing into the fog.

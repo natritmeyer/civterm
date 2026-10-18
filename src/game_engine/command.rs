@@ -39,6 +39,10 @@ pub enum Command {
         city: CityId,
         target: ProductionTarget,
     },
+    /// Rush the city's current build for gold, completing it at once.
+    BuyProduction {
+        city: CityId,
+    },
     DeclareWar {
         opponent: PlayerId,
     },

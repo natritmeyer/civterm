@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use super::game_screen::{TILE_WIDTH, paint_tile};
 use crate::game_engine::CityIncome;
 use crate::game_engine::GameView;
-use crate::model::cities::{City, CityId, ProductionTarget};
+use crate::model::cities::{City, CityId, CityImprovement, ProductionTarget};
 use crate::model::geography::SpecialResource;
 use crate::model::units::{UnitId, UnitOrder};
 use crate::tui::window_geometry;
@@ -44,6 +44,12 @@ const IDEAL_HEIGHT: u16 = 30;
 /// terminal cells (matching the main map), so the box is 12 wide and 7 tall.
 const MINIMAP_WIDTH: u16 = 12;
 const MINIMAP_HEIGHT: u16 = 7;
+
+/// The City Resources column is sized to its content — one icon (two cells), a
+/// space, a 12-column label field and the value, about 20 cells at the widest —
+/// rather than taking whatever the two-thirds group leaves. Sizing it down is
+/// what gives the mini-map room to stand off the panel dividers.
+const RESOURCES_WIDTH: u16 = 22;
 
 fn resource_icon(resource: SpecialResource) -> char {
     match resource {
@@ -120,6 +126,69 @@ pub(crate) fn window_rect(area: Rect) -> Rect {
     window_geometry::centered(area, IDEAL_WIDTH, IDEAL_HEIGHT)
 }
 
+/// The middle band's two panes: the grouped resources + mini-map pane on the
+/// left (two-thirds wide) and the improvements + trade-routes pane on the
+/// right. The widget and the hit-test helpers both read their geometry here, so
+/// the two cannot drift apart. Every step saturates: the mouse guards lay this
+/// out again from whatever rect the last frame recorded, which may have been
+/// drawn on a terminal too small to paint the window at all.
+fn middle_band(window: Rect) -> (Rect, Rect) {
+    let inner = window_geometry::inner(window);
+    let iw = inner.width as usize;
+    let mid_h = (inner.height as usize).saturating_sub(4) / 2;
+    let mid = Rect {
+        x: inner.x,
+        y: inner.y.saturating_add(3),
+        width: inner.width,
+        height: mid_h as u16,
+    };
+    let grouped_w = iw * 2 / 3;
+    let grouped = Rect {
+        x: mid.x,
+        y: mid.y,
+        width: grouped_w as u16,
+        height: mid.height,
+    };
+    let right = Rect {
+        x: mid.x.saturating_add(grouped_w as u16),
+        y: mid.y,
+        width: iw.saturating_sub(grouped_w) as u16,
+        height: mid.height,
+    };
+    (grouped, right)
+}
+
+/// The City Resources column, content-sized at the left of the grouped pane.
+pub(crate) fn resources_rect(window: Rect) -> Rect {
+    let (grouped, _) = middle_band(window);
+    Rect {
+        width: RESOURCES_WIDTH.min(grouped.width),
+        ..grouped
+    }
+}
+
+/// The bordered 5x5 mini-map, centred in the space between the resources
+/// divider and the grouped pane's own divider — keeping it off both rules is
+/// the point, since it used to sit flush against the group divider.
+pub(crate) fn minimap_rect(window: Rect) -> Rect {
+    let (grouped, _) = middle_band(window);
+    let resources = resources_rect(window);
+    let zone_x = resources.right().saturating_add(1);
+    // The grouped pane's last column is its divider; stop one short of it.
+    let zone_right = grouped.right().saturating_sub(1);
+    let zone_w = zone_right.saturating_sub(zone_x);
+    let x = zone_x.saturating_add(zone_w.saturating_sub(MINIMAP_WIDTH) / 2);
+    let y = grouped
+        .y
+        .saturating_add(grouped.height.saturating_sub(MINIMAP_HEIGHT) / 2);
+    Rect {
+        x,
+        y,
+        width: MINIMAP_WIDTH,
+        height: MINIMAP_HEIGHT,
+    }
+}
+
 /// The rectangle of the close button, right-aligned on the population panel's
 /// top row (immediately inside the top border).
 pub(crate) fn close_button_rect(window: Rect) -> Rect {
@@ -138,6 +207,12 @@ pub(crate) fn close_button_rect(window: Rect) -> Rect {
 
 const CHANGE_TEXT: &str = "Change";
 const CHANGE_WIDTH: u16 = 6;
+
+/// The underlined "Buy" button on the production panel's stored row: the owner
+/// pays gold to finish the build at once. It shows only against the player's
+/// own city when it is working on something.
+const BUY_TEXT: &str = "Buy";
+const BUY_WIDTH: u16 = 3;
 
 /// The underlined "Unfortify" button on each garrison's row in the units
 /// panel: it shows only against a unit that is fortified on the city tile.
@@ -198,6 +273,17 @@ pub(crate) fn change_button_rect(production: Rect) -> Rect {
         x: production.right().saturating_sub(CHANGE_WIDTH),
         y: production.y,
         width: CHANGE_WIDTH,
+        height: 1,
+    }
+}
+
+/// The rectangle of the "Buy" button on the production panel's stored row. It
+/// mirrors where `draw_production_panel` paints it so a click can be matched.
+pub(crate) fn buy_button_rect(production: Rect) -> Rect {
+    Rect {
+        x: production.right().saturating_sub(BUY_WIDTH),
+        y: production.y + 1,
+        width: BUY_WIDTH,
         height: 1,
     }
 }
@@ -300,15 +386,16 @@ impl<'a> CityWindow<'a> {
         }
     }
 
-    fn draw_resources_panel(&self, buf: &mut Buffer, income: &CityIncome, rect: Rect) {
+    fn draw_resources_panel(&self, buf: &mut Buffer, city: &City, income: &CityIncome, rect: Rect) {
         draw_text(buf, rect.x, rect.y, "City Resources", BOLD);
         let mut y = rect.y + 1;
-        let rows: [(&str, char, u32); 5] = [
+        let rows: [(&str, char, u32); 6] = [
             ("Food", FA_FOOD, income.food),
             ("Production", FA_PRODUCTION, income.resources),
             ("Trade", FA_TRADE, income.trade),
             ("Research", FA_RESEARCH, income.research),
             ("Gold", FA_GOLD, income.gold),
+            ("Upkeep", FA_GOLD, city.upkeep()),
         ];
         for (label, icon, value) in rows {
             if y >= rect.bottom() {
@@ -372,20 +459,45 @@ impl<'a> CityWindow<'a> {
 
     fn draw_improvements(&self, buf: &mut Buffer, city: &City, rect: Rect) {
         draw_text(buf, rect.x, rect.y, "City Improvements", BOLD);
-        let mut names: Vec<&'static str> = city.improvements().iter().map(|i| i.name()).collect();
-        names.sort_unstable();
-        if names.is_empty() {
+        let mut improvements: Vec<CityImprovement> = city.improvements().to_vec();
+        improvements.sort_by_key(|i| i.name());
+        if improvements.is_empty() {
             draw_text(buf, rect.x, rect.y + 1, "(none)", TEXT);
             return;
         }
         let visible = (rect.height - 1) as usize;
-        let offset = self.scroll.min(names.len().saturating_sub(visible));
-        for (i, name) in names.iter().enumerate().skip(offset).take(visible) {
+        let offset = self.scroll.min(improvements.len().saturating_sub(visible));
+        for (i, improvement) in improvements.iter().enumerate().skip(offset).take(visible) {
             let row = rect.y + 1 + i as u16 - offset as u16;
-            draw_text(buf, rect.x, row, name, TEXT);
+            // Each held improvement shows what it costs to keep each round, so
+            // the owner can read the bill the treasury is paying.
+            let label = format!("{} ({})", improvement.name(), improvement.upkeep());
+            draw_text(buf, rect.x, row, &label, TEXT);
         }
-        if names.len() > visible {
-            draw_scrollbar(buf, rect, names.len(), offset);
+        if improvements.len() > visible {
+            draw_scrollbar(buf, rect, improvements.len(), offset);
+        }
+    }
+
+    /// The trade routes ending at this city, each naming the other end and the
+    /// gold it pays there. A foreign city's routes are part of the report an
+    /// investigation bought, so they show too.
+    fn draw_trade_routes(&self, buf: &mut Buffer, city: &City, rect: Rect) {
+        draw_text(buf, rect.x, rect.y, "Trade Routes", BOLD);
+        let routes = self.view.trade_routes_for(city.id());
+        if routes.is_empty() {
+            draw_text(buf, rect.x, rect.y + 1, "(none)", TEXT);
+            return;
+        }
+        let visible = rect.height.saturating_sub(1) as usize;
+        for (i, route) in routes.iter().take(visible).enumerate() {
+            let name = route
+                .other_end(city.id())
+                .and_then(|id| self.view.city(id))
+                .map(|city| city.name.clone())
+                .unwrap_or_default();
+            let row = rect.y + 1 + i as u16;
+            draw_text(buf, rect.x, row, &format!("{name} (+{})", route.gold), TEXT);
         }
     }
 
@@ -469,11 +581,29 @@ impl<'a> CityWindow<'a> {
         if let Some(target) = target {
             let cost = target.resource_cost();
             let stored = city.resource_stored();
+            // The Buy button is the owner's handle on the rush price; a foreign
+            // city's build is intel, so it gets no such handle.
+            if !foreign {
+                draw_text(
+                    buf,
+                    rect.right() - BUY_WIDTH,
+                    rect.y + 1,
+                    BUY_TEXT,
+                    TEXT.add_modifier(Modifier::UNDERLINED),
+                );
+            }
             let mut lines = vec![
                 format!("{} Stored   {stored}", FA_PRODUCTION),
                 format!("{} Cost     {cost}", FA_PRODUCTION),
                 format!("{} Income   {}", FA_PRODUCTION, income.resources),
             ];
+            if !foreign {
+                lines.push(format!(
+                    "{} Rush     {}",
+                    FA_PRODUCTION,
+                    city.rush_cost().unwrap_or_default()
+                ));
+            }
             if let Some(t) = turns_to(cost.saturating_sub(stored), income.resources) {
                 lines.push(format!("{} Turns    {t}", FA_PRODUCTION));
             }
@@ -546,54 +676,59 @@ impl<'a> Widget for CityWindow<'a> {
             width: inner.width,
             height: 2,
         };
-        let mid_h = (ih - 2 - 2) / 2;
-        let mid = Rect {
-            x: inner.x,
-            y: inner.y + 3,
-            width: inner.width,
-            height: mid_h as u16,
-        };
+        let (grouped, right) = middle_band(window);
 
         self.draw_population_panel(buf, city, pop);
         hrule(buf, pop.bottom(), inner.x, inner.right() - 1);
-        hrule(buf, mid.bottom(), inner.x, inner.right() - 1);
+        hrule(buf, grouped.bottom(), inner.x, inner.right() - 1);
 
-        // Middle band: grouped resources (2/3) and the improvements list.
-        let grouped_w = iw * 2 / 3;
-        let grouped = Rect {
-            x: mid.x,
-            y: mid.y,
-            width: grouped_w as u16,
-            height: mid.height,
-        };
+        // The grouped pane's own last column is the divider against the
+        // improvements list on the right.
+        vrule(
+            buf,
+            grouped.right().saturating_sub(1),
+            grouped.y,
+            grouped.bottom().saturating_sub(1),
+        );
+
+        // City Resources is sized to its content; the divider after it is drawn
+        // only when it will not collide with the grouped pane's own edge.
+        let resources = resources_rect(window);
+        self.draw_resources_panel(buf, city, &income, resources);
+        if resources.right() < grouped.right().saturating_sub(1) {
+            vrule(
+                buf,
+                resources.right(),
+                grouped.y,
+                grouped.bottom().saturating_sub(1),
+            );
+        }
+
+        // Within the grouped pane, the 5x5 mini-map is centred in the space
+        // right of the resources column and inset from both rules; its tiles
+        // span two cells, like the main map. It is skipped when the pane is too
+        // short or too narrow to hold it.
+        let minimap = minimap_rect(window);
+        if grouped.height >= MINIMAP_HEIGHT && minimap.right() <= grouped.right().saturating_sub(1)
+        {
+            draw_border(buf, minimap);
+            self.draw_minimap(buf, city, minimap);
+        }
+
+        // The improvements list and the trade routes below it, split in two.
+        let routes_h = right.height.saturating_sub(1) / 2;
         let improvements = Rect {
-            x: mid.x + grouped_w as u16,
-            y: mid.y,
-            width: (iw - grouped_w) as u16,
-            height: mid.height,
+            height: right.height.saturating_sub(routes_h).saturating_sub(1),
+            ..right
         };
-        vrule(buf, grouped.right() - 1, mid.y, mid.bottom() - 1);
-
-        // Within the grouped panel, the 5x5 mini-map sits flush to its right edge
-        // and centred vertically; tiles span two cells, like the main map.
-        let minimap = Rect {
-            x: grouped.right() - MINIMAP_WIDTH,
-            y: mid.y + (mid.height - MINIMAP_HEIGHT) / 2,
-            width: MINIMAP_WIDTH,
-            height: MINIMAP_HEIGHT,
+        let routes = Rect {
+            y: improvements.bottom().saturating_add(1),
+            height: routes_h,
+            ..right
         };
-        draw_border(buf, minimap);
-        self.draw_minimap(buf, city, minimap);
-        let resources = Rect {
-            x: grouped.x,
-            y: mid.y,
-            width: grouped.width - MINIMAP_WIDTH - 1,
-            height: mid.height,
-        };
-        vrule(buf, resources.right(), mid.y, mid.bottom() - 1);
-        self.draw_resources_panel(buf, &income, resources);
-
+        hrule(buf, improvements.bottom(), right.x, right.right() - 1);
         self.draw_improvements(buf, city, improvements);
+        self.draw_trade_routes(buf, city, routes);
 
         // Bottom band: three equal panels with black rules between.
         let (food, units, production) = bottom_panels(window);
@@ -610,6 +745,7 @@ impl<'a> Widget for CityWindow<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game_engine::TradeRoute;
     use crate::model::cartography::{Location, Tile};
     use crate::model::cities::{City, CityId, CityImprovement, ProductionTarget};
     use crate::model::civilizations::{Civilization, PlayerId};
@@ -625,6 +761,7 @@ mod tests {
         tile: Tile,
         city: Option<City>,
         units: Vec<crate::model::units::Unit>,
+        routes: Vec<crate::game_engine::TradeRoute>,
         current_player: PlayerId,
     }
 
@@ -636,6 +773,11 @@ mod tests {
 
         fn with_unit(mut self, unit: crate::model::units::Unit) -> Self {
             self.units.push(unit);
+            self
+        }
+
+        fn with_route(mut self, route: crate::game_engine::TradeRoute) -> Self {
+            self.routes.push(route);
             self
         }
     }
@@ -725,6 +867,12 @@ mod tests {
         fn research_income(&self) -> u32 {
             0
         }
+        fn trade_routes_for(&self, city: CityId) -> Vec<&crate::game_engine::TradeRoute> {
+            self.routes
+                .iter()
+                .filter(|route| route.touches(city))
+                .collect()
+        }
     }
 
     fn fake_view() -> FakeView {
@@ -734,6 +882,7 @@ mod tests {
             tile: Tile::new(Terrain::Grassland),
             city: None,
             units: Vec::new(),
+            routes: Vec::new(),
             current_player: PlayerId::new(0),
         }
     }
@@ -854,14 +1003,9 @@ mod tests {
             height: 40,
         });
         // Re-derive the layout so this doesn't drift from the widget.
-        let inner_x = win.x + 1;
-        let inner_y = win.y + 1;
-        let grouped_w = (win.width - 2) * 2 / 3;
-        let mid_top = inner_y + 3;
-        let minimap_x = inner_x + grouped_w - MINIMAP_WIDTH;
-        let minimap_y = mid_top + (12 - MINIMAP_HEIGHT) / 2;
-        let centre_x = minimap_x + 1 + 2 * 2;
-        let centre_y = minimap_y + 1 + 2;
+        let minimap = minimap_rect(win);
+        let centre_x = minimap.x + 1 + 2 * TILE_WIDTH as u16;
+        let centre_y = minimap.y + 1 + 2;
         assert_eq!(buf.cell((centre_x, centre_y)).unwrap().symbol(), "3");
     }
 
@@ -874,14 +1018,10 @@ mod tests {
             width: 80,
             height: 40,
         });
-        let inner_x = win.x + 1;
-        let grouped_w = (win.width - 2) * 2 / 3;
-        let mid_top = win.y + 4;
-        let minimap_x = inner_x + grouped_w - MINIMAP_WIDTH;
-        let minimap_y = mid_top + (12 - MINIMAP_HEIGHT) / 2;
-        let row_y = minimap_y + 1 + 2; // middle mini-map row (the city's row)
+        let minimap = minimap_rect(win);
+        let row_y = minimap.y + 1 + 2; // middle mini-map row (the city's row)
         let glyph = |x: u16| buf.cell((x, row_y)).unwrap().symbol();
-        let g0 = minimap_x + 1;
+        let g0 = minimap.x + 1;
         // West of the city tile the terrain glyph occupies cell one, with a
         // blank style-carrying cell to its right — exactly like the main map.
         assert_ne!(glyph(g0), " ");
@@ -891,6 +1031,39 @@ mod tests {
         // The city digit also spans its own two cells.
         assert_eq!(glyph(g0 + 4), "3");
         assert_eq!(glyph(g0 + 5), " ");
+    }
+
+    /// The resources column is sized to its content and the mini-map is centred
+    /// in what is left, standing off the resources rule and the grouped pane's
+    /// own divider rather than jamming into either.
+    #[test]
+    fn the_minimap_is_inset_between_the_panel_dividers() {
+        let win = window_rect(Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 40,
+        });
+        let (grouped, _) = middle_band(win);
+        let resources = resources_rect(win);
+        let minimap = minimap_rect(win);
+        let zone_x = resources.right() + 1;
+        let zone_right = grouped.right() - 1;
+        assert!(
+            minimap.x > resources.right(),
+            "map {minimap:?} touches the resources rule at {}",
+            resources.right()
+        );
+        assert!(
+            minimap.right() < zone_right,
+            "map {minimap:?} touches the grouped divider at {zone_right}"
+        );
+        let left_gap = minimap.x - zone_x;
+        let right_gap = zone_right - minimap.right();
+        assert!(
+            left_gap.abs_diff(right_gap) <= 1,
+            "map {minimap:?} is not centred ({left_gap} vs {right_gap})"
+        );
     }
 
     #[test]
@@ -913,6 +1086,28 @@ mod tests {
     }
 
     #[test]
+    fn a_city_lists_its_trade_routes() {
+        let view = fake_view().with(london()).with_route(TradeRoute {
+            from: CityId::new(0),
+            to: CityId::new(1),
+            gold: 9,
+        });
+        let buf = render_view(&view, 0);
+        let (x, y) = pos_of(42, 11);
+        let section: Vec<String> = (0..6)
+            .map(|row| row_text(&buf, x, y + row, 20).trim().to_string())
+            .collect();
+        assert!(
+            section.iter().any(|line| line == "Trade Routes"),
+            "{section:?}"
+        );
+        assert!(
+            section.iter().any(|line| line.contains("+9")),
+            "the route's gold is shown: {section:?}"
+        );
+    }
+
+    #[test]
     fn production_panel_names_the_target_and_shows_progress() {
         let mut city = london();
         city.set_production(ProductionTarget::Unit(UnitClass::Militia));
@@ -923,6 +1118,28 @@ mod tests {
         let (x, y) = pos_of(43, 17);
         let text = row_text(&buf, x, y, 20);
         assert!(text.contains("Militia"), "production label row: {text:?}");
+    }
+
+    #[test]
+    fn the_owners_production_panel_offers_a_buy_button_and_a_rush_price() {
+        let mut city = london();
+        city.set_production(ProductionTarget::Unit(UnitClass::Militia));
+        let view = fake_view().with(city);
+        let buf = render_view(&view, 0);
+        let window = window_rect(Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 40,
+        });
+        let panel = production_panel_rect(window);
+        let mut text = String::new();
+        for row in panel.y..panel.bottom() {
+            text.push_str(&row_text(&buf, panel.x, row, panel.width));
+            text.push('\n');
+        }
+        assert!(text.contains("Buy"), "panel: {text:?}");
+        assert!(text.contains("Rush"), "panel: {text:?}");
     }
 
     /// A militia standing on the city tile, `fortified` or not, rendered with

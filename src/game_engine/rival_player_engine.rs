@@ -15,6 +15,12 @@ use strum::IntoEnumIterator;
 /// of blanketing the map.
 const RIVAL_EXPANSION_TARGET_CITIES: usize = 4;
 
+/// The gold a rival never spends on a rush-buy, kept back to pay its cities'
+/// upkeep. A rival at war will hurry its builds along with the rest of its
+/// treasury, but not into an empty one: the reserve is what stops a spree of
+/// rush-buying from starving the very cities it was meant to arm.
+const RIVAL_GOLD_RESERVE: u32 = 10;
+
 /// How many working-grid tiles a rival may let a new city share with the union
 /// of every civilization's 21-tile working grids before the site counts as
 /// genuinely open. Two cities sharing no more tiles than this sit at least
@@ -165,6 +171,39 @@ impl Engine {
         }
     }
 
+    /// Spend a war chest on the build line. A rival at peace keeps its purse
+    /// shut and banks its gold; a rival at war hurries its cities' builds along
+    /// with everything above [`RIVAL_GOLD_RESERVE`], so an army can be fielded
+    /// faster than the shield trickle alone. The walk is deterministic — cities
+    /// in id order, each rushed only when its cost fits beneath the reserve.
+    fn rival_rush_buy(&mut self, ai: PlayerId) {
+        if self.game.players[ai.index()].at_war_with().is_empty() {
+            return;
+        }
+        let city_ids: Vec<CityId> = self
+            .game
+            .cities
+            .iter()
+            .filter(|city| city.owner() == ai)
+            .map(|city| city.id())
+            .collect();
+        for city_id in city_ids {
+            let Some(cost) = self
+                .game
+                .cities
+                .iter()
+                .find(|city| city.id() == city_id)
+                .and_then(|city| city.rush_cost())
+            else {
+                continue;
+            };
+            let gold = self.game.players[ai.index()].gold();
+            if gold >= RIVAL_GOLD_RESERVE && cost <= gold - RIVAL_GOLD_RESERVE {
+                self.buy_production(city_id);
+            }
+        }
+    }
+
     /// What the idle `city_id` should build: the cheapest military unit while
     /// any of the rival's cities lacks a guard, a settler until the expansion
     /// target is reached, and the cheapest unit of any kind beyond that.
@@ -254,6 +293,7 @@ impl Engine {
         }
         self.rival_garrison(ai);
         self.rival_warfare(ai);
+        self.rival_rush_buy(ai);
     }
 
     fn rival_settle(&mut self, unit_id: UnitId) {

@@ -57,6 +57,13 @@ impl Player {
         true
     }
 
+    /// Bank the gold a civilization earned this turn — the tax take its cities
+    /// harvest, banked once per city. Saturating, so no length of game can
+    /// overflow a treasury that only ever grows by a few a turn.
+    pub(crate) fn add_gold(&mut self, gold: u32) {
+        self.gold = self.gold.saturating_add(gold);
+    }
+
     /// Overwrite the treasury outright. The one non-test caller is the engine
     /// staking a difficulty's opening gold at the start of a game.
     pub(crate) fn set_gold(&mut self, gold: u32) {
@@ -415,5 +422,13 @@ mod tests {
         player.set_research_target(Advancement::Chivalry);
         player.advance_research(999);
         assert!(player.available_unit_classes().contains(&UnitClass::Knight));
+    }
+
+    #[test]
+    fn gold_is_banked_on_top_of_the_treasury() {
+        let mut player = Player::new(Civilization::English);
+        player.set_gold(10);
+        player.add_gold(5);
+        assert_eq!(player.gold(), 15);
     }
 }

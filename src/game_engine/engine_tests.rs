@@ -4,7 +4,7 @@ use crate::game_engine::diplomat_actions::SUBVERT_CITY_COST;
 use crate::game_engine::{Command, GameView, Player};
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Direction;
-use crate::model::cartography::Location;
+use crate::model::cartography::{Location, Tile};
 use crate::model::cities::{City, CityId, CityImprovement, ProductionTarget};
 use crate::model::civilizations::Civilization;
 use crate::model::civilizations::PlayerId;
@@ -1125,6 +1125,307 @@ fn only_rival_cities_wear_the_difficulty_economy() {
     engine.set_difficulty(Difficulty::Normal);
     assert_eq!(engine.economy_scales(PlayerId::new(1)), Scales::IDENTITY);
     assert_eq!(engine.economy_scales(PlayerId::new(0)), Scales::IDENTITY);
+}
+
+/// The difficulty's gold scale trims the gold a rival city banks, exactly as
+/// its production scale trims shields. The human's take is never touched.
+#[test]
+fn a_rival_citys_gold_take_wears_the_difficulty_gold_scale() {
+    let mut engine = Engine::new(
+        5,
+        5,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine.game.map.tile_at_mut(Location::new(1, 2)).terrain = Terrain::Grassland;
+    let city = engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(2, 2));
+    engine.game.cities[0].add_worked_tile(Location::new(1, 2));
+    let raw = engine.game.city_gold_income(city);
+    assert!(raw > 0, "a city on grassland mints trade");
+    let before = engine.game.players[PlayerId::new(1).index()].gold();
+
+    engine
+        .game
+        .process_city(city, Difficulty::Easy.rival_economy());
+
+    assert_eq!(
+        engine.game.players[PlayerId::new(1).index()].gold(),
+        before + Difficulty::Easy.rival_gold_scale().apply(raw),
+        "Easy trims the rival's gold take"
+    );
+}
+
+/// A rival at war spends its treasury above the reserve to hurry a build along:
+/// the city's build completes at once and the gold is gone.
+#[test]
+fn a_rival_at_war_rushes_a_build() {
+    let mut engine = Engine::new(
+        5,
+        5,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(2, 2));
+    engine.game.cities[0].set_production(ProductionTarget::Unit(UnitClass::Militia));
+    let cost = engine.game.cities[0].rush_cost().unwrap();
+    engine.game.players[PlayerId::new(1).index()].set_gold(100);
+    engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+    engine.current_player_index = PlayerId::new(1);
+
+    engine.run_rival_turn();
+
+    assert!(
+        engine
+            .game
+            .units
+            .iter()
+            .any(|unit| unit.owner() == PlayerId::new(1)),
+        "the rushed unit is mustered"
+    );
+    assert_eq!(
+        engine.game.players[PlayerId::new(1).index()].gold(),
+        100 - cost,
+        "the rush is paid for out of the war chest"
+    );
+}
+
+/// A rival at peace banks its gold rather than rushing: no war, no hurrying.
+#[test]
+fn a_rival_at_peace_banks_its_gold() {
+    let mut engine = Engine::new(
+        5,
+        5,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(2, 2));
+    engine.game.cities[0].set_production(ProductionTarget::Unit(UnitClass::Militia));
+    engine.game.players[PlayerId::new(1).index()].set_gold(100);
+    engine.current_player_index = PlayerId::new(1);
+
+    engine.run_rival_turn();
+
+    assert!(
+        engine
+            .game
+            .units
+            .iter()
+            .all(|unit| unit.owner() != PlayerId::new(1)),
+        "no build is hurried in peacetime"
+    );
+    assert_eq!(
+        engine.game.players[PlayerId::new(1).index()].gold(),
+        100,
+        "the treasury is untouched"
+    );
+}
+
+/// A rival at war but with too little gold to clear the reserve keeps its
+/// purse shut: the reserve is what it will not spend into.
+#[test]
+fn a_rival_at_war_keeps_its_reserve() {
+    let mut engine = Engine::new(
+        5,
+        5,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(2, 2));
+    engine.game.cities[0].set_production(ProductionTarget::Unit(UnitClass::Militia));
+    // Ten gold: the cost of the reserve is the whole treasury.
+    engine.game.players[PlayerId::new(1).index()].set_gold(10);
+    engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+    engine.current_player_index = PlayerId::new(1);
+
+    engine.run_rival_turn();
+
+    assert!(
+        engine
+            .game
+            .units
+            .iter()
+            .all(|unit| unit.owner() != PlayerId::new(1)),
+        "a thin purse rushes nothing"
+    );
+    assert_eq!(
+        engine.game.players[PlayerId::new(1).index()].gold(),
+        10,
+        "the reserve is kept back"
+    );
+}
+
+/// A city's trade is banked as gold when its owner's turn begins, so finishing
+/// a round pays the human the city's take — the same figure the city window's
+/// Gold row reports.
+#[test]
+fn a_citys_trade_is_banked_as_gold_each_round() {
+    let mut engine = Engine::new(5, 5, english_player(), Vec::new());
+    engine.game.map.tile_at_mut(Location::new(1, 2)).terrain = Terrain::Grassland;
+    let london = engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+    engine.game.cities[0].add_worked_tile(Location::new(1, 2));
+    let take = engine.game.city_gold_income(london);
+    assert!(take > 0, "a city on grassland mints trade");
+    let before = engine.game.players[PlayerId::new(0).index()].gold();
+    engine.submit(Command::EndTurn);
+    assert_eq!(
+        engine.game.players[PlayerId::new(0).index()].gold(),
+        before + take
+    );
+}
+
+/// A city's improvements are paid for out of the treasury each round: the take
+/// the city banks is reduced by the maintenance of everything it holds.
+#[test]
+fn a_citys_improvements_are_paid_from_the_treasury_each_round() {
+    let mut engine = Engine::new(5, 5, english_player(), Vec::new());
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Grassland;
+    let london = engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+    engine.game.cities[0].add_improvement(CityImprovement::Temple); // upkeep 1
+    let take = engine.game.city_gold_income(london);
+    engine.game.players[0].set_gold(100);
+    engine.submit(Command::EndTurn);
+    assert_eq!(engine.game.players[0].gold(), 100 + take - 1);
+}
+
+/// When the treasury plus the round's take cannot cover the maintenance, the
+/// treasury clamps at zero and the costliest unit is disbanded, with a notice
+/// queued for the human.
+#[test]
+fn an_unpaid_upkeep_disbands_the_costliest_unit_and_clamps_the_treasury() {
+    let mut engine = Engine::new(5, 5, english_player(), Vec::new());
+    // Stay off trade: a forest centre mints no gold, so the treasury cannot
+    // top itself up and the maintenance is necessarily unpaid.
+    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Forest;
+    engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+    engine.game.cities[0].add_improvement(CityImprovement::Temple); // 1
+    engine.game.cities[0].add_improvement(CityImprovement::Library); // 1
+    let militia = engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(2, 2),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    let settler = engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(2, 2),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    engine.game.players[0].set_gold(0);
+
+    engine.submit(Command::EndTurn);
+
+    assert_eq!(
+        engine.game.players[0].gold(),
+        0,
+        "the treasury clamps at zero"
+    );
+    assert!(
+        engine.game.units.iter().any(|unit| unit.id() == militia),
+        "the cheap militia survives"
+    );
+    assert!(
+        engine.game.units.iter().all(|unit| unit.id() != settler),
+        "the costliest settler is disbanded"
+    );
+    let notices = engine.drain_upkeep_notices();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(
+        notices[0],
+        UpkeepNotice {
+            upkeep: 2,
+            disbanded: Some("Settler".to_string()),
+        }
+    );
+}
+
+/// A rush purchase pays gold and finishes the build at once, no waiting for
+/// the next round.
+#[test]
+fn a_rush_purchase_completes_the_build_at_once() {
+    let mut engine = Engine::new(5, 5, english_player(), Vec::new());
+    let london = engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+    engine.game.cities[london.index()]
+        .set_production(ProductionTarget::Improvement(CityImprovement::Temple));
+    engine.game.players[0].set_gold(100);
+
+    let events = engine.submit(Command::BuyProduction { city: london });
+
+    assert!(
+        engine.game.cities[london.index()]
+            .improvements()
+            .contains(&CityImprovement::Temple)
+    );
+    assert_eq!(
+        engine.game.players[0].gold(),
+        60,
+        "Temple cost 20 -> 40 gold"
+    );
+    assert_eq!(engine.game.cities[london.index()].production_target(), None);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.message().contains("rushes"))
+    );
+}
+
+/// A rush the treasury cannot afford changes nothing.
+#[test]
+fn a_rush_the_treasury_cannot_afford_is_refused() {
+    let mut engine = Engine::new(5, 5, english_player(), Vec::new());
+    let london = engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+    engine.game.cities[london.index()].set_production(ProductionTarget::Unit(UnitClass::Settler)); // cost 60
+    engine.game.players[0].set_gold(10);
+
+    let events = engine.submit(Command::BuyProduction { city: london });
+
+    assert_eq!(engine.game.players[0].gold(), 10, "nothing is spent");
+    assert_eq!(
+        engine.game.cities[london.index()].production_target(),
+        Some(ProductionTarget::Unit(UnitClass::Settler)),
+        "the build is still under way"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.message().contains("Cannot rush"))
+    );
+}
+
+/// An idle city has nothing to rush.
+#[test]
+fn rushing_an_idle_city_is_refused() {
+    let mut engine = Engine::new(5, 5, english_player(), Vec::new());
+    let london = engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(2, 2));
+    engine.game.players[0].set_gold(100);
+
+    let events = engine.submit(Command::BuyProduction { city: london });
+
+    assert!(
+        events
+            .iter()
+            .any(|event| event.message().contains("nothing to rush"))
+    );
 }
 
 /// An undefended, grown human city next to a rival legion falls the moment
@@ -3443,7 +3744,7 @@ fn granary_and_aqueduct_raise_a_citys_food_income() {
 #[test]
 fn bank_and_marketplace_raise_a_citys_gold_income() {
     let mut engine = Engine::new(5, 5, Player::new(Civilization::English), Vec::new());
-    engine.game.map.tile_at_mut(Location::new(2, 2)).terrain = Terrain::Mountain;
+    *engine.game.map.tile_at_mut(Location::new(2, 2)) = Tile::new(Terrain::Mountain);
     engine
         .game
         .map
@@ -3454,11 +3755,13 @@ fn bank_and_marketplace_raise_a_citys_gold_income() {
         .game
         .add_city(PlayerId::new(0), "London", Location::new(2, 2));
     let london = CityId::new(0);
-    assert_eq!(engine.game.city_breakdown(london).gold, 2);
+    // The mountain mints 1 trade, the Gold resource 2 more trade and 2 bonus
+    // gold: a 5-strong tax base before any building multiplies it.
+    assert_eq!(engine.game.city_breakdown(london).gold, 5);
     engine.game.cities[0].add_improvement(CityImprovement::Bank);
-    assert_eq!(engine.game.city_breakdown(london).gold, 3);
+    assert_eq!(engine.game.city_breakdown(london).gold, 7);
     engine.game.cities[0].add_improvement(CityImprovement::Marketplace);
-    assert_eq!(engine.game.city_breakdown(london).gold, 4);
+    assert_eq!(engine.game.city_breakdown(london).gold, 11);
 }
 
 #[test]
@@ -4928,6 +5231,11 @@ fn a_catapult_bombards_an_undefended_city_before_taking_it() {
 fn a_catapult_walks_into_a_city_with_nothing_left_to_break() {
     let (mut engine, catapult) = a_catapult_besieging_a_walled_city();
     engine.game.remove_unit(UnitId::new(0));
+    // Empty the rival's purse: a rival at war now rushes a fresh defender into
+    // an ungarrisoned city, which would leave the catapult something to fight
+    // and this test nothing to prove. The siege is what is under test, not the
+    // rival's war chest.
+    engine.game.players[PlayerId::new(1).index()].set_gold(0);
     // Grown well past one: the city starves a citizen during the siege's
     // intervening round, and the conquest must still capture rather than raze
     // it.
@@ -6258,5 +6566,223 @@ fn a_rivals_diplomat_earns_no_window() {
     assert!(
         engine.drain_diplomat_audiences().is_empty(),
         "only the civilization at the keyboard is asked"
+    );
+}
+
+/// A human Caravan and a Zulu city one tile east, on a grassy strip. The two
+/// powers have not met yet; each test sets the relationship it means to test.
+fn a_caravan_and_a_rival_city() -> (Engine, UnitId, CityId, CityId) {
+    let mut engine = Engine::new(
+        4,
+        3,
+        english_player(),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..4 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    let home = engine
+        .game
+        .add_city(PlayerId::new(0), "London", Location::new(0, 0));
+    let target = engine
+        .game
+        .add_city(PlayerId::new(1), "Umgungundlovu", Location::new(1, 0));
+    let caravan = engine.game.spawn_unit(
+        UnitClass::Caravan,
+        Location::new(0, 0),
+        PlayerId::new(0),
+        Some(home),
+    );
+    (engine, caravan, home, target)
+}
+
+#[test]
+fn a_caravan_walks_into_a_peaceful_city_and_opens_a_trade_route() {
+    let (mut engine, caravan, home, target) = a_caravan_and_a_rival_city();
+    engine.game.make_peace(PlayerId::new(0), PlayerId::new(1));
+
+    let events = engine.submit(Command::Move {
+        unit: caravan,
+        direction: Direction::E,
+    });
+
+    assert_eq!(engine.game.trade_routes.len(), 1, "one route is opened");
+    let route = engine.game.trade_routes[0];
+    assert_eq!(route.from, home);
+    assert_eq!(route.to, target);
+    assert_eq!(
+        route.gold,
+        engine.game.trade_route_value(home, target).unwrap(),
+        "the route banks the terms quoted when it was opened"
+    );
+    assert!(
+        !engine.game.units.iter().any(|u| u.id() == caravan),
+        "the caravan is spent on the route"
+    );
+    assert!(
+        events.iter().any(|e| e.message().contains("trade route")),
+        "the opening is announced: {events:?}"
+    );
+    assert_eq!(engine.game.trade_route_count(home), 1);
+    assert_eq!(engine.game.trade_route_count(target), 1);
+}
+
+#[test]
+fn a_trade_route_pays_each_owner_that_holds_an_endpoint() {
+    let (mut engine, _caravan, home, target) = a_caravan_and_a_rival_city();
+    engine.game.make_peace(PlayerId::new(0), PlayerId::new(1));
+    engine.game.trade_routes.push(TradeRoute {
+        from: home,
+        to: target,
+        gold: 7,
+    });
+
+    assert_eq!(
+        engine.game.trade_income(PlayerId::new(0)),
+        7,
+        "the human holds the near end"
+    );
+    assert_eq!(
+        engine.game.trade_income(PlayerId::new(1)),
+        7,
+        "the rival holds the far end"
+    );
+
+    let before = engine.game.players[0].gold();
+    let expected = engine.game.city_gold_income(home) + engine.game.trade_income(PlayerId::new(0));
+    engine.process_cities(PlayerId::new(0));
+    assert_eq!(
+        engine.game.players[0].gold(),
+        before + expected,
+        "the route's gold is banked alongside the city's own take"
+    );
+}
+
+#[test]
+fn a_city_can_be_an_endpoint_of_at_most_three_trade_routes() {
+    let (mut engine, caravan, _home, target) = a_caravan_and_a_rival_city();
+    engine.game.make_peace(PlayerId::new(0), PlayerId::new(1));
+    for _ in 0..MAX_TRADE_ROUTES {
+        engine.game.trade_routes.push(TradeRoute {
+            from: CityId::new(90),
+            to: target,
+            gold: 1,
+        });
+    }
+
+    engine.submit(Command::Move {
+        unit: caravan,
+        direction: Direction::E,
+    });
+
+    assert_eq!(
+        engine.game.trade_routes.len(),
+        MAX_TRADE_ROUTES,
+        "a market already full takes no fourth route"
+    );
+    assert!(
+        engine.game.units.iter().any(|u| u.id() == caravan),
+        "a refused route does not consume the caravan"
+    );
+}
+
+#[test]
+fn a_full_market_turns_a_caravan_away_with_a_message() {
+    let (mut engine, caravan, home, _target) = a_caravan_and_a_rival_city();
+    engine.game.make_peace(PlayerId::new(0), PlayerId::new(1));
+    engine.game.trade_routes.push(TradeRoute {
+        from: CityId::new(90),
+        to: home,
+        gold: 1,
+    });
+    engine.game.trade_routes.push(TradeRoute {
+        from: CityId::new(91),
+        to: home,
+        gold: 1,
+    });
+    engine.game.trade_routes.push(TradeRoute {
+        from: CityId::new(92),
+        to: home,
+        gold: 1,
+    });
+
+    let events = engine.submit(Command::Move {
+        unit: caravan,
+        direction: Direction::E,
+    });
+
+    assert!(
+        events
+            .iter()
+            .any(|e| e.message().contains("No room for another trade route")),
+        "the refusal is explained: {events:?}"
+    );
+}
+
+#[test]
+fn a_caravan_cannot_open_a_route_across_a_war() {
+    let (mut engine, caravan, _home, target) = a_caravan_and_a_rival_city();
+    engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+    // A garrison so the arrival is settled as a fight rather than a capture.
+    engine.game.spawn_unit(
+        UnitClass::Phalanx,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(target),
+    );
+
+    engine.submit(Command::Move {
+        unit: caravan,
+        direction: Direction::E,
+    });
+
+    assert!(
+        engine.game.trade_routes.is_empty(),
+        "no route is opened across a war"
+    );
+    assert!(
+        !engine.game.units.iter().any(|u| u.id() == caravan),
+        "the caravan loses the fight it walks into"
+    );
+    assert_eq!(
+        engine
+            .game
+            .cities
+            .iter()
+            .find(|c| c.id() == target)
+            .unwrap()
+            .owner(),
+        PlayerId::new(1),
+        "and the city is not taken"
+    );
+}
+
+#[test]
+fn a_trade_route_dies_with_its_destroyed_city() {
+    let (mut engine, _caravan, home, target) = a_caravan_and_a_rival_city();
+    engine.game.make_peace(PlayerId::new(0), PlayerId::new(1));
+    engine.game.trade_routes.push(TradeRoute {
+        from: home,
+        to: target,
+        gold: 5,
+    });
+
+    // The size-one city falls: it is overrun and destroyed, and no route may
+    // outlive an endpoint that no longer exists.
+    engine.take_captured_city(target);
+
+    assert!(
+        engine.game.trade_routes.is_empty(),
+        "the route is purged with the city"
+    );
+    assert!(
+        engine.game.cities.iter().all(|c| c.id() != target),
+        "the overrun city is gone"
     );
 }

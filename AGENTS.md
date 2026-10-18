@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 822 passing unit
+Run `make build` after any change. Current test baseline: 857 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -345,6 +345,15 @@ a hard boundary; keep it by convention.
   fight is fought (and the RNG stream advanced) exactly as the human's would
   be. Every rival step still goes out through the ordinary `move_unit` path,
   so the movement/reveal/transport/combat invariants hold.
+- A rival banks its gold at peace and spends it at war: `rival_rush_buy` runs
+  at the end of `rival_units`, after the garrison and warfare passes, and only
+  when the rival is at war with anyone. It walks the rival's cities in id order
+  and rushes each current build through the ordinary `Engine::buy_production`
+  while the cost fits beneath `RIVAL_GOLD_RESERVE` (10), the floor it will not
+  spend into. A build it cannot afford with the reserve intact is left to the
+  shield trickle. So a rival hurriedly fields defenders and armies it could
+  not otherwise raise in time, the same gold sink the human's `b` key is, and
+  a short war chest is what keeps a siege from being endlessly resupplied.
 
 ## Difficulty
 
@@ -353,11 +362,11 @@ a hard boundary; keep it by convention.
   on it rather than scattered constants: `starting_gold` (Easy 50, Normal and
   Hard 0), `rivals_initiate_war` (false only on Easy),
   `rivals_attack_at_even_odds` (true only on Hard),
-  `rival_minimum_win_chance` (Hard 0, otherwise 10), and the three rival
-  economy multipliers `rival_production_scale`, `rival_research_scale` and
-  `rival_growth_scale` (collected by `rival_economy`). The TUI's selector is the
-  only place the player sets it; it is orthogonal to `Competition`, which
-  picks the rival count, not their appetite.
+  `rival_minimum_win_chance` (Hard 0, otherwise 10), and the four rival
+  economy multipliers `rival_production_scale`, `rival_research_scale`,
+  `rival_growth_scale` and `rival_gold_scale` (collected by `rival_economy`).
+  The TUI's selector is the only place the player sets it; it is orthogonal to
+  `Competition`, which picks the rival count, not their appetite.
 - `Engine.difficulty` carries the choice and `Engine::set_difficulty` is the
   single setter: it stores the level and stakes the human's opening treasury
   from it (player index 0 gets `starting_gold`, every rival 0). It is
@@ -377,21 +386,24 @@ a hard boundary; keep it by convention.
   `difficulty` and `SaveData::capture` copies it, while `into_loaded` threads
   the same value into both `LoadedGame` and the rebuilt `Engine` so the loaded
   game resumes at the level it was saved at.
-- The rival economy is scaled by three exact ratios — `Scale` (numerator over
+- The rival economy is scaled by four exact ratios — `Scale` (numerator over
   denominator, in `difficulty.rs`) applied to a rival city's shield output
-  (`production`), research output (`research`) and the food it must store to
-  grow (`growth`): Easy 3/4, 3/4, 3/2; Normal identity throughout; Hard 5/4,
-  5/4, 3/4. `Scale::apply` never cuts a nonzero yield to zero, so a size-one
-  rival city still banks a shield and a research point. Easy therefore widens
-  the growth box (slower), Hard narrows it (faster).
+  (`production`), research output (`research`), the food it must store to
+  grow (`growth`) and the gold it banks (`gold`): Easy 3/4, 3/4, 3/2, 3/4;
+  Normal identity throughout; Hard 5/4, 5/4, 3/4, 5/4. `Scale::apply` never
+  cuts a nonzero yield to zero, so a size-one rival city still banks a shield,
+  a research point and a coin. Easy therefore widens the growth box (slower)
+  and leaves the rival poorer, Hard narrows it and fattens the treasury.
 - The human is **never** scaled. `Engine::economy_scales(owner)` is the single
   place the split is decided: `Scales::IDENTITY` for player zero, the
   difficulty's `rival_economy()` otherwise. `begin_turn`'s
   `process_cities`/`process_research` thread it to `Game::process_city` (which
-  scales shields and hands the growth scale to `City::tick_scaled`) and
-  `Game::advance_research` (which scales the research banked). The model holds
-  no copy of the difficulty — the ratios are `Difficulty` methods, and only the
-  engine knows which player is at the keyboard.
+  scales shields, scales the gold take, and hands the growth scale to
+  `City::tick_scaled`) and `Game::advance_research` (which scales the research
+  banked). Trade-route earnings are a lasting link, not a city yield, and are
+  never scaled. The model holds no copy of the difficulty — the ratios are
+  `Difficulty` methods, and only the engine knows which player is at the
+  keyboard.
 
 ## Defence
 
@@ -642,6 +654,108 @@ a hard boundary; keep it by convention.
   row cannot spill past the border. A population of seven with three happy
   reads `🕺🕺🕺🧍🧍🧍🧍`.
 
+## Gold income
+
+- A city's gold take is its raw tax base scaled by Marketplace/Bank:
+  `City::gold_income(raw)`. The tax base is the worked-tile trade arrows plus
+  any special-resource gold, collected by `Game::city_gold_income` — the single
+  helper both the turn loop and the city window read, so the window's Gold row
+  can never drift from what is actually banked.
+- The take is banked once per city in `Game::process_city`, so a city's whole
+  turn lands atomically, and `Player::add_gold` does it (saturating). Every
+  owner earns, human and rival alike; the difficulty's gold scale trims a
+  rival's take (see `## Difficulty`), the human's never.
+- Trade arrows were previously display-only; the trade yield a worked tile
+  shows in the city window is now the thing that pays. Special-resource gold
+  (Gold on a mountain) is a bonus on top, not a substitute.
+- `AGENTS.md`'s `scratch/civ1_economy.md` records the phase plan. Phase 2 (the
+  per-improvement maintenance, the empty-treasury window and rush-buying),
+  Phase 3 (Caravan-established trade routes) and Phase 4 (the rival gold scale
+  and the rival's war-time rush-buying) are done.
+
+## Upkeep and the empty treasury
+
+- An improvement costs gold to keep, and `CityImprovement::upkeep` is the one
+  table of those numbers (Colosseum 4, Cathedral/Bank/University 3, Aqueduct 2,
+  Palace 0, every other 1). A city's bill is the sum over the improvements it
+  holds, `City::upkeep`, and an owner is charged the sum over all its cities
+  once per round.
+- The charge lands at the end of `process_cities`, in `Engine::charge_upkeep`,
+  after that owner's cities have paid their gold in. Paying is
+  `Player::spend_gold(upkeep)`; every owner is charged, human and rival alike,
+  and there is no difficulty scale on it.
+- A treasury that cannot cover the bill is clamped to zero and loses one unit:
+  `Engine::disband_costliest_unit` removes the costliest unit in the field
+  (ties break on the highest unit id, so the choice is deterministic), and a
+  disbanded carrier takes its cargo down with it. One unit, not a sweep — the
+  punishment is a warning, not a rout.
+- The plan note below is where the phases are tracked.
+- Only the human's shortfall is announced. `charge_upkeep` pushes a transient
+  `UpkeepNotice { upkeep, disbanded }` onto `Engine.upkeeps` for player zero
+  alone; the TUI drains it after an EndTurn (`drain_upkeep_notices`, oldest
+  first) into a loop of single-OK windows, one per shortfall. The queue and its
+  rectangle are cleared by `reset_setup` and `check_game_over`, and the record
+  is never persisted (`Engine::into_loaded` rebuilds `upkeeps` empty).
+- The window carries the reasoning on the two numbers it names: how much was
+  owed and which unit paid the price.
+
+## Rush-buying
+
+- `City::rush_cost` is `2 * (cost - stored)`, floored at **1 gold** so a build
+  one shield from done still costs something. It is `None` for an idle city.
+- `Engine::buy_production(city)` is the single command
+  (`Command::BuyProduction`) behind both the city window's `b` key and its
+  "Buy" button. It re-checks ownership and affordability before spending, so a
+  stale window or a direct command cannot rush a foreign city or overdraw the
+  treasury; each rejection is an event-only message.
+- `City::rush_production` fills the store to the target's cost and completes
+  the build through the same `complete_if_ready` the ordinary tick uses, so a
+  rushed unit or improvement is installed exactly as a grown one is — a Barracks
+  still veterans the recruit it finishes.
+- The "Buy" affordance shows only on the player's own city: a foreign city's
+  window is a read-only report and gets no such handle. The rush price is drawn
+  as a `Rush` line on the production panel, beside the cost and turn estimate.
+
+## Trade routes
+
+- A `TradeRoute { from, to, gold }` is a lasting link between two cities, held
+  as `Game.trade_routes` — **model state**, so it round-trips through a save
+  inside `Game` and needs only `#[serde(default)]`, never `SaveData` threading.
+  `MAX_TRADE_ROUTES` (3) caps how many routes may end at one city.
+- A route is opened by walking a Caravan into a city: `Engine::move_unit`'s
+  tail calls `Engine::try_establish_trade_route`, and when it opens the route
+  the caravan is consumed (`Game::remove_unit`) and the ordinary move line is
+  skipped — the unit is spent, not misplaced. Nothing else opens a route; no
+  command, no button, no AI decision. A caravan turned away because a market is
+  full is *not* consumed, and the refusal is explained by an event-only message
+  so a player is not left wondering why the unit survived the walk.
+- `UnitClass::trades()` is true for the Caravan alone and is what lets it enter
+  a foreign city at peace: `ensure_peaceful_passage` clears the foreign-occupant
+  flag for a trading unit exactly as it does for a diplomat. It is **not** a
+  free pass at war — a route is a trade, not a provocation, and the crossing is
+  refused (`try_establish_trade_route` re-checks `at_war`) so the Caravan never
+  routes around the fight. A Caravan still `enters_to_conquer`, so at war on an
+  undefended city it captures like any other unit.
+- The value is quoted once, when the caravan arrives
+  (`Game::trade_route_value`), and never recomputed: base 1, plus the wrapped
+  chebyshev distance to the far city divided by 4, plus the far city's
+  population, plus 2 per distinct special resource worked by either endpoint.
+  The constants live in `trade.rs`.
+- Every endpoint pays its own gold to whoever holds it, once a round, banked in
+  `process_cities` before the upkeep bill is settled so a route can cover its
+  cities' upkeep (`Game::trade_income`). A link between two cities of one owner
+  therefore pays that owner twice — a domestic route is worth more to one power
+  than a foreign one. The human's take is announced as an event.
+- A route dies with the city: an overrun city's routes are purged
+  (`Game::remove_trade_routes_touching`) in `take_captured_city`'s destroy
+  branch, so no route outlives an endpoint. A city merely changing hands keeps
+  its routes, which now pay the new owner.
+- The city window's right column is split: the improvements list on top, a
+  `Trade Routes` section below the rule, each row naming the far city and the
+  gold it pays (`GameView::trade_routes_for`, which defaults to empty). It is
+  drawn on a foreign city's investigated report too — the routes are part of
+  what the investigation shows.
+
 ## Save and load impact
 
 New features are judged for their save impact before they are built:
@@ -721,7 +835,7 @@ New features are judged for their save impact before they are built:
   saturates and clamps inside the area; a window with its own arithmetic (a
   button's `right() - 17`, the city window's three-column bottom band) has to
   saturate the same way. `window_geometry`'s `every_window` test hit-tests all
-  ten windows at twenty terminal sizes, which is what keeps one window's copy
+  eleven windows at twenty terminal sizes, which is what keeps one window's copy
   from reintroducing the overflow the module was written to remove.
 - Wide (two-cell) glyphs such as 💥 must anchor in a tile's _left_ column; a
   wide glyph placed in the tile's right column spills a cell into the

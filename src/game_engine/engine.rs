@@ -1,5 +1,5 @@
 use crate::crash_log;
-use crate::game_engine::cities::{BuildComplete, StarvationNotice};
+use crate::game_engine::cities::{BuildComplete, StarvationNotice, UpkeepNotice};
 use crate::game_engine::{
     Command, DiplomatAudience, Event, Player, RivalMotion, RivalWar, SabotageNotice, StealOutcome,
 };
@@ -68,6 +68,10 @@ pub struct Engine {
     /// it in a window of its own; drained by `drain_sabotage_notice`, never
     /// persisted.
     pub(crate) sabotage: Option<SabotageNotice>,
+    /// Every round in which the human could not pay their improvements' upkeep,
+    /// with the unit disbanded to cover it. Drained by `drain_upkeep_notices`;
+    /// never persisted.
+    pub(crate) upkeeps: Vec<UpkeepNotice>,
     /// The difficulty the game runs at. Tunes how aggressively rivals play —
     /// whether they declare war at all, and how readily they attack — and the
     /// human's starting treasury. Persisted with the save.
@@ -119,6 +123,7 @@ impl Engine {
             investigation: None,
             steal: None,
             sabotage: None,
+            upkeeps: Vec::new(),
             difficulty: Difficulty::Normal,
         }
     }
@@ -205,6 +210,7 @@ impl Engine {
             Command::Unsentry { unit } => self.unsentry(unit),
             Command::FoundCity { unit, name } => self.found_city(unit, name),
             Command::SetProductionTarget { city, target } => self.set_production(city, target),
+            Command::BuyProduction { city } => self.buy_production(city),
             Command::DeclareWar { opponent } => self.declare_war(opponent),
             Command::MakePeace { opponent } => self.make_peace(opponent),
             Command::SetResearchTarget { advancement } => self.set_research_target(advancement),

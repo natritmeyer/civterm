@@ -18,12 +18,13 @@ pub mod player;
 mod research;
 mod rival_player_engine;
 pub mod save;
+mod trade;
 mod turns;
 
 #[cfg(test)]
 mod engine_tests;
 
-pub use cities::{BuildComplete, StarvationNotice};
+pub use cities::{BuildComplete, StarvationNotice, UpkeepNotice};
 pub use city_income::CityIncome;
 pub use command::Command;
 pub use diplomat_actions::{
@@ -38,3 +39,4 @@ pub use outcome::GameOutcome;
 pub use player::Player;
 pub use rival_player_engine::{RivalMotion, RivalWar};
 pub use save::{LoadedGame, SAVE_FORMAT_VERSION, SaveData, SaveError, load_game, save_game};
+pub use trade::{MAX_TRADE_ROUTES, TradeRoute};

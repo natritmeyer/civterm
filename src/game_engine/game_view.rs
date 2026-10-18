@@ -1,4 +1,5 @@
 use crate::game_engine::CityIncome;
+use crate::game_engine::TradeRoute;
 use crate::model::advancements::Advancement;
 use crate::model::cartography::Tile;
 use crate::model::cities::{City, CityId, ProductionTarget};
@@ -38,6 +39,11 @@ pub trait GameView {
     fn city_income(&self, id: CityId) -> CityIncome;
     /// The units whose home city is `city`.
     fn home_units(&self, city: CityId) -> Vec<&Unit>;
+    /// The trade routes with `city` as an endpoint, for the city window.
+    /// Defaults to empty, since a view with no notion of trade has none.
+    fn trade_routes_for(&self, _city: CityId) -> Vec<&TradeRoute> {
+        Vec::new()
+    }
     fn explored(&self, x: usize, y: usize) -> bool;
     fn current_player(&self) -> Civilization;
     /// The civilization governing the given player.

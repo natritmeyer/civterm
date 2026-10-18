@@ -49,6 +49,7 @@ pub struct Scales {
     pub production: Scale,
     pub research: Scale,
     pub growth: Scale,
+    pub gold: Scale,
 }
 
 impl Scales {
@@ -57,6 +58,7 @@ impl Scales {
         production: Scale::IDENTITY,
         research: Scale::IDENTITY,
         growth: Scale::IDENTITY,
+        gold: Scale::IDENTITY,
     };
 }
 
@@ -134,13 +136,24 @@ impl Difficulty {
         }
     }
 
-    /// All three rival economic multipliers, as the one value the engine hands
+    /// The multiplier on the gold a rival's cities bank. Easy leaves the rival
+    /// a poorer treasury, Hard a fatter one; the human is never scaled.
+    pub fn rival_gold_scale(&self) -> Scale {
+        match self {
+            Difficulty::Easy => Scale::new(3, 4),
+            Difficulty::Normal => Scale::IDENTITY,
+            Difficulty::Hard => Scale::new(5, 4),
+        }
+    }
+
+    /// All four rival economic multipliers, as the one value the engine hands
     /// to a player's cities.
     pub fn rival_economy(&self) -> Scales {
         Scales {
             production: self.rival_production_scale(),
             research: self.rival_research_scale(),
             growth: self.rival_growth_scale(),
+            gold: self.rival_gold_scale(),
         }
     }
 }
@@ -227,6 +240,7 @@ mod tests {
         assert_eq!(easy.rival_research_scale(), Scale::new(3, 4));
         // The food box widens: a size-two city needs 3 rows to grow, not 2.
         assert_eq!(easy.rival_growth_scale(), Scale::new(3, 2));
+        assert_eq!(easy.rival_gold_scale(), Scale::new(3, 4));
     }
 
     #[test]
@@ -235,6 +249,7 @@ mod tests {
         assert_eq!(hard.rival_production_scale(), Scale::new(5, 4));
         assert_eq!(hard.rival_research_scale(), Scale::new(5, 4));
         assert_eq!(hard.rival_growth_scale(), Scale::new(3, 4));
+        assert_eq!(hard.rival_gold_scale(), Scale::new(5, 4));
     }
 
     #[test]
@@ -244,6 +259,7 @@ mod tests {
             normal.rival_production_scale(),
             normal.rival_research_scale(),
             normal.rival_growth_scale(),
+            normal.rival_gold_scale(),
         ] {
             assert_eq!(scale, Scale::IDENTITY);
         }
