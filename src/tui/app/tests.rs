@@ -2290,19 +2290,6 @@ fn esc_and_q_return_to_the_menu() {
     }
 }
 
-#[test]
-fn status_bar_hides_for_two_seconds() {
-    assert_eq!(fade_progress(Duration::from_secs(1)), 0.0);
-    assert_eq!(fade_progress(Duration::from_secs(2)), 0.0);
-    assert_eq!(fade_progress(Duration::from_millis(2500)), 0.5);
-}
-
-#[test]
-fn status_bar_finishes_fading_after_three_seconds() {
-    assert_eq!(fade_progress(Duration::from_secs(3)), 1.0);
-    assert_eq!(fade_progress(Duration::from_secs(10)), 1.0);
-}
-
 /// Play until the research-completion dialog opens. The starting city
 /// begins researching Construction (auto target at 10 research points),
 /// so a handful of wrapped turns is enough to finish it.

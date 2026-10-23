@@ -42,17 +42,21 @@ impl Widget for StatusBar {
             return;
         }
         let bg = fade_color(SPACE_BG, BAR_BG_END, self.progress);
-        for x in area.x..area.right() {
+
+        let selected = self.selected.min(ITEMS.len() - 1);
+        let total = ITEMS.iter().map(|s| s.len()).sum::<usize>() + ITEM_GAP * (ITEMS.len() - 1);
+        let start_x = area.x + area.width.saturating_sub(total as u16 + 4) / 2;
+        for x in start_x..start_x + total as u16 + 4 {
+            if x >= area.right() {
+                break;
+            }
             if let Some(cell) = buf.cell_mut((x, area.y)) {
                 cell.reset();
                 cell.set_fg(bg);
                 cell.set_bg(bg);
             }
         }
-
-        let selected = self.selected.min(ITEMS.len() - 1);
-        let total = ITEMS.iter().map(|s| s.len()).sum::<usize>() + ITEM_GAP * (ITEMS.len() - 1);
-        let mut x = area.x + area.width.saturating_sub(total as u16) / 2;
+        let mut x = start_x + 2;
         for (i, item) in ITEMS.iter().enumerate() {
             for (j, ch) in item.chars().enumerate() {
                 if x >= area.right() {
@@ -122,9 +126,20 @@ mod tests {
             }
             offset += text.len() + ITEM_GAP;
         }
-        (80u16 - ITEMS.iter().map(|s| s.len() + ITEM_GAP).sum::<usize>() as u16 + ITEM_GAP as u16)
-            / 2
-            + offset as u16
+        let total = ITEMS.iter().map(|s| s.len()).sum::<usize>() + ITEM_GAP * (ITEMS.len() - 1);
+        (80u16.saturating_sub(total as u16 + 4)) / 2 + 2 + offset as u16
+    }
+
+    #[test]
+    fn test_offset() {
+        let total = ITEMS.iter().map(|s| s.len()).sum::<usize>() + ITEM_GAP * (ITEMS.len() - 1);
+        let start = (80u16.saturating_sub(total as u16 + 4)) / 2 + 2;
+        println!(
+            "start={} total={} first_offset={}",
+            start,
+            total,
+            item_offset(0)
+        );
     }
 
     #[test]

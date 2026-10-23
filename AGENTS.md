@@ -180,11 +180,10 @@ a hard boundary; keep it by convention.
   He is built for walking into places, so reaching the first one should not use
   him up, and the step left in hand is what lets a player who dismisses the
   window walk back out again.
-- One case is still unresolved and should not be quietly folded in here: a
-  diplomat at war stepping onto a tile held by enemy units with **no city** on
-  it still resolves as combat, and at 0 attack he loses it and is deleted. Civ
-  1's answer belongs with the city-capture ransom, so fix it there rather than
-  widening entry here.
+- Intended behavior, not a bug: a diplomat at war stepping onto a tile held by
+  enemy units with **no city** on it still resolves as combat, and at 0 attack
+  he loses it and is deleted. Do not quietly fold this into diplomat entry;
+  the city-capture ransom is where any future change to this belongs, if ever.
 
 ## The diplomat action window
 

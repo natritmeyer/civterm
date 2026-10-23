@@ -48,8 +48,6 @@ use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
 use crate::model::units::{UnitClass, UnitId};
 
-pub const STATUS_DELAY: Duration = Duration::from_secs(2);
-pub const STATUS_FADE: Duration = Duration::from_secs(1);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// The number of most-recent event messages the log keeps in view.
 pub const EVENT_LOG_SIZE: usize = 5;
@@ -489,16 +487,13 @@ impl App {
         match app.phase {
             Phase::Menu => {
                 frame.render_widget(SplashScreen::new(), frame.area());
-                let progress = fade_progress(app.started_at.elapsed());
-                if progress > 0.0 {
-                    let area = Rect {
-                        x: frame.area().x,
-                        y: frame.area().bottom().saturating_sub(1),
-                        width: frame.area().width,
-                        height: 1,
-                    };
-                    frame.render_widget(StatusBar::new(progress, app.selected), area);
-                }
+                let area = Rect {
+                    x: frame.area().x,
+                    y: frame.area().bottom().saturating_sub(1),
+                    width: frame.area().width,
+                    height: 1,
+                };
+                frame.render_widget(StatusBar::new(1.0, app.selected), area);
             }
             Phase::ChoosingCiv => frame.render_widget(
                 CivSelector::new(app.civ_index, app.chosen_civ),
@@ -1065,10 +1060,6 @@ fn camera_for(
         _ => camera,
     };
     (cx, cy)
-}
-fn fade_progress(elapsed: Duration) -> f32 {
-    let after_delay = elapsed.saturating_sub(STATUS_DELAY);
-    (after_delay.as_secs_f32() / STATUS_FADE.as_secs_f32()).clamp(0.0, 1.0)
 }
 
 mod dialogs;
