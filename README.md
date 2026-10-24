@@ -1,75 +1,96 @@
 # civterm
 
-A Civ game in your terminal
+A Civilization clone in your terminal, written in Rust with
+[crossterm](https://github.com/crossterm-rs/crossterm) and
+[ratatui](https://github.com/ratatui/ratatui).
 
-![Splash screen](/docs/civterm_splash_screen_for_social.png)
+![Splash screen](docs/civterm_splash_screen_for_social.png)
 
-## Repo info
+## Install
 
-- [![Made with Zed](https://img.shields.io/badge/Made%20with-Zed-084CCF?logo=zed)](https://zed.dev) [![Made with OpenCode](https://img.shields.io/badge/Made%20with-OpenCode-8A2BE2?logo=zed)](https://opencode.ai) [![Licence](https://img.shields.io/github/license/natritmeyer/civterm)](<>)
-- [![Language](https://img.shields.io/github/languages/top/natritmeyer/civterm)](<>) [![Repo size](https://img.shields.io/github/repo-size/natritmeyer/civterm)](<>)
-- [![Last commit](https://img.shields.io/github/last-commit/natritmeyer/civterm)](<>) [![Build status](https://img.shields.io/github/actions/workflow/status/natritmeyer/civterm/ci.yml?label=build)](https://github.com/natritmeyer/civterm/actions) [![Tests](https://img.shields.io/badge/tests-857%20passing-brightgreen)](<>)
+You need Rust (installed via [rustup](https://rustup.rs)). The toolchain is
+pinned in `rust-toolchain.toml`.
 
-## Setup
-
-Run `make setup` once after cloning to install the pre-commit hook (it runs
-`make build` — fmt, clippy, build, and all tests — before every commit):
-
+```bash
+git clone https://github.com/natritmeyer/civterm.git
+cd civterm
+make setup        # points git hooks to .githooks (runs make build before commits)
+make run          # build and start
 ```
-make setup
-```
 
-Skip the hook for a single commit with `git commit --no-verify`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build details, testing, and project
+conventions.
 
-## Movement keys
+## Starting a game
 
-Move your selected unit with the keys clustered around the <kbd>j</kbd> home
-key — laid out here as they appear on the keyboard (the arrow keys work too).
-<kbd>j</kbd> re-centres the camera on the selected unit.
+From the menu (`(N)ew Game`, `(L)oad Saved Game`, `(Q)uit`):
 
-|                    |                         |                    |
-| ------------------ | ----------------------- | ------------------ |
-| <kbd>y</kbd><br/>↖ | <kbd>u</kbd><br/>N      | <kbd>i</kbd><br/>↗ |
-| <kbd>h</kbd><br/>W | <kbd>j</kbd><br/>centre | <kbd>k</kbd><br/>E |
-| <kbd>n</kbd><br/>↙ | <kbd>m</kbd><br/>S      | <kbd>,</kbd><br/>↘ |
+1. Pick a civilization (or random).
+2. Pick a competition level (how many rival civilizations).
+3. Pick a difficulty (Easy / Normal / Hard).
+4. Confirm to start.
 
-## What this is about
+A sample save is included as `civterm.civ` in the repo root — load it from the
+menu to see a game in progress.
 
-- A bit of fun, recreating what I remember from my early teen years in the mid 90s of the MacOS version of Civilization
-- I don't touch the code - I summon it from OpenCode's Big Pickle LLM within the Zed text editor
-- Coded in rust (I don't know rust)
-- Written as a TUI (I've never written a TUI and I've never used Ratatui)
+## Camera and movement
 
-# Screenshots of progress...
+Move your selected unit with the keys clustered around `j` (arrow keys also
+work). `j` recentres the camera on the selected unit.
 
-### We have units!
+|        |          |        |
+| ------ | -------- | ------ |
+| `y` ↖  | `u` N    | `i` ↗  |
+| `h` W   | `j` centre | `k` E   |
+| `n` ↙   | `m` S    | `,` ↘  |
 
-![Flashing unit](/docs/flashing_unit.gif)
+Drag the mouse to scroll the map. Click to select a unit or tile.
 
-### We can found new cities!
+## Unit commands (when a unit is selected)
 
-![City](/docs/city.png)
+| Key | Command |
+| --- | ------- |
+| `y`/`u`/`i`/`h`/`k`/`n`/`m`/`,` or arrows | Move (diag/orthogonal) |
+| `j` | Centre camera on unit |
+| `f` | Fortify |
+| `s` | Sentry |
+| `w` | Open the command picker |
+| `c` | Cancel current order |
+| `v` | Found a city (settlers only) |
+| `Tab` | Cycle to next movable unit |
 
-### We can drag the map around!
+## City commands
 
-![Dragging the map](/docs/map_drag.gif)
+Click a city to open the city window. From there you can:
 
-### We can see what's happening in cities!
+- **Change production** — pick what the city builds (units/improvements).
+- **Buy production** (`b`) — rush-complete the current build for gold.
+- **Unfortify / Unsentry / Cancel order** as appropriate.
+- Close with `Esc`.
 
-![City view](/docs/initial_city_view.png)
+## Game flow
 
-### Cities can now make units and improvements!
+| Key | Action |
+| --- | ------ |
+| `Space` | End turn |
+| `Tab` | Next movable unit |
+| `e` | Toggle event log |
+| `S` | Save game (prompts for location/name) |
+| `L` | Load game (from menu) |
+| `?` | Toggle the command help bar |
+| `q` | Quit (with confirmation dialog) |
 
-![City with units and improvements](/docs/city_with_improvement_and_unit.png)
+## Tips
 
-### We can sail the seven seas!
+- Cities need food to grow; deficits can cause starvation.
+- Trade routes (established by Caravans) bring gold each turn.
+- Upkeep costs gold per turn — if you can't pay, your most expensive unit may
+  be disbanded.
+- Diplomats can enter foreign cities (peace or war) to investigate, steal
+  technology, sabotage, incite revolt, or subvert.
+- Catapults are siege engines — they bombard cities rather than fighting
+  garrison units directly.
 
-![Trireme](/docs/trireme.png)
+## License
 
-### We can irrigate, mine, and build roads on tiles!
-
-![Settler work](/docs/settler_work.png)
-
-### Civilizations can be conquered!
-
-![Civilizations can be conquered](/docs/war.png)
+MIT — see [LICENSE](LICENSE).
