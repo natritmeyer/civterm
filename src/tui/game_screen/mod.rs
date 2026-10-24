@@ -430,7 +430,14 @@ impl<'a> GameScreen<'a> {
         set_cell(buf, right, bottom, "┘", border);
     }
 
-    fn draw_minimap(&self, area: Rect, buf: &mut Buffer) {
+    fn draw_minimap(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        camera: (usize, usize),
+        view_cols: usize,
+        view_rows: usize,
+    ) {
         let map_w = self.view.width().max(1);
         let map_h = self.view.height().max(1);
         let cell_cols = area.width as usize;
@@ -438,21 +445,46 @@ impl<'a> GameScreen<'a> {
         if cell_cols == 0 || cell_rows == 0 {
             return;
         }
-        let x_stride = (map_w as f64 / cell_cols as f64).ceil().max(1.0) as usize;
-        let y_stride = (map_h as f64 / cell_rows as f64).ceil().max(1.0) as usize;
 
+        // Fill background
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.reset();
+                    cell.set_symbol(" ");
+                    cell.set_bg(Color::Rgb(8, 8, 24));
+                }
+            }
+        }
+
+        let x_stride = (map_w as f64 / cell_cols as f64).max(1.0);
+        let y_stride = (map_h as f64 / cell_rows as f64).max(1.0);
+
+        // Draw terrain
         for row in 0..cell_rows {
             for col in 0..cell_cols {
-                let src_x = (col * x_stride).min(map_w - 1);
-                let src_y = (row * y_stride).min(map_h - 1);
-                if !self.view.explored(src_x, src_y) {
+                let src_x = ((col as f64 + 0.5) * x_stride) as usize % map_w;
+                let src_y = ((row as f64 + 0.5) * y_stride) as usize;
+                if src_y >= map_h {
                     continue;
                 }
-                let terrain = self.view.tile(src_x, src_y).terrain.as_char();
-                let color = if terrain == '~' {
-                    Color::Rgb(40, 90, 150)
-                } else {
-                    Color::Rgb(90, 160, 70)
+                if !self.view.explored(src_x, src_y) {
+                    if let Some(cell) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) {
+                        cell.set_symbol(" ");
+                        cell.set_bg(Color::Rgb(18, 18, 32));
+                    }
+                    continue;
+                }
+                let tile = self.view.tile(src_x, src_y);
+                let color = match tile.terrain.as_char() {
+                    '~' => Color::Rgb(30, 80, 150),
+                    '^' => Color::Rgb(90, 95, 90),
+                    't' | 'T' => Color::Rgb(150, 140, 95),
+                    'h' => Color::Rgb(130, 120, 80),
+                    'd' => Color::Rgb(190, 170, 110),
+                    's' => Color::Rgb(200, 200, 215),
+                    'p' | 'g' | 'G' => Color::Rgb(95, 160, 75),
+                    _ => Color::Rgb(95, 160, 75),
                 };
                 if let Some(cell) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) {
                     cell.set_symbol(" ");
@@ -460,6 +492,104 @@ impl<'a> GameScreen<'a> {
                 }
             }
         }
+
+        // Draw city dots (player cities only)
+        for city in self.view.player_cities() {
+            if !self
+                .view
+                .explored(city.location.x as usize, city.location.y as usize)
+            {
+                continue;
+            }
+            let cx = ((city.location.x as f64 + 0.5) * x_stride) as usize;
+            let cy = ((city.location.y as f64 + 0.5) * y_stride) as usize;
+            if cy >= cell_rows {
+                continue;
+            }
+            let mx = area.x + (cx % cell_cols) as u16;
+            let my = area.y + cy as u16;
+            if mx >= area.right() || my >= area.bottom() {
+                continue;
+            }
+            let ccolor = civilization_color(self.view.civilization_of(city.owner()));
+            if let Some(cell) = buf.cell_mut((mx, my)) {
+                cell.set_symbol("·");
+                cell.set_fg(ccolor);
+                cell.set_bg(Color::Reset);
+            }
+        }
+
+        // Draw viewport rectangle
+        if view_cols > 0 && view_rows > 0 && map_w > 0 && map_h > 0 {
+            let vx0 = ((camera.0 as f64) / x_stride) as i32;
+            let vy0 = ((camera.1 as f64) / y_stride) as i32;
+            let vx1 = (((camera.0 + view_cols) as f64) / x_stride) as i32 - 1;
+            let vy1 = (((camera.1 + view_rows) as f64) / y_stride) as i32 - 1;
+            let vp_color = Color::Rgb(230, 230, 240);
+            for cx in vx0.max(0)..=(vx1.min(cell_cols as i32 - 1)) {
+                for cy in [vy0, vy1] {
+                    if cy < 0 || cy >= cell_rows as i32 {
+                        continue;
+                    }
+                    if let Some(cell) = buf.cell_mut((area.x + cx as u16, area.y + cy as u16)) {
+                        cell.set_symbol("─");
+                        cell.set_fg(vp_color);
+                    }
+                }
+            }
+            for cy in vy0.max(0)..=(vy1.min(cell_rows as i32 - 1)) {
+                for cx in [vx0, vx1] {
+                    if cx < 0 || cx >= cell_cols as i32 {
+                        continue;
+                    }
+                    if let Some(cell) = buf.cell_mut((area.x + cx as u16, area.y + cy as u16)) {
+                        cell.set_symbol("│");
+                        cell.set_fg(vp_color);
+                    }
+                }
+            }
+            let corners = [(vx0, vy0), (vx1, vy0), (vx0, vy1), (vx1, vy1)];
+            for (cx, cy) in corners {
+                if cx < 0 || cx >= cell_cols as i32 || cy < 0 || cy >= cell_rows as i32 {
+                    continue;
+                }
+                if let Some(cell) = buf.cell_mut((area.x + cx as u16, area.y + cy as u16)) {
+                    cell.set_symbol("+");
+                    cell.set_fg(vp_color);
+                }
+            }
+        }
+
+        // Border
+        let border = Style::default().fg(DIM).bg(Color::Rgb(8, 8, 24));
+        fill_row(buf, area.x, area.right() - 1, area.y, "─", border);
+        fill_row(
+            buf,
+            area.x,
+            area.right() - 1,
+            area.bottom() - 1,
+            "─",
+            border,
+        );
+        for y in area.y..area.bottom() {
+            set_cell(buf, area.x, y, "│", border);
+            set_cell(buf, area.right() - 1, y, "│", border);
+        }
+        set_cell(buf, area.x, area.y, "┌", border);
+        set_cell(buf, area.right() - 1, area.y, "┐", border);
+        set_cell(buf, area.x, area.bottom() - 1, "└", border);
+        set_cell(buf, area.right() - 1, area.bottom() - 1, "┘", border);
+        draw_text(
+            buf,
+            area.right() - 1,
+            area.x + 1,
+            area.y,
+            " MINIMAP ",
+            Style::default()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD)
+                .bg(Color::Rgb(8, 8, 24)),
+        );
     }
 
     fn draw_player_stats(&self, area: Rect, buf: &mut Buffer) {
@@ -860,7 +990,10 @@ impl<'a> Widget for GameScreen<'a> {
             }
         }
 
-        self.draw_minimap(minimap_area, buf);
+        let map_pane_area = Rect::new(right.x, right.y, right.width, right.height);
+        let pane_cols = map_pane_area.width as usize / TILE_WIDTH;
+        let pane_rows = map_pane_area.height as usize;
+        self.draw_minimap(minimap_area, buf, self.camera, pane_cols, pane_rows);
         self.draw_player_stats(stats_area, buf);
         self.draw_focus(focus_area, buf);
         self.draw_main_map(right, buf);
