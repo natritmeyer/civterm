@@ -519,43 +519,61 @@ impl<'a> GameScreen<'a> {
             }
         }
 
-        // Draw viewport rectangle
+        // Draw viewport rectangle (handle horizontal wrap)
         if view_cols > 0 && view_rows > 0 && map_w > 0 && map_h > 0 {
-            let vx0 = ((camera.0 as f64) / x_stride) as i32;
-            let vy0 = ((camera.1 as f64) / y_stride) as i32;
-            let vx1 = (((camera.0 + view_cols) as f64) / x_stride) as i32 - 1;
-            let vy1 = (((camera.1 + view_rows) as f64) / y_stride) as i32 - 1;
+            let vx0_f = (camera.0 as f64) / x_stride;
+            let vy0_f = (camera.1 as f64) / y_stride;
+            let vx1_f = ((camera.0 + view_cols) as f64) / x_stride - 1.0;
+            let vy1_f = ((camera.1 + view_rows) as f64) / y_stride - 1.0;
+            let vx0 = vx0_f.floor() as i32;
+            let vy0 = vy0_f.floor() as i32;
+            let vx1 = vx1_f.ceil() as i32;
+            let vy1 = vy1_f.ceil() as i32;
             let vp_color = Color::Rgb(230, 230, 240);
-            for cx in vx0.max(0)..=(vx1.min(cell_cols as i32 - 1)) {
-                for cy in [vy0, vy1] {
-                    if cy < 0 || cy >= cell_rows as i32 {
+            // Draw edges, handling wrap around map width
+            for cx_off in 0..=(vx1 - vx0) {
+                let cx_raw = vx0 + cx_off;
+                // Check if this crosses wrap boundary
+                for vy in [vy0, vy1] {
+                    if vy < 0 || vy >= cell_rows as i32 {
                         continue;
                     }
-                    if let Some(cell) = buf.cell_mut((area.x + cx as u16, area.y + cy as u16)) {
-                        cell.set_symbol("─");
-                        cell.set_fg(vp_color);
+                    // Draw in both positions if wrapped
+                    for wrap in [-1i32, 0, 1] {
+                        let cx = (cx_raw + wrap * cell_cols as i32).rem_euclid(cell_cols as i32);
+                        if let Some(cell) = buf.cell_mut((area.x + cx as u16, area.y + vy as u16)) {
+                            cell.set_symbol("─");
+                            cell.set_fg(vp_color);
+                        }
                     }
                 }
             }
-            for cy in vy0.max(0)..=(vy1.min(cell_rows as i32 - 1)) {
-                for cx in [vx0, vx1] {
-                    if cx < 0 || cx >= cell_cols as i32 {
-                        continue;
-                    }
-                    if let Some(cell) = buf.cell_mut((area.x + cx as u16, area.y + cy as u16)) {
-                        cell.set_symbol("│");
-                        cell.set_fg(vp_color);
-                    }
-                }
-            }
-            let corners = [(vx0, vy0), (vx1, vy0), (vx0, vy1), (vx1, vy1)];
-            for (cx, cy) in corners {
-                if cx < 0 || cx >= cell_cols as i32 || cy < 0 || cy >= cell_rows as i32 {
+            for cy_off in 0..=(vy1 - vy0) {
+                let cy = vy0 + cy_off;
+                if cy < 0 || cy >= cell_rows as i32 {
                     continue;
                 }
-                if let Some(cell) = buf.cell_mut((area.x + cx as u16, area.y + cy as u16)) {
-                    cell.set_symbol("+");
-                    cell.set_fg(vp_color);
+                for vx in [vx0, vx1] {
+                    for wrap in [-1i32, 0, 1] {
+                        let cx = (vx + wrap * cell_cols as i32).rem_euclid(cell_cols as i32);
+                        if let Some(cell) = buf.cell_mut((area.x + cx as u16, area.y + cy as u16)) {
+                            cell.set_symbol("│");
+                            cell.set_fg(vp_color);
+                        }
+                    }
+                }
+            }
+            // Corners
+            for (vx, vy) in [(vx0, vy0), (vx1, vy0), (vx0, vy1), (vx1, vy1)] {
+                for wrap in [-1i32, 0, 1] {
+                    let cx = (vx + wrap * cell_cols as i32).rem_euclid(cell_cols as i32);
+                    if vy < 0 || vy >= cell_rows as i32 {
+                        continue;
+                    }
+                    if let Some(cell) = buf.cell_mut((area.x + cx as u16, area.y + vy as u16)) {
+                        cell.set_symbol("+");
+                        cell.set_fg(vp_color);
+                    }
                 }
             }
         }
