@@ -20,10 +20,10 @@ use strum::IntoEnumIterator;
 
 const DEFAULT_SEED: u64 = 0xC0FFEE;
 
-/// Default width of a generated world, mirroring classic Civ: 80 × 50.
-pub const DEFAULT_MAP_WIDTH: usize = 80;
+/// Default width of a generated world.
+pub const DEFAULT_MAP_WIDTH: usize = 120;
 /// Default height of a generated world.
-pub const DEFAULT_MAP_HEIGHT: usize = 50;
+pub const DEFAULT_MAP_HEIGHT: usize = 80;
 
 #[derive(Debug)]
 pub struct Engine {

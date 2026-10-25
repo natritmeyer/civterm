@@ -23,8 +23,8 @@ fn the_default_map_is_80_by_50() {
     let engine = Engine::default();
     assert_eq!(engine.width(), DEFAULT_MAP_WIDTH);
     assert_eq!(engine.height(), DEFAULT_MAP_HEIGHT);
-    assert_eq!(DEFAULT_MAP_WIDTH, 80);
-    assert_eq!(DEFAULT_MAP_HEIGHT, 50);
+    assert_eq!(engine.width(), 120);
+    assert_eq!(engine.height(), 80);
 }
 
 #[test]
