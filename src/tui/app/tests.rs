@@ -339,7 +339,7 @@ fn esc_from_the_game_returns_to_the_menu() {
     app.handle_key(key(KeyCode::Char('s')));
     assert!(matches!(app.phase, Phase::Playing));
     app.handle_key(key(KeyCode::Esc));
-    assert!(matches!(app.phase, Phase::Menu));
+    assert!(app.quit_dialog.is_some());
 }
 
 #[test]
@@ -1383,11 +1383,11 @@ fn esc_closes_the_window_before_anything_else() {
     app.handle_key(key(KeyCode::Esc));
     assert_eq!(app.selected_city, None);
     assert!(matches!(app.phase, Phase::Playing));
-    // With the window gone, Esc falls through to help then the menu.
+    // With the window gone, Esc falls through to help then the menu/quit dialog.
     app.handle_key(key(KeyCode::Esc));
     assert!(!app.show_help);
     app.handle_key(key(KeyCode::Esc));
-    assert!(matches!(app.phase, Phase::Menu));
+    assert!(app.quit_dialog.is_some());
 }
 
 #[test]
@@ -3357,7 +3357,9 @@ fn a_saved_game_loads_back_into_play() {
 
     // Quit to the menu and load the saved game back in.
     app.handle_key(key(KeyCode::Esc));
-    assert!(matches!(app.phase, Phase::Menu));
+    assert!(app.quit_dialog.is_some());
+    app.quit_dialog = None;
+    app.phase = Phase::Menu;
     app.handle_key(key(KeyCode::Char('l')));
     for ch in path.chars() {
         app.handle_key(key(KeyCode::Char(ch)));

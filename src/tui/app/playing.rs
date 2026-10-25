@@ -186,7 +186,7 @@ impl App {
                 } else if self.show_help {
                     self.show_help = false;
                 } else {
-                    self.phase = Phase::Menu;
+                    self.quit_dialog = Some(QuitChoice::Continue);
                 }
                 false
             }
