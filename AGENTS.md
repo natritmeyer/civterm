@@ -15,7 +15,7 @@ cargo build
 cargo test
 ```
 
-Run `make build` after any change. Current test baseline: 857 passing unit
+Run `make build` after any change. Current test baseline: 865 passing unit
 tests. Keep this baseline line and the README's badge (`tests-N%20passing`)
 in step with the actual count whenever tests are added or removed.
 
@@ -109,6 +109,18 @@ a hard boundary; keep it by convention.
 - Don't alias modules that merely group implementation back together
   (`engine/engine.rs`), and don't add `#[allow(clippy::module_inception)]`
   to make bad nesting pass lint.
+
+## Map generation
+
+- `MapGenerator::generate` settles terrain first and special resources last:
+  ocean, tundra borders, seeded plains, continents, enclosed water filled in,
+  then `place_special_resources`. Resources come last so a lake that fills in
+  as grassland cannot keep a fish it should never have had.
+- A tile whose terrain supports a resource has a 10% chance
+  (`RESOURCE_CHANCE_PERCENT`) of receiving it; unsupporting terrain gets
+  nothing. `Terrain::supports_resource` is the single terrain → resource
+  mapping, and `Tile.resource` is an `Option`, so a tile holds zero or one
+  resource, never several.
 
 ## Movement and reveal invariants
 
@@ -812,12 +824,20 @@ New features are judged for their save impact before they are built:
   top of the z-order over everything the map draws. The flash goes last of all,
   over the replayed rival glyph too, so an arriving attacker is eclipsed by the
   💥 it triggered.
+- A non-city tile's spare column carries at most one marker: a special
+  resource or, failing that, an improvement watermark. `SpecialResource::as_char`
+  is the single source of the resource glyphs (`♠` coal, `>` fish, `❧` game,
+  `♦` gems, `¤` gold, `♞` horses, `○` oasis, `Ψ` oil). Resources outrank
+  improvements (irrigation, then mine, then road) because the resource is what
+  makes the tile worth working and an improvement can be rebuilt. Fog and
+  city tiles draw neither, and every glyph is one character so it cannot
+  spill into the neighbouring tile.
 - A city tile shows its population, and `MAX_POPULATION` (99) caps it: the
   number the map must be able to draw is what bounds the rule, not the other
   way round. `population_text` hands back one digit for a small city and two
   from ten upwards, and the tile's spare column is the second digit's home, so
-  a two-digit city takes the improvement watermark's place for itself (a small
-  city still keeps it). The left column still holds exactly one character:
+  a two-digit city takes the column for itself while a small city leaves it
+  blank. The left column still holds exactly one character:
   ratatui's `set_symbol` stores its argument verbatim, so handing it the whole
   two-digit size would paint both digits into one cell and let the renderer
   spill them east. The cap doubles as a layout guard, since a save written

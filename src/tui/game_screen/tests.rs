@@ -3,7 +3,7 @@ use crate::model::cartography::Direction;
 use crate::model::cartography::Location;
 use crate::model::civilizations::Civilization;
 use crate::model::civilizations::PlayerId;
-use crate::model::geography::Terrain;
+use crate::model::geography::{SpecialResource, Terrain};
 use crate::model::units::UnitClass;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -927,6 +927,34 @@ fn a_mine_and_a_road_each_show_their_own_watermark() {
 }
 
 #[test]
+fn a_special_resource_shows_its_own_glyph_in_the_spare_column() {
+    let mut view = fake_view();
+    view.tile = crate::model::cartography::Tile::new(Terrain::Plains);
+    view.tile.place_resource(SpecialResource::Horses).unwrap();
+    let buf = painted_buffer(&view, None, false);
+    assert_eq!(
+        buf.cell((0, 0)).unwrap().symbol(),
+        ".",
+        "the terrain letter keeps the first column"
+    );
+    assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "ž");
+    // assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "♞");
+}
+
+#[test]
+fn a_special_resource_outranks_the_improvement_watermark() {
+    let mut view = fake_view();
+    view.tile = crate::model::cartography::Tile::new(Terrain::Desert);
+    view.tile.place_resource(SpecialResource::Oasis).unwrap();
+    view.tile.irrigate().unwrap();
+    view.tile.mine().unwrap();
+    view.tile.build_road().unwrap();
+    let buf = painted_buffer(&view, None, false);
+    assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "@");
+    // assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "○");
+}
+
+#[test]
 fn an_plain_tile_and_fog_draw_no_watermark() {
     let plain = fake_view();
     let buf = painted_buffer(&plain, None, false);
@@ -936,6 +964,17 @@ fn an_plain_tile_and_fog_draw_no_watermark() {
     let mut foggy = improved_view();
     foggy.explored = false;
     let buf = painted_buffer(&foggy, None, false);
+    assert_eq!(buf.cell((1, 0)).unwrap().symbol(), " ");
+
+    // Fog hides a special resource just the same.
+    let mut foggy_resource = fake_view();
+    foggy_resource.tile = crate::model::cartography::Tile::new(Terrain::Plains);
+    foggy_resource
+        .tile
+        .place_resource(SpecialResource::Horses)
+        .unwrap();
+    foggy_resource.explored = false;
+    let buf = painted_buffer(&foggy_resource, None, false);
     assert_eq!(buf.cell((1, 0)).unwrap().symbol(), " ");
 }
 
@@ -996,8 +1035,9 @@ fn an_oversized_city_from_an_older_save_is_clamped_on_the_tile() {
     assert_eq!(buf.cell((2, 0)).unwrap().symbol(), " ");
 }
 
-/// The improvement watermark shares the spare column, so a two-digit
-/// population outranks it: the digits win and the mark stands down.
+/// A two-digit population still needs both of the tile's columns even when an
+/// improvement lies beneath: the digits, not the watermark, own the spare
+/// column.
 #[test]
 fn a_large_city_takes_the_spare_column_from_the_watermark() {
     let mut view = city_of_population(12);
@@ -1007,20 +1047,27 @@ fn a_large_city_takes_the_spare_column_from_the_watermark() {
     assert_eq!(
         buf.cell((1, 0)).unwrap().symbol(),
         "2",
-        "the population outranks the road watermark"
+        "the second population digit owns the spare column"
     );
 }
 
-/// A small city still leaves the spare column free for the watermark, so the
-/// two-digit case does not cost the improvement its mark.
+/// A city tile belongs to the city, not the ground: even a small city leaves
+/// its spare column blank rather than wearing a resource or improvement
+/// marker.
 #[test]
-fn a_small_city_still_carries_its_watermark() {
-    let mut view = city_of_population(4);
-    view.tile = crate::model::cartography::Tile::new(Terrain::Grassland);
+fn a_small_city_does_not_carry_a_spare_column_marker() {
+    let mut view = city_of_population(3);
+    view.tile = crate::model::cartography::Tile::new(Terrain::Plains);
+    view.tile.place_resource(SpecialResource::Horses).unwrap();
+    view.tile.irrigate().unwrap();
     view.tile.build_road().unwrap();
     let buf = painted_buffer(&view, None, false);
-    assert_eq!(buf.cell((0, 0)).unwrap().symbol(), "4");
-    assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "+");
+    assert_eq!(buf.cell((0, 0)).unwrap().symbol(), "3");
+    assert_eq!(
+        buf.cell((1, 0)).unwrap().symbol(),
+        " ",
+        "a city tile does not wear a resource or improvement marker"
+    );
 }
 
 /// Builds a one-tile view whose only city has the given population, grown

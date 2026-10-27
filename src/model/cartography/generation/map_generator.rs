@@ -1,7 +1,11 @@
 use crate::model::cartography::{Direction, Location, Map};
-use crate::model::geography::Terrain;
+use crate::model::geography::{SpecialResource, Terrain};
 use crate::utils::Rng;
 use strum::IntoEnumIterator;
+
+/// How often a tile that can host its terrain's special resource actually
+/// gets one: one roll in ten, made only for supporting tiles.
+const RESOURCE_CHANCE_PERCENT: u32 = 10;
 
 pub struct MapGenerator {
     rng: Rng,
@@ -30,7 +34,31 @@ impl MapGenerator {
         self.seed_plains(&mut map, 4);
         self.grow_continents(&mut map, 200);
         self.fill_enclosed_water_with_grass(&mut map);
+        self.place_special_resources(&mut map);
         map
+    }
+
+    /// Give every tile whose final terrain can host a special resource a
+    /// [`RESOURCE_CHANCE_PERCENT`] chance of carrying that resource. The pass
+    /// runs after the terrain is settled, so fish are never stranded on a lake
+    /// that filled in. A tile holds at most one resource: the first one its
+    /// terrain supports is the only one rolled for, and `place_resource`
+    /// stores a single `Option`.
+    pub fn place_special_resources(&mut self, map: &mut Map) {
+        for y in 0..map.height {
+            for x in 0..map.width {
+                let location = Location::new(x as u16, y as u16);
+                let terrain = map.tile_at(location).terrain;
+                let Some(resource) =
+                    SpecialResource::iter().find(|resource| terrain.supports_resource(*resource))
+                else {
+                    continue;
+                };
+                if self.rng.in_range(100) < RESOURCE_CHANCE_PERCENT {
+                    let _ = map.tile_at_mut(location).place_resource(resource);
+                }
+            }
+        }
     }
 
     /// Convert any water tile that borders land in all but one direction into
@@ -452,6 +480,61 @@ mod tests {
         let mut generator = MapGenerator::new(1);
         let map = generator.generate(80, 50);
         assert!(land_count(&map) > 0);
+    }
+
+    #[test]
+    fn about_one_in_ten_supporting_tiles_gets_a_resource() {
+        let mut generator = MapGenerator::new(1);
+        let mut map = Map::new(100, 100);
+        generator.set_to_ocean(&mut map);
+        generator.place_special_resources(&mut map);
+        let placed = (0..map.height)
+            .flat_map(|y| (0..map.width).map(move |x| Location::new(x as u16, y as u16)))
+            .filter(|location| map.tile_at(*location).resource().is_some())
+            .count();
+        assert!(
+            (500..=1500).contains(&placed),
+            "expected roughly 10% of 10,000 ocean tiles, got {placed}"
+        );
+    }
+
+    #[test]
+    fn generated_resources_sit_only_on_supporting_terrain() {
+        let mut generator = MapGenerator::new(1);
+        let map = generator.generate(80, 50);
+        let mut placed = 0;
+        for y in 0..map.height {
+            for x in 0..map.width {
+                let location = Location::new(x as u16, y as u16);
+                if let Some(resource) = map.tile_at(location).resource() {
+                    placed += 1;
+                    assert!(
+                        map.tile_at(location).terrain.supports_resource(resource),
+                        "{resource:?} placed on unsupporting {:?}",
+                        map.tile_at(location).terrain
+                    );
+                }
+            }
+        }
+        assert!(placed > 0, "a generated map should carry resources");
+    }
+
+    #[test]
+    fn unsupporting_terrain_gets_no_resources() {
+        let mut generator = MapGenerator::new(1);
+        let mut map = Map::new(10, 10);
+        for y in 0..map.height {
+            for x in 0..map.width {
+                map.tile_at_mut(Location::new(x as u16, y as u16)).terrain = Terrain::Grassland;
+            }
+        }
+        generator.place_special_resources(&mut map);
+        assert!(
+            (0..map.height)
+                .flat_map(|y| (0..map.width).map(move |x| Location::new(x as u16, y as u16)))
+                .all(|location| map.tile_at(location).resource().is_none()),
+            "grassland supports no special resource"
+        );
     }
 
     #[test]

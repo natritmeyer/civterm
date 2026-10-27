@@ -2,7 +2,7 @@ use super::*;
 use crate::model::cartography::Tile;
 use crate::model::cities::{CityId, MAX_POPULATION};
 use crate::model::civilizations::Civilization;
-use crate::model::geography::Terrain;
+use crate::model::geography::{SpecialResource, Terrain};
 use crate::model::units::{UnitClass, UnitId, UnitOrder};
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier, Style};
@@ -28,8 +28,9 @@ fn terrain_colors(terrain: Terrain) -> (Color, Color) {
 /// improvement, so units and cities can keep their letters in the first
 /// column: `≈` for irrigation, `⛏` for a mine, `+` for a road. When a tile
 /// holds several improvements the most informative marker wins: irrigation,
-/// then mine, then road. Each glyph uses a muted colour that stays readable on
-/// the terrain backgrounds.
+/// then mine, then road. A special resource on the same tile outranks all
+/// three (see `terrain_marker`). Each glyph uses a muted colour that stays
+/// readable on the terrain backgrounds.
 fn improvement_glyph(tile: &Tile) -> Option<(char, Color)> {
     if tile.is_irrigated() {
         Some(('≈', Color::Rgb(120, 200, 255)))
@@ -40,6 +41,33 @@ fn improvement_glyph(tile: &Tile) -> Option<(char, Color)> {
     } else {
         None
     }
+}
+
+/// The single-cell glyph and colour a special resource wears in the spare
+/// column. Each matches the resource's character: black coal, a darting fish,
+/// forest game, a cut gem, a coin of gold, a knight for horses, a desert
+/// water hole and an oil derrick.
+fn resource_glyph(tile: &Tile) -> Option<(char, Color)> {
+    let resource = tile.resource()?;
+    let color = match resource {
+        SpecialResource::Coal => Color::Rgb(200, 200, 210),
+        SpecialResource::Fish => Color::Rgb(120, 200, 255),
+        SpecialResource::Game => Color::Rgb(200, 160, 90),
+        SpecialResource::Gems => Color::Rgb(235, 120, 220),
+        SpecialResource::Gold => Color::Rgb(255, 215, 0),
+        SpecialResource::Horses => Color::Rgb(210, 170, 120),
+        SpecialResource::Oasis => Color::Rgb(120, 210, 255),
+        SpecialResource::Oil => Color::Rgb(120, 120, 130),
+    };
+    Some((resource.as_char(), color))
+}
+
+/// The marker for a tile's spare column. A special resource outranks an
+/// improvement: the resource is what makes the tile worth working, while the
+/// improvement can be rebuilt. Callers suppress the whole marker on city
+/// tiles, where the population owns the column instead.
+fn terrain_marker(tile: &Tile) -> Option<(char, Color)> {
+    resource_glyph(tile).or_else(|| improvement_glyph(tile))
 }
 
 /// The civilization flag colour used to flash a selected unit's tile while it
@@ -76,7 +104,8 @@ pub(crate) fn tile_style(explored: bool, terrain: Terrain) -> Style {
 
 /// Paint one world tile at `(x, y)` spanning `TILE_WIDTH` columns, exactly as
 /// the main map does: the terrain/unit/city symbol in the first cell and a
-/// blank style-carrying cell to its right. World columns wrap horizontally.
+/// resource or improvement marker in the second. World columns wrap
+/// horizontally.
 /// Returns the city's name when the tile holds an explored city so callers can
 /// draw the label beneath it.
 ///
@@ -116,8 +145,15 @@ pub(crate) fn paint_tile(
     let map_x = world_x % map_w;
     let hovered = hover_target == Some((map_x, world_y));
     let map_x = world_x % map_w;
-    let marker = if world_y < map_h && view.explored(map_x, world_y) {
-        improvement_glyph(view.tile(map_x, world_y))
+    // A city tile is the city's own display — its population, name and flag
+    // colour — so the spare-column marker stands down there even when the
+    // ground beneath carries a resource or was irrigated, roaded or mined.
+    // Those still work; they are simply not the tile's headline.
+    let marker = if world_y < map_h
+        && view.explored(map_x, world_y)
+        && view.city_at(map_x, world_y).is_none()
+    {
+        terrain_marker(view.tile(map_x, world_y))
     } else {
         None
     };
@@ -261,11 +297,12 @@ pub(crate) fn paint_tile(
         cell.set_symbol(&symbol.chars().next().unwrap_or(' ').to_string());
         cell.set_style(style);
     }
-    // The spare column carries the improvement watermark (≈ irrigation, + road,
-    // ⛏ mine) on explored tiles; fog and the below-map gutter stay blank, and
-    // hovering the tile hatches the whole tile. A two-digit population is the one
-    // thing that needs the column for itself: its digits stay inside the tile, so
-    // they never spill into the neighbour to the east.
+    // The spare column carries a special-resource symbol or an improvement
+    // watermark (≈ irrigation, + road, ⛏ mine) on explored non-city tiles; a
+    // city owns the tile's whole face, fog and the below-map gutter stay
+    // blank, and hovering the tile hatches the whole tile. A two-digit
+    // population is the one thing that needs the column for itself: its digits
+    // stay inside the tile, so they never spill into the neighbour to the east.
     if TILE_WIDTH > 1
         && let Some(cell) = buf.cell_mut((x + 1, y))
     {
@@ -293,7 +330,7 @@ pub(crate) fn first_letter(unit_class: UnitClass) -> char {
 
 /// The population shown on a city tile: one digit for a small city, two from
 /// ten upwards. A tile is two columns wide, so a two-digit size takes both and
-/// the improvement watermark stands down. The cap is a layout guard as much
+/// the spare-column marker stands down. The cap is a layout guard as much
 /// as a rule: a save written before cities were capped can carry a bigger
 /// number, and three digits would spill into the neighbouring tile.
 pub(crate) fn population_text(population: u32) -> String {

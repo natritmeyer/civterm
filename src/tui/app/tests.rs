@@ -2128,6 +2128,38 @@ fn tab_skips_fortified_sentried_and_loaded_units() {
 }
 
 #[test]
+fn auto_selection_skips_a_rested_garrison() {
+    // A fortified unit has its moves restored at the start of a turn but stays
+    // out of the available-units loop. Auto-selection — a new game, a load, or
+    // a fresh turn — must skip it and focus the first unit that can act, not
+    // hand the player a garrison and make them press Tab to get going.
+    let (mut app, ids) = app_with_settlers_at(&[(1, 1), (3, 1)]);
+    {
+        let units = &mut app.engine.as_mut().unwrap().game.units;
+        units[0].fortify();
+        units[0].restore_moves();
+    }
+    app.select_first_unit();
+    assert_eq!(app.selected_unit, Some(ids[1]));
+}
+
+#[test]
+fn auto_selection_leaves_nothing_focused_when_every_unit_is_garrisoned() {
+    let (mut app, _ids) = app_with_settlers_at(&[(1, 1)]);
+    {
+        let unit = &mut app.engine.as_mut().unwrap().game.units[0];
+        unit.fortify();
+        unit.restore_moves();
+    }
+    app.select_first_unit();
+    assert_eq!(app.selected_unit, None);
+    assert_eq!(
+        app.event_log.last().map(|event| event.message()),
+        Some("No more units left to command this turn")
+    );
+}
+
+#[test]
 fn a_spent_unit_advances_to_the_next_unit_with_movement_after_a_beat() {
     let (mut app, ids) = app_with_settlers_at(&[(1, 1), (3, 1), (5, 1)]);
     app.handle_key(key(KeyCode::Tab)); // ids[0]

@@ -267,7 +267,17 @@ impl App {
 
     pub(super) fn select_first_unit(&mut self) {
         if let Some(engine) = &self.engine {
-            self.selected_unit = engine.player_units().first().map(|unit| unit.id());
+            let units = engine.player_units();
+            self.selected_unit = units
+                .iter()
+                .find(|unit| unit_commandable(unit))
+                .map(|unit| unit.id());
+            if self.selected_unit.is_none() && !units.is_empty() {
+                // No units can act this turn; leave nothing selected and note it.
+                self.record_events(vec![GameEvent::new(
+                    "No more units left to command this turn",
+                )]);
+            }
         } else {
             self.selected_unit = None;
         }
