@@ -966,4 +966,56 @@ impl App {
         self.awaiting_disembark = Some(unit_id);
         self.camera_follow.set(true);
     }
+
+    pub(super) fn open_disband_dialog(&mut self, ship: UnitId) {
+        let state = DisbandDialogState { ship, unit: ship };
+        self.disband_dialog = Some(state);
+        self.disband_window = Some(state);
+        self.disband_confirm = Some(state);
+        self.disband_prompt = Some(state);
+        self.disband_dialog_rect = Cell::new(None);
+        self.disband_window_rect = Cell::new(None);
+        self.disband_confirm_rect = Cell::new(None);
+        self.disband_prompt_rect = Cell::new(None);
+    }
+
+    pub(super) fn close_disband_dialog(&mut self) {
+        self.disband_dialog = None;
+        self.disband_window = None;
+        self.disband_confirm = None;
+        self.disband_prompt = None;
+        self.disband_dialog_rect = Cell::new(None);
+        self.disband_window_rect = Cell::new(None);
+        self.disband_confirm_rect = Cell::new(None);
+        self.disband_prompt_rect = Cell::new(None);
+    }
+
+    /// Disband `unit`, but if it is a ship carrying cargo, ask first.
+    pub(super) fn request_disband(&mut self, unit: UnitId) {
+        let has_cargo = self
+            .engine
+            .as_ref()
+            .map(|engine| {
+                engine
+                    .unit(unit)
+                    .map(|ship| {
+                        !engine
+                            .cargo_at(ship.location.x as usize, ship.location.y as usize)
+                            .is_empty()
+                    })
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if has_cargo {
+            self.open_disband_dialog(unit);
+        } else {
+            if let Some(engine) = &mut self.engine {
+                let events = engine.submit(crate::game_engine::Command::Disband { unit });
+                self.record_events(events);
+            }
+            self.selected_unit = None;
+            self.awaiting_disembark = None;
+            self.schedule_unit_advance_if_spent();
+        }
+    }
 }

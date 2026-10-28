@@ -3305,7 +3305,10 @@ fn the_command_picker_offers_unfortify_for_a_fortified_garrison() {
     app.selected_unit = Some(garrison);
     assert_eq!(
         app.command_rows(),
-        vec![command_picker::CommandChoice::Unfortify],
+        vec![
+            command_picker::CommandChoice::Unfortify,
+            command_picker::CommandChoice::Disband
+        ],
         "a fortified garrison can only be roused"
     );
 }

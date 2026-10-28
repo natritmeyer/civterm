@@ -15,6 +15,9 @@ pub enum Command {
     Fortify {
         unit: UnitId,
     },
+    Disband {
+        unit: UnitId,
+    },
     Sentry {
         unit: UnitId,
     },

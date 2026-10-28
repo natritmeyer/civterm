@@ -203,6 +203,7 @@ impl Engine {
         match command {
             Command::Move { unit, direction } => self.move_unit(unit, direction),
             Command::Fortify { unit } => self.fortify(unit),
+            Command::Disband { unit } => self.disband(unit),
             Command::Sentry { unit } => self.sentry(unit),
             Command::Work { unit, improvement } => self.work(unit, improvement),
             Command::CancelOrder { unit } => self.cancel_order(unit),

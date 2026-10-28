@@ -132,6 +132,38 @@ impl App {
             self.handle_diplomacy_key(key);
             return false;
         }
+        // While the disband dialog is open it captures the keyboard.
+        if self.disband_dialog.is_some()
+            || self.disband_window.is_some()
+            || self.disband_confirm.is_some()
+            || self.disband_prompt.is_some()
+        {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('C') => {
+                    self.close_disband_dialog();
+                }
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('d') | KeyCode::Char('D') => {
+                    let ship = self
+                        .disband_dialog
+                        .or(self.disband_window)
+                        .or(self.disband_confirm)
+                        .or(self.disband_prompt)
+                        .map(|s| s.ship);
+                    if let Some(ship) = ship {
+                        self.close_disband_dialog();
+                        if let Some(engine) = &mut self.engine {
+                            let events =
+                                engine.submit(crate::game_engine::Command::Disband { unit: ship });
+                            self.record_events(events);
+                        }
+                        self.selected_unit = None;
+                        self.schedule_unit_advance_if_spent();
+                    }
+                }
+                _ => {}
+            }
+            return false;
+        }
         // While the transport window is open it captures the keyboard.
         if self.transport_window.is_some()
             || self.ship_window.is_some()
@@ -313,6 +345,10 @@ impl App {
                 self.cancel_selected_unit_order();
                 false
             }
+            KeyCode::Char('d') => {
+                self.disband_selected_unit();
+                false
+            }
             KeyCode::Char('S') => {
                 self.open_save_prompt();
                 false
@@ -449,6 +485,10 @@ impl App {
             || self.save_prompt.is_some()
             || self.quit_dialog.is_some()
             || self.rival_animation.is_some()
+            || self.disband_dialog.is_some()
+            || self.disband_window.is_some()
+            || self.disband_confirm.is_some()
+            || self.disband_prompt.is_some()
             || self.transport_window.is_some()
             || self.ship_window.is_some()
             || self.vessel_window.is_some()
@@ -648,6 +688,10 @@ impl App {
             || self.command_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
             || self.moused_window.get().is_some()
+            || self.disband_dialog_rect.get().is_some()
+            || self.disband_window_rect.get().is_some()
+            || self.disband_confirm_rect.get().is_some()
+            || self.disband_prompt_rect.get().is_some()
             || self.transport_window_rect.get().is_some()
             || self.ship_window_rect.get().is_some()
             || self.vessel_window_rect.get().is_some()
@@ -894,5 +938,13 @@ impl App {
             // turn), wiping any pending auto-advance.
             self.schedule_unit_advance_if_spent();
         }
+    }
+
+    /// Disband the selected unit: remove it from the game.
+    pub(super) fn disband_selected_unit(&mut self) {
+        let Some(unit) = self.selected_unit else {
+            return;
+        };
+        self.request_disband(unit);
     }
 }

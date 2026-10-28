@@ -427,6 +427,23 @@ impl Engine {
             None => self.events.push(Event::new("No such unit")),
         }
     }
+
+    pub(super) fn disband(&mut self, unit: UnitId) {
+        let Some(u) = self.owned_unit(unit) else {
+            self.events.push(Event::new("No such unit"));
+            return;
+        };
+        let owner = u.owner();
+        let index = unit.index();
+        // A disbanded carrier takes its cargo down with it.
+        if u.unit_class.carry_capacity() > 0 {
+            self.game.disband_cargo_of(unit);
+        }
+        // If the unit is aboard a ship, remove it from the cargo list.
+        self.game.remove_unit(unit);
+        self.events
+            .push(Event::for_player(owner, format!("Unit {} disbands", index)));
+    }
     pub(super) fn work(&mut self, unit: UnitId, improvement: TerrainImprovement) {
         if self.refuse_foreign_city_order(unit) {
             return;

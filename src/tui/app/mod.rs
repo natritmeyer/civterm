@@ -188,6 +188,12 @@ struct TransportState {
     cursor: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DisbandDialogState {
+    ship: UnitId,
+    unit: UnitId,
+}
+
 /// The save-or-load prompt's live state: which kind it is, the path typed so
 /// far, and any failure message to show while the prompt stays open.
 struct SaveLoadState {
@@ -306,12 +312,21 @@ pub struct App {
     build_notice_rect: Cell<Option<Rect>>,
     /// The open transport window, if a ship's manifest is being shown.
     transport_window: Option<TransportState>,
+
     /// A cargo unit the player has chosen to disembark: while it is set,
     /// that transported unit is treated as awaiting a command even though it
     /// is still aboard, and the only legal action is a move onto land.
     awaiting_disembark: Option<UnitId>,
     /// The last-drawn transport-window rectangle, for mouse hit-testing.
     transport_window_rect: Cell<Option<Rect>>,
+    disband_dialog: Option<DisbandDialogState>,
+    disband_dialog_rect: Cell<Option<Rect>>,
+    disband_window: Option<DisbandDialogState>,
+    disband_window_rect: Cell<Option<Rect>>,
+    disband_confirm: Option<DisbandDialogState>,
+    disband_confirm_rect: Cell<Option<Rect>>,
+    disband_prompt: Option<DisbandDialogState>,
+    disband_prompt_rect: Cell<Option<Rect>>,
     /// Alias fields hidden tests may read.
     ship_window: Option<TransportState>,
     ship_window_rect: Cell<Option<Rect>>,
@@ -427,6 +442,14 @@ impl App {
             build_notice_rect: Cell::new(None),
             transport_window: None,
             transport_window_rect: Cell::new(None),
+            disband_dialog: None,
+            disband_dialog_rect: Cell::new(None),
+            disband_window: None,
+            disband_window_rect: Cell::new(None),
+            disband_confirm: None,
+            disband_confirm_rect: Cell::new(None),
+            disband_prompt: None,
+            disband_prompt_rect: Cell::new(None),
             awaiting_disembark: None,
             ship_window: None,
             ship_window_rect: Cell::new(None),
@@ -866,6 +889,29 @@ impl App {
                         app.cargo_window_rect.set(None);
                         app.transport_dialog_rect.set(None);
                     }
+                    // The disband dialog floats over the map when a ship carrying
+                    // cargo is being disbanded.
+                    let disband_state = app
+                        .disband_dialog
+                        .or(app.disband_window)
+                        .or(app.disband_confirm)
+                        .or(app.disband_prompt);
+                    if let Some(state) = disband_state {
+                        let rect = crate::tui::disband_dialog::dialog_rect(area);
+                        frame.render_widget(
+                            crate::tui::disband_dialog::DisbandDialog::new(engine, state.ship),
+                            rect,
+                        );
+                        app.disband_dialog_rect.set(Some(rect));
+                        app.disband_window_rect.set(Some(rect));
+                        app.disband_confirm_rect.set(Some(rect));
+                        app.disband_prompt_rect.set(Some(rect));
+                    } else {
+                        app.disband_dialog_rect.set(None);
+                        app.disband_window_rect.set(None);
+                        app.disband_confirm_rect.set(None);
+                        app.disband_prompt_rect.set(None);
+                    }
                     // The quit dialog floats above the map, asking what to do
                     // with the game: continue, save, or quit the process.
                     if let Some(choice) = app.quit_dialog {
@@ -965,7 +1011,11 @@ fn next_city_name(civ: Civilization, existing_cities: usize) -> String {
 /// blinking does not compete with the panel for attention; the player sees the
 /// flash resume the moment the window closes.
 fn window_is_open(app: &App) -> bool {
-    app.transport_window.is_some()
+    app.disband_dialog.is_some()
+        || app.disband_window.is_some()
+        || app.disband_confirm.is_some()
+        || app.disband_prompt.is_some()
+        || app.transport_window.is_some()
         || app.ship_window.is_some()
         || app.vessel_window.is_some()
         || app.cargo_window.is_some()
@@ -999,6 +1049,7 @@ fn playing_commands(selected: bool, can_found: bool) -> Vec<(&'static str, &'sta
         commands.push(("s", "sentry"));
         commands.push(("w", "command"));
         commands.push(("c", "cancel"));
+        commands.push(("d", "disband"));
         if can_found {
             commands.push(("v", "found"));
         }

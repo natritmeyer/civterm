@@ -93,6 +93,16 @@ impl App {
             self.handle_research_dialog_mouse(mouse);
             return;
         }
+        // The disband dialog floats over the map and captures all mouse
+        // input while it is open.
+        if self.disband_dialog_rect.get().is_some()
+            || self.disband_window_rect.get().is_some()
+            || self.disband_confirm_rect.get().is_some()
+            || self.disband_prompt_rect.get().is_some()
+        {
+            self.handle_disband_dialog_mouse(mouse);
+            return;
+        }
         // The transport window floats over the map and captures all mouse
         // input while it is open.
         if self.transport_window_rect.get().is_some()
@@ -522,6 +532,50 @@ impl App {
         // Click outside dismisses.
         if !panel.contains(position) {
             self.close_transport_window();
+        }
+    }
+
+    pub(super) fn handle_disband_dialog_mouse(&mut self, mouse: MouseEvent) {
+        let panel = self
+            .disband_dialog_rect
+            .get()
+            .or_else(|| self.disband_window_rect.get())
+            .or_else(|| self.disband_confirm_rect.get())
+            .or_else(|| self.disband_prompt_rect.get());
+        let Some(panel) = panel else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        let position = (mouse.column, mouse.row).into();
+        if crate::tui::disband_dialog::disband_all_button_rect(panel).contains(position) {
+            let ship = self
+                .disband_dialog
+                .or(self.disband_window)
+                .or(self.disband_confirm)
+                .or(self.disband_prompt)
+                .map(|s| s.ship);
+            if let Some(ship) = ship {
+                self.close_disband_dialog();
+                if let Some(engine) = &mut self.engine {
+                    let events = engine.submit(crate::game_engine::Command::Disband { unit: ship });
+                    self.record_events(events);
+                }
+                self.selected_unit = None;
+                self.schedule_unit_advance_if_spent();
+            }
+            return;
+        }
+        if crate::tui::disband_dialog::cancel_button_rect(panel).contains(position) {
+            self.close_disband_dialog();
+            return;
+        }
+        if !panel.contains(position) {
+            self.close_disband_dialog();
         }
     }
 }

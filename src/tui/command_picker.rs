@@ -57,6 +57,7 @@ pub enum CommandChoice {
     Unsentry,
     Work(TerrainImprovement),
     CancelOrder(TerrainImprovement),
+    Disband,
 }
 
 impl CommandChoice {
@@ -74,6 +75,7 @@ impl CommandChoice {
             CommandChoice::CancelOrder(improvement) => {
                 format!("Cancel order ({})", improvement.name())
             }
+            CommandChoice::Disband => "Disband".to_string(),
         }
     }
 }
@@ -116,11 +118,15 @@ pub fn available_commands(view: &dyn GameView, unit: UnitId) -> Vec<CommandChoic
                         .map(CommandChoice::Work),
                 );
             }
+            commands.push(CommandChoice::Disband);
             commands
         }
-        UnitOrder::Fortified => vec![CommandChoice::Unfortify],
-        UnitOrder::Sentried => vec![CommandChoice::Unsentry],
-        UnitOrder::Improving(improvement) => vec![CommandChoice::CancelOrder(improvement)],
+        UnitOrder::Fortified => vec![CommandChoice::Unfortify, CommandChoice::Disband],
+        UnitOrder::Sentried => vec![CommandChoice::Unsentry, CommandChoice::Disband],
+        UnitOrder::Improving(improvement) => vec![
+            CommandChoice::CancelOrder(improvement),
+            CommandChoice::Disband,
+        ],
     }
 }
 
@@ -576,7 +582,7 @@ mod tests {
             .with_unit(make_unit(UnitClass::Settler, UnitOrder::Fortified));
         assert_eq!(
             available_commands(&view, UnitId::new(0)),
-            vec![CommandChoice::Unfortify]
+            vec![CommandChoice::Unfortify, CommandChoice::Disband]
         );
         let buf = render(&view, 0, 0);
         let rows = rows_rect(picker_panel());
@@ -592,7 +598,7 @@ mod tests {
             FakeView::new(Terrain::Ocean).with_unit(make_unit(UnitClass::Trireme, UnitOrder::Idle));
         assert_eq!(
             available_commands(&view, UnitId::new(0)),
-            vec![CommandChoice::Sentry],
+            vec![CommandChoice::Sentry, CommandChoice::Disband],
             "a ship may stand sentry but cannot fortify on open water"
         );
     }
@@ -603,7 +609,7 @@ mod tests {
             .with_unit(make_unit(UnitClass::Settler, UnitOrder::Sentried));
         assert_eq!(
             available_commands(&view, UnitId::new(0)),
-            vec![CommandChoice::Unsentry]
+            vec![CommandChoice::Unsentry, CommandChoice::Disband]
         );
         let buf = render(&view, 0, 0);
         let rows = rows_rect(picker_panel());
@@ -621,7 +627,10 @@ mod tests {
         ));
         assert_eq!(
             available_commands(&view, UnitId::new(0)),
-            vec![CommandChoice::CancelOrder(TerrainImprovement::Irrigation)]
+            vec![
+                CommandChoice::CancelOrder(TerrainImprovement::Irrigation),
+                CommandChoice::Disband
+            ]
         );
         let buf = render(&view, 0, 0);
         let rows = rows_rect(picker_panel());
@@ -643,7 +652,10 @@ mod tests {
         ));
         assert_eq!(
             available_commands(&view, UnitId::new(0)),
-            vec![CommandChoice::CancelOrder(TerrainImprovement::Mine)]
+            vec![
+                CommandChoice::CancelOrder(TerrainImprovement::Mine),
+                CommandChoice::Disband
+            ]
         );
     }
 
@@ -655,7 +667,11 @@ mod tests {
         let view = FakeView::with_tile(grassland);
         assert_eq!(
             available_commands(&view, UnitId::new(0)),
-            vec![CommandChoice::Fortify, CommandChoice::Sentry],
+            vec![
+                CommandChoice::Fortify,
+                CommandChoice::Sentry,
+                CommandChoice::Disband
+            ],
             "an improving settler with nothing to build still commands"
         );
     }
@@ -694,6 +710,7 @@ mod tests {
                 CommandChoice::Sentry,
                 CommandChoice::Work(TerrainImprovement::Irrigation),
                 CommandChoice::Work(TerrainImprovement::Road),
+                CommandChoice::Disband,
             ],
             "an own square is born to hold orders"
         );

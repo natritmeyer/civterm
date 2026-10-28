@@ -209,6 +209,10 @@ impl App {
         let (Some(unit), Some(command)) = (unit, command) else {
             return;
         };
+        if command == command_picker::CommandChoice::Disband {
+            self.request_disband(unit);
+            return;
+        }
         if let Some(engine) = &mut self.engine {
             let command = match command {
                 command_picker::CommandChoice::Fortify => Command::Fortify { unit },
@@ -219,6 +223,7 @@ impl App {
                     Command::Work { unit, improvement }
                 }
                 command_picker::CommandChoice::CancelOrder(_) => Command::CancelOrder { unit },
+                command_picker::CommandChoice::Disband => unreachable!(),
             };
             let events = engine.submit(command);
             self.record_events(events);

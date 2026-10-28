@@ -214,9 +214,9 @@ mod every_window {
     use super::*;
     use crate::tui::{
         build_complete_dialog, city_window, command_picker, diplomacy_dialog,
-        diplomat_actions_dialog, production_picker, quit_dialog, research_dialog, sabotage_dialog,
-        save_load_prompt, starvation_dialog, steal_dialog, transport_window, upkeep_dialog,
-        war_dialog,
+        diplomat_actions_dialog, disband_dialog, production_picker, quit_dialog, research_dialog,
+        sabotage_dialog, save_load_prompt, starvation_dialog, steal_dialog, transport_window,
+        upkeep_dialog, war_dialog,
     };
 
     /// Every terminal a player can produce by dragging a window down, and then
@@ -271,6 +271,7 @@ mod every_window {
                 city_window::window_rect(area),
                 production_picker::picker_rect(city_window::window_rect(area)),
                 transport_window::dialog_rect(area),
+                disband_dialog::dialog_rect(area),
             ] {
                 let _ = research_dialog::ok_button_rect(panel);
                 let _ = quit_dialog::quit_button_rect(panel);
@@ -307,6 +308,9 @@ mod every_window {
                 let _ = transport_window::row_rect(panel, 0);
                 let _ = transport_window::disembark_button_rect(panel, 0);
                 let _ = transport_window::close_button_rect(panel);
+                let _ = disband_dialog::row_rect(panel, 0);
+                let _ = disband_dialog::disband_all_button_rect(panel);
+                let _ = disband_dialog::cancel_button_rect(panel);
             }
         }
     }
