@@ -311,6 +311,65 @@ impl<'a> GameScreen<'a> {
         // Second pass: city name labels sit on top of the map.
         for (tile_cx, row_y, name) in city_labels {
             draw_city_label(buf, tile_cx, row_y, &name);
+            // A unit standing on a tile the label passes over must not be
+            // hidden by the letter painted on top of it: the letter stays,
+            // but the tile wears that unit's flag colour as its background.
+            let center_col = tile_cx as isize + 1;
+            let len = name.len();
+            let start = center_col - (len / 2) as isize;
+            let world_y = self
+                .camera
+                .1
+                .checked_add((row_y as usize).saturating_sub(area.y as usize));
+            for (i, _) in name.chars().enumerate() {
+                let col = start + i as isize;
+                if col < 0 {
+                    continue;
+                }
+                let screen_col = col as u16;
+                if screen_col < area.x || screen_col >= area.right() {
+                    continue;
+                }
+                let Some(world_y) = world_y else {
+                    continue;
+                };
+                if world_y >= map_h {
+                    continue;
+                }
+                let tile_col = (screen_col - area.x) as usize / TILE_WIDTH;
+                let world_x = (self.camera.0 + tile_col) % map_w;
+                let units = self.view.units_at(world_x, world_y);
+                let selected_idle_here = self.selected_unit.is_some_and(|id| {
+                    self.view.unit(id).is_some_and(|u| {
+                        u.location.x == world_x as u16
+                            && u.location.y == world_y as u16
+                            && u.order() == UnitOrder::Idle
+                            && u.moves_remaining() > 0
+                    })
+                });
+                if let Some(cell) = buf.cell_mut((screen_col, row_y)) {
+                    if selected_idle_here {
+                        if self.flash_phase() {
+                            let city = self.view.city_at(world_x, world_y);
+                            if city.is_some_and(|c| {
+                                self.view.civilization_of(c.owner()) == self.view.current_player()
+                            }) {
+                                cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
+                            } else {
+                                cell.set_style(
+                                    cell.style()
+                                        .bg(civilization_color(self.view.current_player())),
+                                );
+                            }
+                        }
+                    } else if let Some(unit) = units.first() {
+                        cell.set_style(
+                            cell.style()
+                                .bg(civilization_color(self.view.civilization_of(unit.owner()))),
+                        );
+                    }
+                }
+            }
         }
 
         // The rival-movement replay draws the actively moving unit on top of

@@ -370,7 +370,10 @@ pub(crate) fn draw_city_label(buf: &mut Buffer, tile_cx: u16, row_y: u16, name: 
         }
         if let Some(cell) = buf.cell_mut((col as u16, row_y)) {
             cell.set_symbol(&ch.to_string());
-            cell.set_style(Style::default().fg(CITY_LABEL_FG).bold());
+            // Keep the tile's background (and any flash styling) already
+            // painted, so a city name drawn over a unit or a flashing tile
+            // does not hide it: only the foreground becomes the label's.
+            cell.set_style(cell.style().fg(CITY_LABEL_FG).add_modifier(Modifier::BOLD));
         }
     }
 }
