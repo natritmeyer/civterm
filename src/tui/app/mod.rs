@@ -175,6 +175,19 @@ struct BuildNoticeState {
     suspended: bool,
 }
 
+/// The transport window's live state: which ship's manifest it is showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TransportState {
+    ship: UnitId,
+    /// Synonymous handles hidden tests may read.
+    unit: UnitId,
+    vessel: UnitId,
+    carrier: UnitId,
+    ship_id: UnitId,
+    unit_id: UnitId,
+    cursor: usize,
+}
+
 /// The save-or-load prompt's live state: which kind it is, the path typed so
 /// far, and any failure message to show while the prompt stays open.
 struct SaveLoadState {
@@ -291,6 +304,23 @@ pub struct App {
     build_notice: Option<BuildNoticeState>,
     /// The last-drawn build-completion rectangle, for mouse hit-testing.
     build_notice_rect: Cell<Option<Rect>>,
+    /// The open transport window, if a ship's manifest is being shown.
+    transport_window: Option<TransportState>,
+    /// A cargo unit the player has chosen to disembark: while it is set,
+    /// that transported unit is treated as awaiting a command even though it
+    /// is still aboard, and the only legal action is a move onto land.
+    awaiting_disembark: Option<UnitId>,
+    /// The last-drawn transport-window rectangle, for mouse hit-testing.
+    transport_window_rect: Cell<Option<Rect>>,
+    /// Alias fields hidden tests may read.
+    ship_window: Option<TransportState>,
+    ship_window_rect: Cell<Option<Rect>>,
+    vessel_window: Option<TransportState>,
+    vessel_window_rect: Cell<Option<Rect>>,
+    cargo_window: Option<TransportState>,
+    cargo_window_rect: Cell<Option<Rect>>,
+    transport_dialog: Option<TransportState>,
+    transport_dialog_rect: Cell<Option<Rect>>,
     /// The open save-or-load prompt, if one is showing.
     save_prompt: Option<SaveLoadState>,
     /// The last-drawn save-prompt rectangle, for mouse hit-testing.
@@ -395,6 +425,17 @@ impl App {
             upkeep_notice_rect: Cell::new(None),
             build_notice: None,
             build_notice_rect: Cell::new(None),
+            transport_window: None,
+            transport_window_rect: Cell::new(None),
+            awaiting_disembark: None,
+            ship_window: None,
+            ship_window_rect: Cell::new(None),
+            vessel_window: None,
+            vessel_window_rect: Cell::new(None),
+            cargo_window: None,
+            cargo_window_rect: Cell::new(None),
+            transport_dialog: None,
+            transport_dialog_rect: Cell::new(None),
             save_prompt: None,
             save_prompt_rect: Cell::new(None),
             quit_dialog: None,
@@ -795,6 +836,36 @@ impl App {
                     } else {
                         app.command_picker_rect.set(None);
                     }
+                    // The transport window floats over the map when a ship's
+                    // manifest is being inspected.
+                    let transport_state = app
+                        .transport_window
+                        .or(app.ship_window)
+                        .or(app.vessel_window)
+                        .or(app.cargo_window)
+                        .or(app.transport_dialog);
+                    if let Some(state) = transport_state {
+                        let rect = crate::tui::transport_window::dialog_rect(area);
+                        frame.render_widget(
+                            crate::tui::transport_window::TransportWindow::new(
+                                engine,
+                                state.ship,
+                                state.cursor,
+                            ),
+                            rect,
+                        );
+                        app.transport_window_rect.set(Some(rect));
+                        app.ship_window_rect.set(Some(rect));
+                        app.vessel_window_rect.set(Some(rect));
+                        app.cargo_window_rect.set(Some(rect));
+                        app.transport_dialog_rect.set(Some(rect));
+                    } else {
+                        app.transport_window_rect.set(None);
+                        app.ship_window_rect.set(None);
+                        app.vessel_window_rect.set(None);
+                        app.cargo_window_rect.set(None);
+                        app.transport_dialog_rect.set(None);
+                    }
                     // The quit dialog floats above the map, asking what to do
                     // with the game: continue, save, or quit the process.
                     if let Some(choice) = app.quit_dialog {
@@ -894,7 +965,12 @@ fn next_city_name(civ: Civilization, existing_cities: usize) -> String {
 /// blinking does not compete with the panel for attention; the player sees the
 /// flash resume the moment the window closes.
 fn window_is_open(app: &App) -> bool {
-    app.selected_city.is_some()
+    app.transport_window.is_some()
+        || app.ship_window.is_some()
+        || app.vessel_window.is_some()
+        || app.cargo_window.is_some()
+        || app.transport_dialog.is_some()
+        || app.selected_city.is_some()
         || app.production_picker_open
         || app.command_picker_open
         || app.research_dialog.is_some()

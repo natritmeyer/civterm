@@ -12,6 +12,11 @@ fn unit_commandable(unit: &Unit) -> bool {
 }
 
 impl App {
+    fn unit_is_commandable(&self, unit: &Unit) -> bool {
+        unit.moves_remaining() > 0
+            && unit.order() == UnitOrder::Idle
+            && (!unit.is_transported() || self.awaiting_disembark == Some(unit.id()))
+    }
     pub(super) fn handle_playing_key(&mut self, key: KeyEvent) -> bool {
         // While the quit dialog is open it captures the keyboard: the player
         // may only choose continue, save, or quit. Confirming quit ends the
@@ -125,6 +130,57 @@ impl App {
         }
         if self.diplomacy.is_some() {
             self.handle_diplomacy_key(key);
+            return false;
+        }
+        // While the transport window is open it captures the keyboard.
+        if self.transport_window.is_some()
+            || self.ship_window.is_some()
+            || self.vessel_window.is_some()
+            || self.cargo_window.is_some()
+            || self.transport_dialog.is_some()
+        {
+            match key.code {
+                KeyCode::Esc => self.close_transport_window(),
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if let Some(state) = &mut self.transport_window {
+                        state.cursor = state.cursor.saturating_sub(1);
+                    }
+                    if let Some(state) = &mut self.ship_window {
+                        state.cursor = state.cursor.saturating_sub(1);
+                    }
+                    if let Some(state) = &mut self.vessel_window {
+                        state.cursor = state.cursor.saturating_sub(1);
+                    }
+                    if let Some(state) = &mut self.cargo_window {
+                        state.cursor = state.cursor.saturating_sub(1);
+                    }
+                    if let Some(state) = &mut self.transport_dialog {
+                        state.cursor = state.cursor.saturating_sub(1);
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if let Some(state) = &mut self.transport_window {
+                        state.cursor = state.cursor.saturating_add(1);
+                    }
+                    if let Some(state) = &mut self.ship_window {
+                        state.cursor = state.cursor.saturating_add(1);
+                    }
+                    if let Some(state) = &mut self.vessel_window {
+                        state.cursor = state.cursor.saturating_add(1);
+                    }
+                    if let Some(state) = &mut self.cargo_window {
+                        state.cursor = state.cursor.saturating_add(1);
+                    }
+                    if let Some(state) = &mut self.transport_dialog {
+                        state.cursor = state.cursor.saturating_add(1);
+                    }
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    let cursor = self.transport_window.map(|s| s.cursor).unwrap_or(0);
+                    self.transport_disembark(cursor);
+                }
+                _ => {}
+            }
             return false;
         }
         // While the command picker is open it captures the keyboard: the
@@ -270,7 +326,7 @@ impl App {
             let units = engine.player_units();
             self.selected_unit = units
                 .iter()
-                .find(|unit| unit_commandable(unit))
+                .find(|unit| self.unit_is_commandable(unit))
                 .map(|unit| unit.id());
             if self.selected_unit.is_none() && !units.is_empty() {
                 // No units can act this turn; leave nothing selected and note it.
@@ -280,6 +336,9 @@ impl App {
             }
         } else {
             self.selected_unit = None;
+        }
+        if self.awaiting_disembark.is_some() && self.selected_unit != self.awaiting_disembark {
+            self.awaiting_disembark = None;
         }
         self.camera_follow.set(true);
     }
@@ -316,7 +375,7 @@ impl App {
                 self.selected_unit = None;
                 return;
             }
-            if !units.iter().any(|unit| unit_commandable(unit)) {
+            if !units.iter().any(|unit| self.unit_is_commandable(unit)) {
                 None
             } else {
                 // The next commandable unit in order after the current focus,
@@ -339,6 +398,9 @@ impl App {
         match decision {
             Some(next) => {
                 self.selected_unit = Some(next);
+                if self.awaiting_disembark.is_some() && Some(next) != self.awaiting_disembark {
+                    self.awaiting_disembark = None;
+                }
                 self.camera_follow.set(true);
             }
             None => {
@@ -363,7 +425,7 @@ impl App {
         engine
             .player_units()
             .iter()
-            .any(|unit| unit.id() == selected && unit_commandable(unit))
+            .any(|unit| unit.id() == selected && self.unit_is_commandable(unit))
     }
 
     /// Whether a modal overlay or the rival replay currently captures the
@@ -383,6 +445,11 @@ impl App {
             || self.save_prompt.is_some()
             || self.quit_dialog.is_some()
             || self.rival_animation.is_some()
+            || self.transport_window.is_some()
+            || self.ship_window.is_some()
+            || self.vessel_window.is_some()
+            || self.cargo_window.is_some()
+            || self.transport_dialog.is_some()
             || self.selected_city.is_some()
     }
 
@@ -511,6 +578,18 @@ impl App {
             self.open_diplomat_actions(audience);
         }
         self.camera_follow.set(true);
+        // Once a disembarking unit steps ashore it is a normal unit again.
+        if let Some(selected) = self.selected_unit
+            && self.awaiting_disembark == Some(selected)
+            && self
+                .engine
+                .as_ref()
+                .and_then(|engine| engine.unit(selected))
+                .map(|unit| !unit.is_transported())
+                .unwrap_or(true)
+        {
+            self.awaiting_disembark = None;
+        }
         // A move may be the step that spends the focus: schedule the jump to
         // the next unit with budget after a beat.
         self.schedule_unit_advance_if_spent();
@@ -565,6 +644,11 @@ impl App {
             || self.command_picker_rect.get().is_some()
             || self.picker_rect.get().is_some()
             || self.moused_window.get().is_some()
+            || self.transport_window_rect.get().is_some()
+            || self.ship_window_rect.get().is_some()
+            || self.vessel_window_rect.get().is_some()
+            || self.cargo_window_rect.get().is_some()
+            || self.transport_dialog_rect.get().is_some()
             || self.save_prompt_rect.get().is_some()
             || self.quit_dialog_rect.get().is_some()
             || self.drag_origin.get().is_some()

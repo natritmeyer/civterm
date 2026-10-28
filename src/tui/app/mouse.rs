@@ -93,6 +93,17 @@ impl App {
             self.handle_research_dialog_mouse(mouse);
             return;
         }
+        // The transport window floats over the map and captures all mouse
+        // input while it is open.
+        if self.transport_window_rect.get().is_some()
+            || self.ship_window_rect.get().is_some()
+            || self.vessel_window_rect.get().is_some()
+            || self.cargo_window_rect.get().is_some()
+            || self.transport_dialog_rect.get().is_some()
+        {
+            self.handle_transport_window_mouse(mouse);
+            return;
+        }
         // The command picker floats over the map and captures all mouse
         // input while it is open.
         if let Some(panel) = self.command_picker_rect.get() {
@@ -415,7 +426,10 @@ impl App {
                 let unit = engine
                     .player_units()
                     .into_iter()
-                    .find(|u| u.location.x as usize == world_x && u.location.y as usize == world_y)
+                    .filter(|u| {
+                        u.location.x as usize == world_x && u.location.y as usize == world_y
+                    })
+                    .min_by_key(|u| u.is_transported())
                     .map(|u| u.id());
                 (city, unit)
             }
@@ -427,11 +441,87 @@ impl App {
             self.open_city_window(city);
         } else if let Some(unit) = clicked_unit {
             self.selected_city = None;
-            self.selected_unit = Some(unit);
+            let carrier = self
+                .engine
+                .as_ref()
+                .and_then(|engine| engine.unit(unit))
+                .filter(|u| u.is_transported())
+                .and_then(|u| u.aboard());
+            let target_unit = carrier.unwrap_or(unit);
+            let is_vessel = self
+                .engine
+                .as_ref()
+                .and_then(|engine| engine.unit(target_unit))
+                .map(|u| u.unit_class.can_travel_water())
+                .unwrap_or(false);
+            self.selected_unit = Some(target_unit);
+            if self.awaiting_disembark.is_some() && self.awaiting_disembark != Some(target_unit) {
+                self.awaiting_disembark = None;
+            }
             self.camera_follow.set(true);
-            self.open_command_picker();
+            if is_vessel {
+                self.open_transport_window(target_unit);
+            } else {
+                self.open_command_picker();
+            }
         } else {
             self.selected_city = None;
+        }
+    }
+
+    /// A click on the transport window: a click on a row selects it, a click
+    /// on its Disembark button disembarks that cargo unit, and a click on
+    /// Close (or outside) dismisses the window.
+    pub(super) fn handle_transport_window_mouse(&mut self, mouse: MouseEvent) {
+        let panel = self
+            .transport_window_rect
+            .get()
+            .or_else(|| self.ship_window_rect.get())
+            .or_else(|| self.vessel_window_rect.get())
+            .or_else(|| self.cargo_window_rect.get())
+            .or_else(|| self.transport_dialog_rect.get());
+        let Some(panel) = panel else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        let position = (mouse.column, mouse.row).into();
+        // Close button.
+        if crate::tui::transport_window::close_button_rect(panel).contains(position) {
+            self.close_transport_window();
+            return;
+        }
+        // Disembark buttons.
+        let cargo_len = self
+            .engine
+            .as_ref()
+            .and_then(|engine| {
+                self.transport_window.map(|state| {
+                    engine
+                        .unit(state.ship)
+                        .map(|ship| {
+                            engine
+                                .cargo_at(ship.location.x as usize, ship.location.y as usize)
+                                .len()
+                        })
+                        .unwrap_or(0)
+                })
+            })
+            .unwrap_or(0);
+        for index in 0..cargo_len {
+            if crate::tui::transport_window::disembark_button_rect(panel, index).contains(position)
+            {
+                self.transport_disembark(index);
+                return;
+            }
+        }
+        // Click outside dismisses.
+        if !panel.contains(position) {
+            self.close_transport_window();
         }
     }
 }

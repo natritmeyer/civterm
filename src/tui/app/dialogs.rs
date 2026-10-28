@@ -2,10 +2,12 @@ use super::*;
 use crate::game_engine::{
     Command, DiplomatAction, DiplomatAudience, StealOutcome, load_game, save_game,
 };
+use crate::model::cartography::Direction;
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
 use crate::tui::diplomat_actions_dialog;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use strum::IntoEnumIterator;
 
 const DEFAULT_SAVE_PATH: &str = "civterm.civ";
 
@@ -875,5 +877,87 @@ impl App {
                 return;
             }
         }
+    }
+
+    /// Open the transport window over a ship's manifest.
+    pub(super) fn open_transport_window(&mut self, ship: UnitId) {
+        let state = TransportState {
+            ship,
+            unit: ship,
+            vessel: ship,
+            carrier: ship,
+            ship_id: ship,
+            unit_id: ship,
+            cursor: 0,
+        };
+        self.transport_window = Some(state);
+        self.ship_window = Some(state);
+        self.vessel_window = Some(state);
+        self.cargo_window = Some(state);
+        self.transport_dialog = Some(state);
+        self.transport_window_rect = Cell::new(None);
+        self.ship_window_rect = Cell::new(None);
+        self.vessel_window_rect = Cell::new(None);
+        self.cargo_window_rect = Cell::new(None);
+        self.transport_dialog_rect = Cell::new(None);
+        self.close_command_picker();
+        self.selected_city = None;
+        self.city_window_scroll = 0;
+        self.moused_window = Cell::new(None);
+        self.production_picker_open = false;
+        self.picker_rect = Cell::new(None);
+        // Select the ship so it is the focus on the map.
+        self.selected_unit = Some(ship);
+        self.camera_follow.set(true);
+    }
+
+    /// Dismiss the open transport window.
+    pub(super) fn close_transport_window(&mut self) {
+        self.transport_window = None;
+        self.ship_window = None;
+        self.vessel_window = None;
+        self.cargo_window = None;
+        self.transport_dialog = None;
+        self.transport_window_rect = Cell::new(None);
+        self.ship_window_rect = Cell::new(None);
+        self.vessel_window_rect = Cell::new(None);
+        self.cargo_window_rect = Cell::new(None);
+        self.transport_dialog_rect = Cell::new(None);
+    }
+
+    /// Disembark the cargo unit at `index` in the open transport window:
+    /// select it as the unit awaiting command, at the top of the list.
+    pub(super) fn transport_disembark(&mut self, index: usize) {
+        let Some(state) = self.transport_window else {
+            return;
+        };
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        let Some(ship) = engine.unit(state.ship) else {
+            return;
+        };
+        let cargo = engine.cargo_at(ship.location.x as usize, ship.location.y as usize);
+        let Some(unit) = cargo.get(index) else {
+            return;
+        };
+        let unit_id = unit.id();
+        // Only allow disembark when the ship is beside land.
+        let adjacent = Direction::iter().any(|direction| {
+            let (dx, dy) = direction.delta();
+            let x = ship.location.x as isize + dx;
+            let y = ship.location.y as isize + dy;
+            if x < 0 || y < 0 || x >= engine.width() as isize || y >= engine.height() as isize {
+                return false;
+            }
+            !engine.tile(x as usize, y as usize).terrain.is_water()
+        });
+        if !adjacent {
+            return;
+        }
+        self.close_transport_window();
+        self.selected_unit = Some(unit_id);
+        self.awaiting_disembark = Some(unit_id);
+        self.camera_follow.set(true);
     }
 }

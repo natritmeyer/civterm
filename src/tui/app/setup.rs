@@ -267,6 +267,7 @@ impl App {
         self.quit_dialog_rect = Cell::new(None);
         self.exit_requested = false;
         self.battle_animation = None;
+        self.awaiting_disembark = None;
     }
 
     pub(super) fn start_new_game(&mut self) {
