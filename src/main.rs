@@ -15,6 +15,8 @@ fn main() -> io::Result<()> {
     // behind and puts the terminal back the way it was found.
     crash_log::install();
 
+    let save_path = std::env::args().nth(1);
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -26,7 +28,15 @@ fn main() -> io::Result<()> {
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let result = App::new().run(&mut terminal);
+    let mut app = App::new();
+    if let Some(path) = save_path
+        && !app.perform_load(&path)
+    {
+        crash_log::restore_terminal();
+        eprintln!("Failed to load saved game: {path}");
+        return Ok(());
+    }
+    let result = app.run(&mut terminal);
 
     // The same teardown the crash path uses, so the two cannot drift.
     crash_log::restore_terminal();

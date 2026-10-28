@@ -653,8 +653,12 @@ impl App {
             return;
         }
         match state.kind {
-            SaveLoadKind::Save => self.perform_save(&path),
-            SaveLoadKind::Load => self.perform_load(&path),
+            SaveLoadKind::Save => {
+                self.perform_save(&path);
+            }
+            SaveLoadKind::Load => {
+                let _ = self.perform_load(&path);
+            }
         }
     }
 
@@ -682,7 +686,7 @@ impl App {
     }
 
     /// Load the game at `path`, replacing the current one if successful.
-    fn perform_load(&mut self, path: &str) {
+    pub fn perform_load(&mut self, path: &str) -> bool {
         match load_game(path) {
             Ok(loaded) => {
                 self.engine = Some(loaded.engine);
@@ -691,6 +695,7 @@ impl App {
                 self.event_log.clear();
                 self.enter_playing();
                 self.record_events(vec![GameEvent::new(format!("Loaded game from {path}"))]);
+                true
             }
             Err(err) => {
                 self.save_prompt = Some(SaveLoadState {
@@ -698,6 +703,7 @@ impl App {
                     input: path.to_string(),
                     error: Some(err.to_string()),
                 });
+                false
             }
         }
     }
