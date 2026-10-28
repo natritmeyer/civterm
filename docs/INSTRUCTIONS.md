@@ -49,6 +49,8 @@ Only rivals are scaled; your economy is never affected. On Easy the neighbors st
 
 ### City window
 
+![City window](images/city_window.png)
+
 - Click a city tile to open its window.
 - `b` — rush-buy the current production.
 - `Esc` — close.
