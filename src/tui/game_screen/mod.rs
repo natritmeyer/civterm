@@ -347,26 +347,36 @@ impl<'a> GameScreen<'a> {
                             && u.moves_remaining() > 0
                     })
                 });
-                if let Some(cell) = buf.cell_mut((screen_col, row_y)) {
-                    if selected_idle_here {
-                        if self.flash_phase() {
-                            let city = self.view.city_at(world_x, world_y);
-                            if city.is_some_and(|c| {
-                                self.view.civilization_of(c.owner()) == self.view.current_player()
-                            }) {
-                                cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
-                            } else {
-                                cell.set_style(
-                                    cell.style()
-                                        .bg(civilization_color(self.view.current_player())),
-                                );
+                for col in [screen_col, screen_col.saturating_add(1)] {
+                    if col >= area.right() {
+                        continue;
+                    }
+                    if (col - area.x) as usize / TILE_WIDTH != tile_col {
+                        continue;
+                    }
+                    if let Some(cell) = buf.cell_mut((col, row_y)) {
+                        if selected_idle_here {
+                            if self.flash_phase() {
+                                let city = self.view.city_at(world_x, world_y);
+                                if city.is_some_and(|c| {
+                                    self.view.civilization_of(c.owner())
+                                        == self.view.current_player()
+                                }) {
+                                    cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
+                                } else {
+                                    cell.set_style(
+                                        cell.style()
+                                            .bg(civilization_color(self.view.current_player())),
+                                    );
+                                }
                             }
+                        } else if let Some(unit) = units.first() {
+                            cell.set_style(
+                                cell.style().bg(civilization_color(
+                                    self.view.civilization_of(unit.owner()),
+                                )),
+                            );
                         }
-                    } else if let Some(unit) = units.first() {
-                        cell.set_style(
-                            cell.style()
-                                .bg(civilization_color(self.view.civilization_of(unit.owner()))),
-                        );
                     }
                 }
             }
