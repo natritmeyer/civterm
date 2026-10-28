@@ -5,7 +5,7 @@ use ratatui::widgets::Widget;
 
 use crate::game_engine::GameView;
 use crate::model::cartography::Direction;
-use crate::model::units::Unit;
+use crate::model::units::{Unit, UnitOrder};
 use crate::tui::window_geometry;
 use strum::IntoEnumIterator;
 
@@ -22,6 +22,7 @@ const IDEAL_WIDTH: u16 = 52;
 const IDEAL_HEIGHT: u16 = 14;
 
 const DISEMBARK_TEXT: &str = "Disembark";
+const UNSENTRY_TEXT: &str = "Unsentry";
 const CLOSE_TEXT: &str = "Close";
 
 fn fill_row(buf: &mut Buffer, rect: Rect, style: Style) {
@@ -143,12 +144,25 @@ pub fn button_rect(panel: Rect, index: usize) -> Rect {
     disembark_button_rect(panel, index)
 }
 
+/// The rectangle of the Unsentry button on the button row.
+pub fn unsentry_button_rect(panel: Rect) -> Rect {
+    let inner = inner(panel);
+    let close_width = (CLOSE_TEXT.len() as u16 + 2).min(inner.width);
+    let width = (UNSENTRY_TEXT.len() as u16 + 2).min(inner.width);
+    Rect {
+        x: inner.right().saturating_sub(close_width + 1 + width + 1),
+        y: buttons_y(panel),
+        width,
+        height: 1,
+    }
+}
+
 /// The rectangle of the close button on the button row.
 pub fn close_button_rect(panel: Rect) -> Rect {
     let inner = inner(panel);
     let width = (CLOSE_TEXT.len() as u16 + 2).min(inner.width);
     Rect {
-        x: inner.x + 1,
+        x: inner.right().saturating_sub(width + 1),
         y: buttons_y(panel),
         width,
         height: 1,
@@ -244,6 +258,23 @@ impl<'a> Widget for TransportWindow<'a> {
             }
         }
 
+        let ship_sentried = self
+            .view
+            .unit(self.ship)
+            .map(|u| u.order() == UnitOrder::Sentried)
+            .unwrap_or(false);
+        if ship_sentried {
+            let unsentry = unsentry_button_rect(area);
+            fill_row(buf, unsentry, Style::new().fg(BLACK).bg(Color::White));
+            draw_text(
+                buf,
+                unsentry.x + 1,
+                unsentry.y,
+                unsentry.right(),
+                UNSENTRY_TEXT,
+                LINK,
+            );
+        }
         let close = close_button_rect(area);
         fill_row(buf, close, Style::new().fg(BLACK).bg(Color::White));
         draw_text(buf, close.x + 1, close.y, close.right(), CLOSE_TEXT, LINK);

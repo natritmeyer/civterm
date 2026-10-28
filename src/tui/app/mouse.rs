@@ -505,6 +505,25 @@ impl App {
             self.close_transport_window();
             return;
         }
+        // Unsentry button for a sentried ship.
+        if crate::tui::transport_window::unsentry_button_rect(panel).contains(position) {
+            let ship = self
+                .transport_window
+                .or(self.ship_window)
+                .or(self.vessel_window)
+                .or(self.cargo_window)
+                .or(self.transport_dialog)
+                .map(|s| s.ship);
+            if let Some(ship) = ship {
+                if let Some(engine) = &mut self.engine {
+                    let events =
+                        engine.submit(crate::game_engine::Command::Unsentry { unit: ship });
+                    self.record_events(events);
+                }
+                self.schedule_unit_advance_if_spent();
+            }
+            return;
+        }
         // Disembark buttons.
         let cargo_len = self
             .engine

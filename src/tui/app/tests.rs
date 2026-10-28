@@ -5533,3 +5533,48 @@ fn the_diplomat_window_survives_a_terminal_squeezed_to_nothing() {
     assert!(app.diplomat_actions.is_none());
     draw(&app);
 }
+
+#[test]
+fn tmp_transport_unsentry_render() {
+    let mut app = App::new();
+    app.phase = Phase::Playing;
+    let mut engine = Engine::new(12, 3, Player::new(Civilization::English), vec![]);
+    for y in 0..3u16 {
+        for x in 0..12u16 {
+            engine.game.map.tile_at_mut(Location::new(x, y)).terrain = Terrain::Grassland;
+        }
+    }
+    let ship = engine.game.spawn_unit(
+        UnitClass::Trireme,
+        Location::new(5, 1),
+        PlayerId::new(0),
+        None,
+    );
+    engine
+        .game
+        .units
+        .iter_mut()
+        .find(|u| u.id() == ship)
+        .unwrap()
+        .sentry();
+    app.engine = Some(engine);
+    app.open_transport_window(ship);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| App::draw(frame, &app)).unwrap();
+    let panel = app.transport_window_rect.get().unwrap();
+    println!("panel {:?}", panel);
+    println!(
+        "unsentry rect {:?}",
+        crate::tui::transport_window::unsentry_button_rect(panel)
+    );
+    println!(
+        "close rect {:?}",
+        crate::tui::transport_window::close_button_rect(panel)
+    );
+    let buf = terminal.backend().buffer().clone();
+    let y = crate::tui::transport_window::buttons_y(panel);
+    let line: String = (panel.x..panel.right())
+        .map(|x| buf.cell((x, y)).unwrap().symbol())
+        .collect();
+    println!("button row: [{}]", line);
+}

@@ -307,6 +307,7 @@ mod every_window {
                 let _ = transport_window::rows_rect(panel);
                 let _ = transport_window::row_rect(panel, 0);
                 let _ = transport_window::disembark_button_rect(panel, 0);
+                let _ = transport_window::unsentry_button_rect(panel);
                 let _ = transport_window::close_button_rect(panel);
                 let _ = disband_dialog::row_rect(panel, 0);
                 let _ = disband_dialog::disband_all_button_rect(panel);
