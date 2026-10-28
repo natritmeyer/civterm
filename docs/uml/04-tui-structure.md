@@ -23,6 +23,8 @@ classDiagram
         -Option~QuitDialog~ quit_dialog
         -bool production_picker_open
         -bool command_picker_open
+        -Option~TransportState~ transport_window
+        -Option~DisbandDialogState~ disband_dialog
         -Option~BattleAnimation~ battle_animation
         -Option~RivalMoveAnimation~ rival_animation
         -Option~WarNoticeState~ war_notice
@@ -103,6 +105,26 @@ classDiagram
         +button_labels(outcome) tuple
         +buttons_row(area) int
         +button_rects(area, outcome) tuple
+    }
+    class TransportWindow {
+        +&GameView view
+        +UnitId ship
+        +int cursor
+        +new(view, ship, cursor) TransportWindow
+        +dialog_rect(area) Rect
+        +rows_rect(panel) Rect
+        +row_rect(panel, index) Option~Rect~
+        +disembark_button_rect(panel, index) Rect
+    }
+    class DisbandDialog {
+        +&GameView view
+        +UnitId ship
+        +new(view, ship) DisbandDialog
+        +dialog_rect(area) Rect
+        +rows_rect(panel) Rect
+        +row_rect(panel, index) Option~Rect~
+        +disband_all_button_rect(panel) Rect
+        +cancel_button_rect(panel) Rect
     }
     class CityWindow {
         +&GameView view
@@ -221,6 +243,8 @@ classDiagram
     App ..> CityWindow : opens on selection
     App ..> ProductionPicker : opens on city
     App ..> CommandPicker : opens on a unit
+    App ..> TransportWindow : opens on a ship
+    App ..> DisbandDialog : opens for a ship carrying cargo
     App ..> ResearchDialog : opens on discovery
     App ..> DiplomatActionsDialog : opens on the audience drained from a move
     App *-- DiplomatActionsState : 0..1 window open

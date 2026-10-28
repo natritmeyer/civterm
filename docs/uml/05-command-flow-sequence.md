@@ -124,6 +124,6 @@ sequenceDiagram
   wound state survives between fights, so a defended city cannot be ground
   down by attrition.
 - Fortify / Sentry / Work / CancelOrder / FoundCity / SetProductionTarget /
-  DeclareWar / MakePeace / SetResearchTarget follow the same
+  DeclareWar / MakePeace / SetResearchTarget / Disband follow the same
   `App → submit → concern → Events → record → draw` skeleton with their own
   guards (see `03-engine-structure.md` dispatch table).

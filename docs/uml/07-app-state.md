@@ -38,6 +38,12 @@ stateDiagram-v2
         Exploring --> CommandPickerOpen : w on a unit / click a unit
         CommandPickerOpen --> Exploring : save order / cancel
 
+        Exploring --> TransportWindowOpen : click a ship
+        TransportWindowOpen --> Exploring : close / disembark
+
+        Exploring --> DisbandDialogOpen : disband a ship carrying cargo
+        DisbandDialogOpen --> Exploring : Disband all / Cancel
+
         Exploring --> ResearchDialogOpen : advancement discovered
         ResearchDialogOpen --> Exploring : confirm SetResearchTarget
 
@@ -91,6 +97,8 @@ stateDiagram-v2
    top.
 8. `diplomacy` → diplomacy keys only.
 9. `command_picker_open` → command picker keys only.
+9b. `transport_window` open → transport keys only.
+9c. `disband_dialog` open → disband dialog keys only.
 10. `production_picker_open` → production picker keys only (floats over the
     city window, which is why its guard comes first).
 11. `selected_city` set (city window open) → Esc closes it; every other key is

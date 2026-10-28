@@ -93,6 +93,11 @@ a hard boundary; keep it by convention.
 
 ## Conventions
 
+- Keep the UML diagrams under `docs/uml/` and `TECH_TREE.md` in step with the
+  code: when a change adds, removes or renames a module, type, command, window
+  or state field, update the affected diagrams in the same change rather than
+  leaving them to drift.
+
 - Sibling module files start with `use super::*;` plus their own explicit
   imports. Never rely on a sibling's private items crossing module
   boundaries — methods used across files need `pub(super)` (or `pub(crate)`

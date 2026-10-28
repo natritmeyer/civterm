@@ -216,7 +216,7 @@ classDiagram
 | `Command` | Owner file | Key callees |
 |---|---|---|
 | `Move` | `movement.rs` | `try_board`, `meet_contacts_within`, `resolve_move_combat` (`combat.rs`), `capture_city` (`combat.rs`) |
-| `Fortify` / `Sentry` / `Work` / `CancelOrder` / `Unfortify` / `Unsentry` | `movement.rs` | `owned_unit_mut`, terrain `supports()` gates |
+| `Fortify` / `Sentry` / `Work` / `CancelOrder` / `Unfortify` / `Unsentry` / `Disband` | `movement.rs` | `owned_unit_mut`; `Disband` removes the unit and its cargo |
 | `FoundCity` / `SetProductionTarget` | `cities.rs` | `Game::add_city`, `auto_assign_work`, `player.can_build` |
 | `DeclareWar` / `MakePeace` | `diplomacy.rs` | `Game::declare_war` / `make_peace` |
 | `SetResearchTarget` | `research.rs` | `Game::can_research`, `set_research_target` |
