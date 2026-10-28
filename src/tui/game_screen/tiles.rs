@@ -193,11 +193,23 @@ pub(crate) fn paint_tile(
         // A unit fortifying on a city tile is hidden on the map: it has settled
         // into garrison, so the tile shows its population digit as if
         // unoccupied. Any other unit still displays ahead of the population.
-        let visible_unit = unit
-            .iter()
-            .find(|u| {
-                !hidden_units.contains(&u.id())
-                    && !(city.is_some() && u.order() == UnitOrder::Fortified)
+        // The unit awaiting orders, if it stands on this tile, is drawn on
+        // top of any other unit sharing the square, so the flashing glyph the
+        // player is looking for is the one they see rather than a rested one
+        // buried beneath it.
+        let visible_unit = selected_unit
+            .and_then(|id| {
+                unit.iter().find(|u| {
+                    u.id() == id
+                        && !hidden_units.contains(&u.id())
+                        && !(city.is_some() && u.order() == UnitOrder::Fortified)
+                })
+            })
+            .or_else(|| {
+                unit.iter().find(|u| {
+                    !hidden_units.contains(&u.id())
+                        && !(city.is_some() && u.order() == UnitOrder::Fortified)
+                })
             })
             .copied();
 
