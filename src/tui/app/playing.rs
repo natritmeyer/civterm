@@ -305,6 +305,10 @@ impl App {
                 self.fortify_selected_unit();
                 false
             }
+            KeyCode::Char('s') => {
+                self.sentry_selected_unit();
+                false
+            }
             KeyCode::Char('c') => {
                 self.cancel_selected_unit_order();
                 false
@@ -860,6 +864,20 @@ impl App {
             let events = engine.submit(Command::Fortify { unit });
             self.record_events(events);
             // Fortifying spends the turn: arm the jump to the next unit.
+            self.schedule_unit_advance_if_spent();
+        }
+    }
+
+    /// Stand the selected unit sentry: it keeps watch and skips the rest of
+    /// this turn's movement.
+    pub(super) fn sentry_selected_unit(&mut self) {
+        let Some(unit) = self.selected_unit else {
+            return;
+        };
+        if let Some(engine) = &mut self.engine {
+            let events = engine.submit(Command::Sentry { unit });
+            self.record_events(events);
+            // Sentry spends the turn: arm the jump to the next unit.
             self.schedule_unit_advance_if_spent();
         }
     }
