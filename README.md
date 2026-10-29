@@ -4,7 +4,7 @@ A Civilization clone in your terminal, written in Rust with
 [crossterm](https://github.com/crossterm-rs/crossterm) and
 [ratatui](https://github.com/ratatui/ratatui).
 
-![Splash screen](docs/civterm_splash_screen_for_social.png)
+![Splash screen](docs/images/civterm_screen.png)
 
 ## Install
 
