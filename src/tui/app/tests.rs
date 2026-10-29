@@ -441,7 +441,7 @@ fn playing_app() -> (App, usize, usize) {
     app.handle_key(key(KeyCode::Char('s')));
     app.handle_key(key(KeyCode::Char('v'))); // found the starting city
     app.map_pane
-        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
+        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 240, 80)));
     let (cx, cy) = {
         let engine = app.engine.as_ref().unwrap();
         let cities = engine.player_cities();
@@ -594,7 +594,7 @@ fn clicking_an_adjacent_tile_moves_the_selected_unit_there() {
     at_start(&mut app);
     app.handle_key(key(KeyCode::Char('s'))); // begin the game
     app.map_pane
-        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
+        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 240, 80)));
     let (ux, uy) = {
         let engine = app.engine.as_ref().unwrap();
         let unit = engine.player_units()[0];
@@ -640,7 +640,7 @@ fn clicking_a_remote_tile_does_not_move_the_selected_unit() {
     at_start(&mut app);
     app.handle_key(key(KeyCode::Char('s')));
     app.map_pane
-        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
+        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 240, 80)));
     let before = {
         let engine = app.engine.as_ref().unwrap();
         let unit = engine.player_units()[0];
@@ -1972,7 +1972,7 @@ fn app_with_distant_settler() -> App {
     let settler = app.engine.as_ref().unwrap().player_units()[0].id();
     app.selected_unit = Some(settler);
     app.map_pane
-        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
+        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 240, 80)));
     app.camera.set((70, 40));
     app.camera_follow.set(false);
     app
@@ -1988,7 +1988,7 @@ fn j_centres_the_camera_on_the_selected_unit() {
         camera_for(
             Some((unit.location.x as usize, unit.location.y as usize)),
             (engine.width(), engine.height()),
-            (200 / TILE_WIDTH, 40),
+            (240 / TILE_WIDTH, 80),
             (70, 40),
         )
     };
@@ -3224,7 +3224,7 @@ fn clicking_cancel_closes_the_command_picker_without_an_order() {
 fn clicking_a_player_unit_selects_it_and_opens_its_command_picker() {
     let mut app = app_with_settler();
     app.map_pane
-        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
+        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 240, 80)));
     let (wx, wy) = {
         let engine = app.engine.as_ref().unwrap();
         let unit = engine
@@ -5243,7 +5243,7 @@ fn an_investigated_foreign_city_window_cannot_be_reopened() {
     );
 
     app.map_pane
-        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 200, 40)));
+        .set(Some(Rect::new(LEFT_COLUMN_WIDTH, 0, 240, 80)));
     app.left_click(
         (LEFT_COLUMN_WIDTH as usize + city_tile.x as usize * TILE_WIDTH) as u16,
         city_tile.y,

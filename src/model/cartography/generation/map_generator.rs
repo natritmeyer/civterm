@@ -31,7 +31,7 @@ impl MapGenerator {
         let mut map = Map::new(width, height);
         self.set_to_ocean(&mut map);
         self.set_border_tundra(&mut map);
-        self.seed_plains(&mut map, 4);
+        self.seed_plains(&mut map, 7);
         self.grow_continents(&mut map, 200);
         self.fill_enclosed_water_with_grass(&mut map);
         self.place_special_resources(&mut map);
@@ -313,12 +313,12 @@ mod tests {
         let mut generator = MapGenerator::new(1);
         let mut map = Map::new(100, 100);
         generator.set_to_ocean(&mut map);
-        generator.seed_plains(&mut map, 4);
+        generator.seed_plains(&mut map, 7);
         let count = (0..100)
             .flat_map(|y| (0..100).map(move |x| Location::new(x, y)))
             .filter(|location| map.tile_at(*location).terrain == Terrain::Plains)
             .count();
-        assert_eq!(count, 4);
+        assert_eq!(count, 7);
         let (band_top, band_bottom) = middle_band(100);
         for y in 0..100 {
             for x in 0..100 {
@@ -338,7 +338,7 @@ mod tests {
         let mut generator = MapGenerator::new(1);
         let mut map = Map::new(40, 40);
         generator.set_to_ocean(&mut map);
-        generator.seed_plains(&mut map, 4);
+        generator.seed_plains(&mut map, 7);
         let before = land_count(&map);
         generator.grow_continents(&mut map, 500);
         assert!(land_count(&map) > before);
@@ -349,12 +349,12 @@ mod tests {
         let mut generator = MapGenerator::new(1);
         let mut map = Map::new(40, 40);
         generator.set_to_ocean(&mut map);
-        generator.seed_plains(&mut map, 4);
+        generator.seed_plains(&mut map, 7);
         let seeds: Vec<Location> = (0..map.height)
             .flat_map(|y| (0..map.width).map(move |x| Location::new(x as u16, y as u16)))
             .filter(|location| map.tile_at(*location).terrain == Terrain::Plains)
             .collect();
-        assert_eq!(seeds.len(), 4, "expected four plains seeds");
+        assert_eq!(seeds.len(), 7, "expected seven plains seeds");
         generator.grow_continents(&mut map, 10);
         for seed in seeds {
             let grew = Direction::iter().any(|direction| {
@@ -414,7 +414,7 @@ mod tests {
         let mut generator = MapGenerator::new(1);
         let mut map = Map::new(40, 40);
         generator.set_to_ocean(&mut map);
-        generator.seed_plains(&mut map, 4);
+        generator.seed_plains(&mut map, 7);
         generator.grow_continents(&mut map, 10_000);
         let (band_top, band_bottom) = middle_band(40);
         for y in 0..40 {
@@ -435,7 +435,7 @@ mod tests {
         let mut generator = MapGenerator::new(1);
         let mut map = Map::new(40, 40);
         generator.set_to_ocean(&mut map);
-        generator.seed_plains(&mut map, 4);
+        generator.seed_plains(&mut map, 7);
         generator.grow_continents(&mut map, 500);
         let before: Vec<(Location, Terrain)> = (0..map.height)
             .flat_map(|y| (0..map.width).map(move |x| Location::new(x as u16, y as u16)))
