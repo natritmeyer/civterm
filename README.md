@@ -1,6 +1,6 @@
 # civterm
 
-A Civilization clone in your terminal, written in Rust with
+A civilization game in your terminal, written in Rust with
 [crossterm](https://github.com/crossterm-rs/crossterm) and
 [ratatui](https://github.com/ratatui/ratatui).
 
