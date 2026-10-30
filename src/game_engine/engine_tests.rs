@@ -3729,16 +3729,17 @@ fn granary_and_aqueduct_raise_a_citys_food_income() {
         .game
         .add_city(PlayerId::new(0), "London", Location::new(2, 2));
     let london = CityId::new(0);
-    // A Grassland centre feeds the city 2; the Granary doubles it and the
-    // Aqueduct adds half again, on both the stored harvest and the display.
+    // A Grassland centre feeds the city 2; the Granary adds a quarter again
+    // and the Aqueduct adds half again, on both the stored harvest and the
+    // display.
     assert_eq!(engine.game.city_income(london).0, 2);
     assert_eq!(engine.game.city_breakdown(london).food, 2);
     engine.game.cities[0].add_improvement(CityImprovement::Granary);
-    assert_eq!(engine.game.city_income(london).0, 4);
-    assert_eq!(engine.game.city_breakdown(london).food, 4);
+    assert_eq!(engine.game.city_income(london).0, 2);
+    assert_eq!(engine.game.city_breakdown(london).food, 2);
     engine.game.cities[0].add_improvement(CityImprovement::Aqueduct);
-    assert_eq!(engine.game.city_income(london).0, 6);
-    assert_eq!(engine.game.city_breakdown(london).food, 6);
+    assert_eq!(engine.game.city_income(london).0, 3);
+    assert_eq!(engine.game.city_breakdown(london).food, 3);
 }
 
 #[test]

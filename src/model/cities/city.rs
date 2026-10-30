@@ -272,15 +272,18 @@ impl City {
     }
 
     /// The city's food harvest on top of the raw worked-tile yield. A Granary
-    /// doubles the harvest and an Aqueduct adds half again to it, so a grown
-    /// city can feed more mouths and grow sooner.
+    /// adds a quarter again to it and an Aqueduct adds half again to it, so a
+    /// grown city can feed more mouths and grow sooner.
     pub fn food_income(&self, raw: u32) -> u32 {
         let mut numerator = 1u32;
         let mut denominator = 1u32;
         if self.improvements.contains(&CityImprovement::Granary) {
-            numerator *= 2;
+            // ×5/4 (1.25), down from ×2.
+            numerator *= 5;
+            denominator *= 4;
         }
         if self.improvements.contains(&CityImprovement::Aqueduct) {
+            // ×3/2 (1.5).
             numerator *= 3;
             denominator *= 2;
         }
@@ -506,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn granary_doubles_food_income() {
+    fn granary_adds_a_quarter_again_food_income() {
         let mut city = City::new(
             "London",
             Location::new(0, 0),
@@ -515,7 +518,7 @@ mod tests {
         );
         assert_eq!(city.food_income(4), 4);
         city.add_improvement(CityImprovement::Granary);
-        assert_eq!(city.food_income(4), 8);
+        assert_eq!(city.food_income(4), 5);
     }
 
     #[test]
@@ -540,7 +543,7 @@ mod tests {
         );
         city.add_improvement(CityImprovement::Granary);
         city.add_improvement(CityImprovement::Aqueduct);
-        assert_eq!(city.food_income(4), 12);
+        assert_eq!(city.food_income(4), 7);
     }
 
     #[test]
