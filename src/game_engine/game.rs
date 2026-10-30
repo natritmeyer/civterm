@@ -1022,19 +1022,19 @@ mod tests {
         }
         assert_eq!(game.research_income(player()), 5);
         game.cities[0].add_improvement(CityImprovement::Library);
-        assert_eq!(game.research_income(player()), 7);
+        assert_eq!(game.research_income(player()), 6);
     }
 
     #[test]
     fn can_research_requires_prerequisites_and_newness() {
         let mut game = Game::new(3, 1, Player::new(Civilization::English), Vec::new());
         game.add_city(player(), "London", Location::new(1, 0));
-        for _ in 0..8 {
+        for _ in 0..60 {
             game.cities[0].grow();
         }
         game.cities[0].add_improvement(CityImprovement::Library);
         game.cities[0].add_improvement(CityImprovement::University);
-        assert_eq!(game.research_income(player()), 20);
+        assert_eq!(game.research_income(player()), 17);
 
         assert!(game.can_research(player(), Advancement::Wheel));
         assert!(!game.can_research(player(), Advancement::Currency));
@@ -1080,11 +1080,11 @@ mod tests {
             game.cities[0].grow();
         }
         game.cities[0].add_improvement(CityImprovement::Library);
-        assert_eq!(game.research_income(player()), 6);
+        assert_eq!(game.research_income(player()), 5);
 
         game.set_research_target(player(), Advancement::Wheel);
         game.advance_research(player(), Scales::IDENTITY);
-        assert_eq!(game.research_progress(player()), 6);
+        assert_eq!(game.research_progress(player()), 5);
         for _ in 0..6 {
             game.advance_research(player(), Scales::IDENTITY);
         }
@@ -1248,7 +1248,7 @@ mod tests {
             game.cities[0].grow();
         }
         game.cities[0].add_improvement(CityImprovement::Library);
-        assert_eq!(game.research_income(player()), 6);
+        assert_eq!(game.research_income(player()), 5);
         game.set_research_target(player(), Advancement::Wheel);
         game.advance_research(
             player(),
@@ -1257,7 +1257,7 @@ mod tests {
                 ..Scales::IDENTITY
             },
         );
-        assert_eq!(game.research_progress(player()), 4);
+        assert_eq!(game.research_progress(player()), 3);
     }
 
     #[test]

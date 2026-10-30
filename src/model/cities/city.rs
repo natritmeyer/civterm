@@ -250,17 +250,25 @@ impl City {
     }
 
     pub fn research(&self) -> u32 {
-        let mut numerator = 4u32;
-        let mut denominator = 4u32;
+        // Diminishing returns: each additional citizen contributes less, so a
+        // large city's research grows sublinearly with its population. The
+        // base keeps a size-4 city at 4 beakers (matching the old linear
+        // value) and asymptotes at 10; the Library and University multipliers
+        // then apply on top.
+        let population = self.population.max(1);
+        let mut numerator = 10u32 * population;
+        let mut denominator = population + 6;
         if self.improvements.contains(&CityImprovement::Library) {
-            numerator *= 3;
-            denominator *= 2;
+            // ×5/4 (1.25), down from ×3/2.
+            numerator *= 5;
+            denominator *= 4;
         }
         if self.improvements.contains(&CityImprovement::University) {
+            // ×3/2 (1.5).
             numerator *= 3;
             denominator *= 2;
         }
-        self.population * numerator / denominator
+        numerator / denominator
     }
 
     /// The city's food harvest on top of the raw worked-tile yield. A Granary
@@ -452,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn library_increases_research_by_50_percent() {
+    fn library_increases_research_by_25_percent() {
         let mut city = City::new(
             "London",
             Location::new(0, 0),
@@ -463,7 +471,7 @@ mod tests {
         city.grow();
         city.grow();
         city.add_improvement(CityImprovement::Library);
-        assert_eq!(city.research(), 6);
+        assert_eq!(city.research(), 5);
     }
 
     #[test]
@@ -494,7 +502,7 @@ mod tests {
         city.grow();
         city.add_improvement(CityImprovement::Library);
         city.add_improvement(CityImprovement::University);
-        assert_eq!(city.research(), 9);
+        assert_eq!(city.research(), 7);
     }
 
     #[test]
