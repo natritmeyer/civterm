@@ -649,9 +649,9 @@ impl App {
                     );
                     if app.show_help {
                         let bar = Rect {
-                            x: area.x,
+                            x: map_pane.x,
                             y: area.bottom().saturating_sub(2),
-                            width: area.width,
+                            width: map_pane.width,
                             height: 2,
                         };
                         frame.render_widget(
