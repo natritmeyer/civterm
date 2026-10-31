@@ -34,6 +34,7 @@ impl App {
         self.picker_rect = Cell::new(None);
         self.research_dialog = None;
         self.research_dialog_rect = Cell::new(None);
+        self.pending_research_discovery = None;
         self.diplomat_actions = None;
         self.diplomat_actions_rect = Cell::new(None);
         self.steal_notice = None;

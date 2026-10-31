@@ -3,6 +3,7 @@ use crate::game_engine::{
     Command, DiplomatAction, DiplomatAudience, StealOutcome, load_game, save_game,
 };
 use crate::model::cartography::Direction;
+use crate::model::civilizations::PlayerId;
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
 use crate::tui::diplomat_actions_dialog;
@@ -51,6 +52,43 @@ impl App {
             MouseEventKind::ScrollDown => self.move_research_scroll(1),
             _ => {}
         }
+    }
+
+    /// Open the research-completion dialog for `discovered`, parking any
+    /// build-completion queue behind it. Shared by the end-of-turn path and by
+    /// the starvation-notice acknowledgement that deferred it.
+    pub(super) fn open_research_dialog(&mut self, discovered: Advancement, human: PlayerId) {
+        let choices = self
+            .engine
+            .as_ref()
+            .map(|engine| engine.researchable_advancements_for(human))
+            .unwrap_or_default();
+        self.research_dialog = Some(ResearchDialogState {
+            discovered,
+            choices,
+            cursor: 0,
+            scroll: 0,
+        });
+        // The modal floats over the map; drop any stale overlays so
+        // the player isn't asked about both at once.
+        self.selected_city = None;
+        self.city_window_scroll = 0;
+        self.moused_window = Cell::new(None);
+        self.production_picker_open = false;
+        self.picker_rect = Cell::new(None);
+        self.command_picker_open = false;
+        self.command_picker_scroll = 0;
+        self.command_picker_rect = Cell::new(None);
+        // A research choice and a build announcement can both come out of
+        // the same round: a city finishes a unit and the accumulated
+        // science crosses a threshold. Research captures the keyboard and
+        // is drawn first, so the build queue is *parked* behind it rather
+        // than dropped -- dropping it would silently lose every city the
+        // player was never told about. `research_dialog_confirm` resumes it.
+        if let Some(notice) = &mut self.build_notice {
+            notice.suspended = true;
+        }
+        self.build_notice_rect = Cell::new(None);
     }
 
     pub(super) fn research_dialog_confirm(&mut self) {
@@ -187,6 +225,11 @@ impl App {
         if notice.queue.is_empty() {
             self.starvation_notice = None;
             self.starvation_notice_rect.set(None);
+            // A research choice deferred by the starvation queue can now be
+            // offered, once no hungry city remains to be acknowledged first.
+            if let Some(discovered) = self.pending_research_discovery.take() {
+                self.open_research_dialog(discovered, PlayerId::new(0));
+            }
         }
     }
 

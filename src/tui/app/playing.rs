@@ -24,6 +24,19 @@ impl App {
         if self.quit_dialog.is_some() {
             return self.handle_quit_dialog_key(key);
         }
+        // While a starvation window is up it captures the keyboard: enter, space
+        // or esc acknowledges the lost citizen and moves on to the next hungry
+        // city. Starvation takes precedence over a research choice, which is
+        // deferred until the queue empties.
+        if self.starvation_notice.is_some() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
+                    self.starvation_notice_confirm();
+                }
+                _ => {}
+            }
+            return false;
+        }
         // While the research dialog is open it captures the keyboard: the
         // player may only pick a research target and confirm it.
         if self.research_dialog.is_some() {
@@ -37,18 +50,6 @@ impl App {
             match key.code {
                 KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
                     self.war_notice_confirm();
-                }
-                _ => {}
-            }
-            return false;
-        }
-        // While a starvation window is up it captures the keyboard: enter, space
-        // or esc acknowledges the lost citizen and moves on to the next hungry
-        // city.
-        if self.starvation_notice.is_some() {
-            match key.code {
-                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
-                    self.starvation_notice_confirm();
                 }
                 _ => {}
             }
@@ -852,37 +853,14 @@ impl App {
             && wrapped
             && let Some(discovered) = discovered
         {
-            let choices = self
-                .engine
-                .as_ref()
-                .map(|engine| engine.researchable_advancements_for(human))
-                .unwrap_or_default();
-            self.research_dialog = Some(ResearchDialogState {
-                discovered,
-                choices,
-                cursor: 0,
-                scroll: 0,
-            });
-            // The modal floats over the map; drop any stale overlays so
-            // the player isn't asked about both at once.
-            self.selected_city = None;
-            self.city_window_scroll = 0;
-            self.moused_window = Cell::new(None);
-            self.production_picker_open = false;
-            self.picker_rect = Cell::new(None);
-            self.command_picker_open = false;
-            self.command_picker_scroll = 0;
-            self.command_picker_rect = Cell::new(None);
-            // A research choice and a build announcement can both come out of
-            // the same round: a city finishes a unit and the accumulated
-            // science crosses a threshold. Research captures the keyboard and
-            // is drawn first, so the build queue is *parked* behind it rather
-            // than dropped -- dropping it would silently lose every city the
-            // player was never told about. `research_dialog_confirm` resumes it.
-            if let Some(notice) = &mut self.build_notice {
-                notice.suspended = true;
+            if self.starvation_notice.is_some() {
+                // Starvation takes precedence over the research choice: the
+                // advancement window is opened only once the hungry-city queue
+                // has been acknowledged. `starvation_notice_confirm` opens it.
+                self.pending_research_discovery = Some(discovered);
+            } else {
+                self.open_research_dialog(discovered, human);
             }
-            self.build_notice_rect = Cell::new(None);
         }
         self.select_first_unit();
     }

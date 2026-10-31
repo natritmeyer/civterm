@@ -270,6 +270,10 @@ pub struct App {
     research_dialog: Option<ResearchDialogState>,
     /// The last-drawn research-dialog rectangle, for mouse hit-testing.
     research_dialog_rect: Cell<Option<Rect>>,
+    /// An advancement discovered this round whose choice dialog is being held
+    /// back until the starvation-notice queue (which takes precedence) has been
+    /// acknowledged.
+    pending_research_discovery: Option<Advancement>,
     /// The open war-or-peace dialog, if one is showing.
     diplomacy: Option<DiplomacyState>,
     /// The last-drawn diplomacy-dialog rectangle, for mouse hit-testing.
@@ -424,6 +428,7 @@ impl App {
             event_log: Vec::new(),
             research_dialog: None,
             research_dialog_rect: Cell::new(None),
+            pending_research_discovery: None,
             diplomat_actions: None,
             diplomat_actions_rect: Cell::new(None),
             steal_notice: None,
