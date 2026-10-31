@@ -29,6 +29,26 @@ pub struct City {
     investigated: bool,
 }
 
+/// Tuning knobs for [`City::research`]. Raise `RESEARCH_ASYMPTOTE` or lower
+/// `RESEARCH_HALF_SATURATION` to speed research up; do the reverse to slow it.
+pub const RESEARCH_ASYMPTOTE: u32 = 6;
+pub const RESEARCH_HALF_SATURATION: u32 = 4;
+pub const LIBRARY_RESEARCH_NUMERATOR: u32 = 5;
+pub const LIBRARY_RESEARCH_DENOMINATOR: u32 = 4;
+pub const UNIVERSITY_RESEARCH_NUMERATOR: u32 = 3;
+pub const UNIVERSITY_RESEARCH_DENOMINATOR: u32 = 2;
+
+/// Tuning knobs for city food and growth. Each citizen eats
+/// `FOOD_CONSUMPTION_PER_CITIZEN` food per turn, and a city stores
+/// `GROWTH_FOOD_PER_CITIZEN * population` food before it grows. The
+/// Granary and Aqueduct multipliers apply to a city's food income.
+pub const FOOD_CONSUMPTION_PER_CITIZEN: u32 = 2;
+pub const GROWTH_FOOD_PER_CITIZEN: u32 = 2;
+pub const GRANARY_FOOD_NUMERATOR: u32 = 5;
+pub const GRANARY_FOOD_DENOMINATOR: u32 = 4;
+pub const AQUEDUCT_FOOD_NUMERATOR: u32 = 3;
+pub const AQUEDUCT_FOOD_DENOMINATOR: u32 = 2;
+
 impl City {
     pub fn new(name: impl Into<String>, location: Location, owner: PlayerId, id: CityId) -> Self {
         City {
@@ -133,12 +153,12 @@ impl City {
 
     /// Food consumed each turn: each citizen eats 2.
     pub fn food_consumption(&self) -> u32 {
-        2 * self.population
+        FOOD_CONSUMPTION_PER_CITIZEN * self.population
     }
 
     /// The food surplus the city stores before its population grows.
     pub fn growth_target(&self) -> u32 {
-        2 * self.population
+        GROWTH_FOOD_PER_CITIZEN * self.population
     }
 
     /// Advance the city one turn given this turn's food and resource income.
@@ -252,21 +272,21 @@ impl City {
     pub fn research(&self) -> u32 {
         // Diminishing returns: each additional citizen contributes less, so a
         // large city's research grows sublinearly with its population. The
-        // base keeps a size-4 city at 4 beakers (matching the old linear
-        // value) and asymptotes at 10; the Library and University multipliers
-        // then apply on top.
+        // constants below are the tuning knobs: `RESEARCH_ASYMPTOTE` is the
+        // per-city ceiling, `RESEARCH_HALF_SATURATION` sets how quickly a city
+        // approaches it, and the Library/University multipliers apply on top.
         let population = self.population.max(1);
-        let mut numerator = 10u32 * population;
-        let mut denominator = population + 6;
+        let mut numerator = RESEARCH_ASYMPTOTE * population;
+        let mut denominator = population + RESEARCH_HALF_SATURATION;
         if self.improvements.contains(&CityImprovement::Library) {
-            // ×5/4 (1.25), down from ×3/2.
-            numerator *= 5;
-            denominator *= 4;
+            // ×5/4 (1.25).
+            numerator *= LIBRARY_RESEARCH_NUMERATOR;
+            denominator *= LIBRARY_RESEARCH_DENOMINATOR;
         }
         if self.improvements.contains(&CityImprovement::University) {
             // ×3/2 (1.5).
-            numerator *= 3;
-            denominator *= 2;
+            numerator *= UNIVERSITY_RESEARCH_NUMERATOR;
+            denominator *= UNIVERSITY_RESEARCH_DENOMINATOR;
         }
         numerator / denominator
     }
@@ -279,13 +299,13 @@ impl City {
         let mut denominator = 1u32;
         if self.improvements.contains(&CityImprovement::Granary) {
             // ×5/4 (1.25), down from ×2.
-            numerator *= 5;
-            denominator *= 4;
+            numerator *= GRANARY_FOOD_NUMERATOR;
+            denominator *= GRANARY_FOOD_DENOMINATOR;
         }
         if self.improvements.contains(&CityImprovement::Aqueduct) {
             // ×3/2 (1.5).
-            numerator *= 3;
-            denominator *= 2;
+            numerator *= AQUEDUCT_FOOD_NUMERATOR;
+            denominator *= AQUEDUCT_FOOD_DENOMINATOR;
         }
         raw * numerator / denominator
     }
@@ -447,7 +467,7 @@ mod tests {
     }
 
     #[test]
-    fn research_equals_population_without_improvements() {
+    fn research_for_a_size_four_city_is_three_without_improvements() {
         let city = City::new(
             "London",
             Location::new(0, 0),
@@ -459,7 +479,7 @@ mod tests {
         city.grow();
         city.grow();
         assert_eq!(city.population(), 4);
-        assert_eq!(city.research(), 4);
+        assert_eq!(city.research(), 3);
     }
 
     #[test]
@@ -474,7 +494,7 @@ mod tests {
         city.grow();
         city.grow();
         city.add_improvement(CityImprovement::Library);
-        assert_eq!(city.research(), 5);
+        assert_eq!(city.research(), 3);
     }
 
     #[test]
@@ -489,7 +509,7 @@ mod tests {
         city.grow();
         city.grow();
         city.add_improvement(CityImprovement::University);
-        assert_eq!(city.research(), 6);
+        assert_eq!(city.research(), 4);
     }
 
     #[test]
@@ -505,7 +525,7 @@ mod tests {
         city.grow();
         city.add_improvement(CityImprovement::Library);
         city.add_improvement(CityImprovement::University);
-        assert_eq!(city.research(), 7);
+        assert_eq!(city.research(), 5);
     }
 
     #[test]

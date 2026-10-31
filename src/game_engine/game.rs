@@ -1020,9 +1020,9 @@ mod tests {
         for _ in 0..3 {
             game.cities[0].grow();
         }
-        assert_eq!(game.research_income(player()), 5);
+        assert_eq!(game.research_income(player()), 4);
         game.cities[0].add_improvement(CityImprovement::Library);
-        assert_eq!(game.research_income(player()), 6);
+        assert_eq!(game.research_income(player()), 4);
     }
 
     #[test]
@@ -1034,13 +1034,15 @@ mod tests {
         }
         game.cities[0].add_improvement(CityImprovement::Library);
         game.cities[0].add_improvement(CityImprovement::University);
-        assert_eq!(game.research_income(player()), 17);
+        assert_eq!(game.research_income(player()), 10);
 
         assert!(game.can_research(player(), Advancement::Wheel));
         assert!(!game.can_research(player(), Advancement::Currency));
         assert!(!game.can_research(player(), Advancement::Astronomy));
 
         game.set_research_target(player(), Advancement::Wheel);
+        assert_eq!(game.advance_research(player(), Scales::IDENTITY), None);
+        assert_eq!(game.advance_research(player(), Scales::IDENTITY), None);
         assert_eq!(
             game.advance_research(player(), Scales::IDENTITY),
             Some(Advancement::Wheel)
@@ -1048,6 +1050,8 @@ mod tests {
         assert!(!game.can_research(player(), Advancement::Wheel));
 
         game.set_research_target(player(), Advancement::BronzeWorking);
+        assert_eq!(game.advance_research(player(), Scales::IDENTITY), None);
+        assert_eq!(game.advance_research(player(), Scales::IDENTITY), None);
         assert_eq!(
             game.advance_research(player(), Scales::IDENTITY),
             Some(Advancement::BronzeWorking)
@@ -1080,12 +1084,12 @@ mod tests {
             game.cities[0].grow();
         }
         game.cities[0].add_improvement(CityImprovement::Library);
-        assert_eq!(game.research_income(player()), 5);
+        assert_eq!(game.research_income(player()), 3);
 
         game.set_research_target(player(), Advancement::Wheel);
         game.advance_research(player(), Scales::IDENTITY);
-        assert_eq!(game.research_progress(player()), 5);
-        for _ in 0..6 {
+        assert_eq!(game.research_progress(player()), 3);
+        for _ in 0..9 {
             game.advance_research(player(), Scales::IDENTITY);
         }
         assert_eq!(game.research_progress(player()), 0);
@@ -1248,7 +1252,7 @@ mod tests {
             game.cities[0].grow();
         }
         game.cities[0].add_improvement(CityImprovement::Library);
-        assert_eq!(game.research_income(player()), 5);
+        assert_eq!(game.research_income(player()), 3);
         game.set_research_target(player(), Advancement::Wheel);
         game.advance_research(
             player(),
@@ -1257,7 +1261,7 @@ mod tests {
                 ..Scales::IDENTITY
             },
         );
-        assert_eq!(game.research_progress(player()), 3);
+        assert_eq!(game.research_progress(player()), 2);
     }
 
     #[test]

@@ -284,10 +284,10 @@ mod tests {
     #[test]
     fn research_accumulates_towards_the_target_and_discovers_it_at_cost() {
         let mut player = Player::new(Civilization::English);
-        player.set_research_target(Advancement::Wheel); // cost 15
-        assert_eq!(player.advance_research(10), None);
-        assert_eq!(player.research_progress(), 10);
-        assert_eq!(player.advance_research(5), Some(Advancement::Wheel));
+        player.set_research_target(Advancement::Wheel); // cost 30
+        assert_eq!(player.advance_research(20), None);
+        assert_eq!(player.research_progress(), 20);
+        assert_eq!(player.advance_research(10), Some(Advancement::Wheel));
         assert!(player.has_advancement(Advancement::Wheel));
         assert_eq!(player.advancement_in_progress(), None);
         assert_eq!(player.research_progress(), 0);
