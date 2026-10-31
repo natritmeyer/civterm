@@ -186,7 +186,17 @@ pub(crate) fn paint_tile(
                 u.location.x == map_x as u16
                     && u.location.y == world_y as u16
                     && u.order() == UnitOrder::Idle
-                    && u.moves_remaining() > 0
+                    && if u.is_transported() {
+                        // A unit aboard a ship has no movement of its own: the
+                        // ship it rides is what moves. The tile must not flash
+                        // when the carrier has no moves left, even if the
+                        // cargo still carries a budget from before it boarded.
+                        u.aboard()
+                            .and_then(|carrier| view.unit(carrier))
+                            .is_some_and(|ship| ship.moves_remaining() > 0)
+                    } else {
+                        u.moves_remaining() > 0
+                    }
             })
         });
 

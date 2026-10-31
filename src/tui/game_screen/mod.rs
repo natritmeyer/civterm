@@ -344,7 +344,13 @@ impl<'a> GameScreen<'a> {
                         u.location.x == world_x as u16
                             && u.location.y == world_y as u16
                             && u.order() == UnitOrder::Idle
-                            && u.moves_remaining() > 0
+                            && if u.is_transported() {
+                                u.aboard()
+                                    .and_then(|carrier| self.view.unit(carrier))
+                                    .is_some_and(|ship| ship.moves_remaining() > 0)
+                            } else {
+                                u.moves_remaining() > 0
+                            }
                     })
                 });
                 for col in [screen_col, screen_col.saturating_add(1)] {
