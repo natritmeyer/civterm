@@ -3222,7 +3222,7 @@ fn the_fortified_bonus_survives_a_spent_move_budget() {
     );
     engine.game.units[0].fortify();
     assert_eq!(engine.defender_power(&engine.game.units[0]), 30);
-    engine.game.units[0].spend_moves(1);
+    engine.game.units[0].spend_moves(3);
     assert_eq!(engine.defender_power(&engine.game.units[0]), 30);
 }
 
@@ -6786,4 +6786,160 @@ fn a_trade_route_dies_with_its_destroyed_city() {
         engine.game.cities.iter().all(|c| c.id() != target),
         "the overrun city is gone"
     );
+}
+
+#[test]
+fn a_unit_moves_three_times_as_far_along_a_road() {
+    let mut engine = Engine::new(5, 2, Player::new(Civilization::English), Vec::new());
+    for x in 0..5 {
+        engine
+            .game
+            .map
+            .tile_at_mut(Location::new(x as u16, 1))
+            .terrain = Terrain::Grassland;
+    }
+    for x in 1..=4 {
+        engine
+            .game
+            .map
+            .tile_at_mut(Location::new(x as u16, 1))
+            .build_road()
+            .unwrap();
+    }
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(1, 1),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+
+    for _ in 0..3 {
+        engine.submit(Command::Move {
+            unit: UnitId::new(0),
+            direction: Direction::E,
+        });
+    }
+
+    assert_eq!(engine.game.units[0].location, Location::new(4, 1));
+    assert_eq!(engine.game.units[0].move_credit(), 0);
+}
+
+#[test]
+fn stepping_onto_a_road_from_open_ground_costs_a_full_move() {
+    let mut engine = Engine::new(3, 2, Player::new(Civilization::English), Vec::new());
+    for x in 0..3 {
+        engine
+            .game
+            .map
+            .tile_at_mut(Location::new(x as u16, 1))
+            .terrain = Terrain::Grassland;
+    }
+    engine
+        .game
+        .map
+        .tile_at_mut(Location::new(1, 1))
+        .build_road()
+        .unwrap();
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(0, 1),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+
+    engine.submit(Command::Move {
+        unit: UnitId::new(0),
+        direction: Direction::E,
+    });
+
+    assert_eq!(engine.game.units[0].location, Location::new(1, 1));
+    assert_eq!(engine.game.units[0].move_credit(), 0);
+}
+
+#[test]
+fn a_partial_road_credit_lets_a_unit_step_off_the_road() {
+    let mut engine = Engine::new(5, 2, Player::new(Civilization::English), Vec::new());
+    for x in 0..5 {
+        engine
+            .game
+            .map
+            .tile_at_mut(Location::new(x as u16, 1))
+            .terrain = Terrain::Grassland;
+    }
+    for x in 1..=3 {
+        engine
+            .game
+            .map
+            .tile_at_mut(Location::new(x as u16, 1))
+            .build_road()
+            .unwrap();
+    }
+    engine.game.spawn_unit(
+        UnitClass::Settler,
+        Location::new(1, 1),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+
+    // Two road steps spend two thirds, leaving one third of a point.
+    engine.submit(Command::Move {
+        unit: UnitId::new(0),
+        direction: Direction::E,
+    });
+    engine.submit(Command::Move {
+        unit: UnitId::new(0),
+        direction: Direction::E,
+    });
+    assert_eq!(engine.game.units[0].location, Location::new(3, 1));
+    assert!(engine.game.units[0].has_moves());
+
+    // The remaining third is enough to leave the road onto open ground.
+    engine.submit(Command::Move {
+        unit: UnitId::new(0),
+        direction: Direction::E,
+    });
+
+    assert_eq!(engine.game.units[0].location, Location::new(4, 1));
+    assert_eq!(engine.game.units[0].move_credit(), 0);
+}
+
+#[test]
+fn tmp_attack_event_visible() {
+    let mut engine = Engine::new(
+        5,
+        3,
+        Player::new(Civilization::English),
+        vec![Player::new(Civilization::Zulu)],
+    );
+    for y in 0..3 {
+        for x in 0..5 {
+            engine
+                .game
+                .map
+                .tile_at_mut(Location::new(x as u16, y as u16))
+                .terrain = Terrain::Grassland;
+        }
+    }
+    engine.game.spawn_unit(
+        UnitClass::Militia,
+        Location::new(0, 0),
+        PlayerId::new(0),
+        Some(CityId::new(0)),
+    );
+    engine.game.spawn_unit(
+        UnitClass::Legion,
+        Location::new(1, 0),
+        PlayerId::new(1),
+        Some(CityId::new(0)),
+    );
+    engine.game.declare_war(PlayerId::new(0), PlayerId::new(1));
+    let events = engine.submit(Command::EndTurn);
+    for e in &events {
+        println!("EVT: {}", e.message());
+    }
+    let human_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.is_about(PlayerId::new(0)))
+        .collect();
+    assert!(!human_events.is_empty());
 }

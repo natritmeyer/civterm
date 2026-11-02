@@ -73,6 +73,7 @@ impl App {
         // the player isn't asked about both at once.
         self.selected_city = None;
         self.city_window_scroll = 0;
+        self.city_window_units_scroll = 0;
         self.moused_window = Cell::new(None);
         self.production_picker_open = false;
         self.picker_rect = Cell::new(None);
@@ -292,6 +293,7 @@ impl App {
         // is never asked about a build and a map selection at once.
         self.selected_city = None;
         self.city_window_scroll = 0;
+        self.city_window_units_scroll = 0;
         self.moused_window = Cell::new(None);
         self.command_picker_open = false;
         self.command_picker_rect = Cell::new(None);
@@ -952,6 +954,7 @@ impl App {
         self.close_command_picker();
         self.selected_city = None;
         self.city_window_scroll = 0;
+        self.city_window_units_scroll = 0;
         self.moused_window = Cell::new(None);
         self.production_picker_open = false;
         self.picker_rect = Cell::new(None);

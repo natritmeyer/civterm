@@ -258,7 +258,20 @@ impl Engine {
         // budget, so a unit only needs *some* movement left, not a full
         // tile's worth. A slow unit enters dense/mountain terrain but is
         // exhausted by it; a fast unit is slowed to one tile per move.
-        let cost = self.game.map.tile_at(destination).terrain.movement_cost();
+        // A road-to-road step is greater movement: it costs nothing, so a
+        // unit may travel three times as far along a road. Stepping onto a
+        // road from open ground, or off a road onto open ground, pays the
+        // ordinary terrain cost.
+        let origin_on_road = self.game.map.tile_at(unit.location).has_road();
+        let destination_on_road = self.game.map.tile_at(destination).has_road();
+        let base_cost = self.game.map.tile_at(destination).terrain.movement_cost();
+        // `cost` is in thirds of a movement point: an ordinary step spends
+        // three (one whole point), a road-to-road step spends one (a third).
+        let cost = if origin_on_road && destination_on_road {
+            base_cost
+        } else {
+            base_cost * 3
+        };
         Ok((destination, cost))
     }
     pub(super) fn ensure_peaceful_passage(
@@ -331,7 +344,7 @@ impl Engine {
         self.owned_unit(unit).ok_or(MoveError::NoSuchUnit(unit))
     }
     pub(super) fn ensure_moves_remaining(&self, unit: &Unit) -> Result<(), MoveError> {
-        if unit.moves_remaining() > 0 {
+        if unit.has_moves() {
             Ok(())
         } else {
             Err(MoveError::NoMovesRemaining(unit.id()))

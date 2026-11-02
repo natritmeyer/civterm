@@ -21,6 +21,13 @@ pub struct Unit {
     order: UnitOrder,
     veteran: bool,
     moves_remaining: u8,
+    /// Extra third-of-a-move credit carried inside the current movement
+    /// point, used by road travel: a road-to-road step costs a third of a
+    /// point, so three such steps spend one point. `0` means the current
+    /// point is untouched; `1` or `2` thirds have been spent. Always in
+    /// `0..3`.
+    #[serde(default)]
+    road_steps_taken: u8,
     work_progress: u8,
     /// The ship carrying this unit, if any. A transported unit occupies no
     /// map square of its own: it is not drawn, meets no enemies, and follows
@@ -46,6 +53,7 @@ impl Unit {
             order: UnitOrder::Idle,
             veteran: false,
             moves_remaining: unit_class.moves(),
+            road_steps_taken: 0,
             work_progress: 0,
             aboard: None,
         }
@@ -83,6 +91,19 @@ impl Unit {
         self.moves_remaining
     }
 
+    /// Movement credit remaining, in thirds of a movement point. A road-to-road
+    /// step spends one third; any other step spends three. `moves_remaining`
+    /// alone is the whole points left, which is what the player is shown.
+    pub fn move_credit(&self) -> u8 {
+        self.moves_remaining * 3 - self.road_steps_taken
+    }
+
+    /// Whether any movement credit is left, including a partial third earned
+    /// by road travel.
+    pub fn has_moves(&self) -> bool {
+        self.move_credit() > 0
+    }
+
     /// The ship transporting this unit, if it is aboard one.
     pub fn aboard(&self) -> Option<UnitId> {
         self.aboard
@@ -109,21 +130,30 @@ impl Unit {
     }
 
     pub fn spend_moves(&mut self, amount: u8) {
-        self.moves_remaining = self.moves_remaining.saturating_sub(amount);
+        // `amount` is in thirds of a movement point. Rebuild the split
+        // (whole points + spent thirds) from the resulting credit so a
+        // road-to-road step that spends one third is recorded precisely.
+        let credit = self.move_credit().saturating_sub(amount);
+        let remainder = credit % 3;
+        self.road_steps_taken = if remainder == 0 { 0 } else { 3 - remainder };
+        self.moves_remaining = if credit == 0 { 0 } else { credit.div_ceil(3) };
     }
 
     pub fn spend_turn(&mut self) {
         self.moves_remaining = 0;
+        self.road_steps_taken = 0;
     }
 
     pub fn restore_moves(&mut self) {
         self.moves_remaining = self.unit_class.moves();
+        self.road_steps_taken = 0;
     }
 
     /// Set the move budget back to exactly `moves`, the state this unit
     /// carried into a step the game is undoing.
     pub fn restore_moves_to(&mut self, moves: u8) {
         self.moves_remaining = moves.min(self.unit_class.moves());
+        self.road_steps_taken = 0;
     }
 
     pub fn fortify(&mut self) {
@@ -318,9 +348,9 @@ mod tests {
             Some(CityId::new(0)),
             UnitId::new(0),
         );
-        unit.spend_moves(2);
+        unit.spend_moves(6);
         assert_eq!(unit.moves_remaining(), 1);
-        unit.spend_moves(2);
+        unit.spend_moves(6);
         assert_eq!(unit.moves_remaining(), 0);
         unit.restore_moves();
         assert_eq!(unit.moves_remaining(), 3);

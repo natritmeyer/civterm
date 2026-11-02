@@ -526,7 +526,7 @@ impl Engine {
     fn march_towards(&mut self, unit_id: UnitId, goal: Location) {
         while self
             .owned_unit(unit_id)
-            .is_some_and(|unit| unit.moves_remaining() > 0 && unit.location != goal)
+            .is_some_and(|unit| unit.move_credit() > 0 && unit.location != goal)
         {
             let Some(direction) = self.step_towards(unit_id, goal) else {
                 break;
@@ -585,7 +585,7 @@ impl Engine {
                 Self::is_military(unit)
                     && !unit.is_transported()
                     && unit.order() == UnitOrder::Idle
-                    && unit.moves_remaining() > 0
+                    && unit.move_credit() > 0
             });
             if !ready {
                 continue;

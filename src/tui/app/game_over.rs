@@ -29,6 +29,7 @@ impl App {
         // Every floating panel is dropped so the overlay owns the screen.
         self.selected_city = None;
         self.city_window_scroll = 0;
+        self.city_window_units_scroll = 0;
         self.moused_window = Cell::new(None);
         self.production_picker_open = false;
         self.picker_rect = Cell::new(None);

@@ -193,9 +193,9 @@ pub(crate) fn paint_tile(
                         // cargo still carries a budget from before it boarded.
                         u.aboard()
                             .and_then(|carrier| view.unit(carrier))
-                            .is_some_and(|ship| ship.moves_remaining() > 0)
+                            .is_some_and(|ship| ship.move_credit() > 0)
                     } else {
-                        u.moves_remaining() > 0
+                        u.move_credit() > 0
                     }
             })
         });

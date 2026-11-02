@@ -1091,7 +1091,7 @@ fn clicking_unfortify_returns_a_garrison_to_the_command_loop() {
             .unwrap();
         unit.fortify();
         unit.restore_moves();
-        assert!(unit.moves_remaining() > 0);
+        assert!(unit.move_credit() > 0);
     }
     let win = Rect {
         x: 20,
@@ -1104,7 +1104,7 @@ fn clicking_unfortify_returns_a_garrison_to_the_command_loop() {
     app.selected_city = Some(city_id);
     let button = {
         let engine = app.engine.as_ref().unwrap();
-        crate::tui::city_window::unfortify_button_rects(win, engine, city_id)[0].1
+        crate::tui::city_window::unfortify_button_rects(win, engine, city_id, 0)[0].1
     };
     app.left_click(button.x + 1, button.y);
 
@@ -1119,7 +1119,7 @@ fn clicking_unfortify_returns_a_garrison_to_the_command_loop() {
         .unwrap();
     assert_eq!(unit.order(), UnitOrder::Idle);
     assert!(
-        unit.moves_remaining() > 0,
+        unit.move_credit() > 0,
         "unfortify must not spend the garrison's turn"
     );
     // Back in the available-units loop. The city window still owns the
@@ -2744,7 +2744,7 @@ fn peace_from_a_blocked_move_keeps_the_focus_on_the_unspent_unit() {
         .into_iter()
         .find(|unit| unit.id() == settler_id)
         .unwrap();
-    assert!(unit.moves_remaining() > 0, "the blocked step spent nothing");
+    assert!(unit.move_credit() > 0, "the blocked step spent nothing");
     assert_eq!(app.selected_unit, Some(settler_id));
 }
 
@@ -3697,6 +3697,10 @@ fn a_rival_attack_replays_as_a_battle_frame() {
         Location::new(0, 0),
         "the fight is fought on the tile the rival attacked"
     );
+    // The war window is held back until the replay has finished, so the
+    // player is never asked to acknowledge it while the camera is panning.
+    assert!(app.has_pending_end_turn_windows);
+    app.clear_expired_rival_animation(std::time::Duration::from_secs(10));
     assert!(
         app.war_notice.is_some(),
         "and the war is still announced by its own window"

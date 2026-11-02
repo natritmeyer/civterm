@@ -296,6 +296,7 @@ pub(crate) fn unfortify_button_rects(
     window: Rect,
     view: &dyn GameView,
     city_id: CityId,
+    scroll: usize,
 ) -> Vec<(UnitId, Rect)> {
     let Some(city) = view.city(city_id) else {
         return Vec::new();
@@ -304,17 +305,27 @@ pub(crate) fn unfortify_button_rects(
         return Vec::new();
     }
     let units_panel = bottom_panels(window).1;
-    view.home_units(city_id)
+    let visible = units_panel.height.saturating_sub(1) as usize;
+    let units = view.home_units(city_id);
+    let offset = scroll.min(units.len().saturating_sub(visible));
+    let scrollbar = units.len() > visible;
+    let button_offset = if scrollbar {
+        UNFORTIFY_WIDTH + 1
+    } else {
+        UNFORTIFY_WIDTH
+    };
+    units
         .iter()
         .enumerate()
-        .take_while(|(i, _)| units_panel.y + 1 + (*i as u16) < units_panel.bottom())
+        .skip(offset)
+        .take_while(|(i, _)| units_panel.y + 1 + (*i as u16 - offset as u16) < units_panel.bottom())
         .filter(|(_, unit)| unit.order() == UnitOrder::Fortified && unit.location == city.location)
         .map(|(i, unit)| {
             (
                 unit.id(),
                 Rect {
-                    x: units_panel.right().saturating_sub(UNFORTIFY_WIDTH),
-                    y: units_panel.y + 1 + i as u16,
+                    x: units_panel.right().saturating_sub(button_offset),
+                    y: units_panel.y + 1 + (i - offset) as u16,
                     width: UNFORTIFY_WIDTH,
                     height: 1,
                 },
@@ -351,6 +362,7 @@ pub struct CityWindow<'a> {
     view: &'a dyn GameView,
     city_id: CityId,
     scroll: usize,
+    units_scroll: usize,
 }
 
 impl<'a> CityWindow<'a> {
@@ -361,7 +373,15 @@ impl<'a> CityWindow<'a> {
             view,
             city_id,
             scroll,
+            units_scroll: 0,
         }
+    }
+
+    /// Set the scroll offset for the units list independently of the
+    /// improvements list.
+    pub fn with_units_scroll(mut self, scroll: usize) -> Self {
+        self.units_scroll = scroll;
+        self
     }
 
     fn draw_population_panel(&self, buf: &mut Buffer, city: &City, rect: Rect) {
@@ -531,24 +551,32 @@ impl<'a> CityWindow<'a> {
             draw_text(buf, rect.x, rect.y + 1, "(none)", TEXT);
             return;
         }
-        for (i, unit) in units.iter().enumerate() {
-            let row = rect.y + 1 + i as u16;
-            if row >= rect.bottom() {
-                break;
-            }
+        let visible = rect.height.saturating_sub(1) as usize;
+        let offset = self.units_scroll.min(units.len().saturating_sub(visible));
+        for (i, unit) in units.iter().enumerate().skip(offset).take(visible) {
+            let row = rect.y + 1 + (i - offset) as u16;
             draw_text(buf, rect.x, row, &format!("{:?}", unit.unit_class), TEXT);
             // A fortified unit stowed on the city tile wears a quick-release
             // button; clicking it restores the unit to the command loop. A
             // foreign garrison renders as intel, so it gets no such handle.
             if !foreign && unit.order() == UnitOrder::Fortified && unit.location == city.location {
+                let scrollbar = units.len() > visible;
+                let button_x = if scrollbar {
+                    rect.right().saturating_sub(UNFORTIFY_WIDTH + 1)
+                } else {
+                    rect.right().saturating_sub(UNFORTIFY_WIDTH)
+                };
                 draw_text(
                     buf,
-                    rect.right() - UNFORTIFY_WIDTH,
+                    button_x,
                     row,
                     UNFORTIFY_TEXT,
                     TEXT.add_modifier(Modifier::UNDERLINED),
                 );
             }
+        }
+        if units.len() > visible {
+            draw_scrollbar(buf, rect, units.len(), offset);
         }
     }
 
@@ -1173,7 +1201,7 @@ mod tests {
         let (view, window, panel, row) = garrison_row(&london(), true);
         assert!(row.contains("Militia"), "row: {row:?}");
         let city_id = view.city.as_ref().unwrap().id();
-        let buttons = unfortify_button_rects(window, &view, city_id);
+        let buttons = unfortify_button_rects(window, &view, city_id, 0);
         assert_eq!(buttons.len(), 1, "exactly one garrison in the list");
         let (unit_id, rect) = buttons[0];
         assert_eq!(unit_id, UnitId::new(0));
@@ -1211,7 +1239,7 @@ mod tests {
         let panel = bottom_panels(window).1;
         let row = row_text(&buf, panel.x, panel.y + 1, panel.width);
         assert!(!row.contains("Unfortify"), "row: {row:?}");
-        assert!(unfortify_button_rects(window, &view, city.id()).is_empty());
+        assert!(unfortify_button_rects(window, &view, city.id(), 0).is_empty());
     }
 
     #[test]

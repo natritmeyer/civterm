@@ -149,15 +149,38 @@ impl App {
             self.mouse_position.set(None);
             return;
         }
-        // Wheel events scroll the open city window's improvement list.
-        if self.moused_window.get().is_some() {
+        // Wheel events scroll whichever list of the open city window the
+        // pointer is hovering over, so the improvements and units lists move
+        // independently.
+        if let Some((window, _)) = self.moused_window.get() {
             match mouse.kind {
-                MouseEventKind::ScrollUp => {
-                    self.city_window_scroll = self.city_window_scroll.saturating_sub(1);
-                    return;
-                }
-                MouseEventKind::ScrollDown => {
-                    self.city_window_scroll = self.city_window_scroll.saturating_add(1);
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    let units_panel = city_window::bottom_panels(window).1;
+                    let improvements_hovered = mouse.row < units_panel.y;
+                    let units_hovered = units_panel.contains((mouse.column, mouse.row).into());
+                    if improvements_hovered {
+                        if mouse.kind == MouseEventKind::ScrollUp {
+                            self.city_window_scroll = self.city_window_scroll.saturating_sub(1);
+                        } else {
+                            self.city_window_scroll = self.city_window_scroll.saturating_add(1);
+                        }
+                    } else if units_hovered {
+                        if mouse.kind == MouseEventKind::ScrollUp {
+                            self.city_window_units_scroll =
+                                self.city_window_units_scroll.saturating_sub(1);
+                        } else {
+                            self.city_window_units_scroll =
+                                self.city_window_units_scroll.saturating_add(1);
+                        }
+                    } else {
+                        // Fall back to the improvements list when the pointer is
+                        // over the window but outside either list.
+                        if mouse.kind == MouseEventKind::ScrollUp {
+                            self.city_window_scroll = self.city_window_scroll.saturating_sub(1);
+                        } else {
+                            self.city_window_scroll = self.city_window_scroll.saturating_add(1);
+                        }
+                    }
                     return;
                 }
                 _ => {}
@@ -186,10 +209,15 @@ impl App {
             return false;
         };
         let Some(unit_id) = self.engine.as_ref().and_then(|engine| {
-            city_window::unfortify_button_rects(window, engine, city_id)
-                .into_iter()
-                .find(|(_, rect)| rect.contains((column, row).into()))
-                .map(|(unit_id, _)| unit_id)
+            city_window::unfortify_button_rects(
+                window,
+                engine,
+                city_id,
+                self.city_window_units_scroll,
+            )
+            .into_iter()
+            .find(|(_, rect)| rect.contains((column, row).into()))
+            .map(|(unit_id, _)| unit_id)
         }) else {
             return false;
         };
@@ -207,6 +235,7 @@ impl App {
     pub(super) fn open_city_window(&mut self, city: CityId) {
         self.selected_city = Some(city);
         self.city_window_scroll = 0;
+        self.city_window_units_scroll = 0;
         self.close_command_picker();
     }
 
@@ -219,6 +248,7 @@ impl App {
     pub(super) fn close_city_window(&mut self) {
         self.selected_city = None;
         self.city_window_scroll = 0;
+        self.city_window_units_scroll = 0;
         if self.production_picker_open {
             self.close_production_picker();
         }

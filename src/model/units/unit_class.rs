@@ -97,7 +97,9 @@ impl UnitClass {
             | UnitClass::Caravan => 1,
             UnitClass::Diplomat => 2,
             UnitClass::Cavalry | UnitClass::Chariot | UnitClass::Knight => 3,
-            UnitClass::Trireme | UnitClass::Sail | UnitClass::Frigate => 3,
+            UnitClass::Trireme => 3,
+            UnitClass::Sail => 5,
+            UnitClass::Frigate => 7,
         }
     }
 
@@ -214,11 +216,11 @@ mod tests {
             UnitClass::Chariot,
             UnitClass::Knight,
             UnitClass::Trireme,
-            UnitClass::Sail,
-            UnitClass::Frigate,
         ] {
             assert_eq!(class.moves(), 3);
         }
+        assert_eq!(UnitClass::Sail.moves(), 5);
+        assert_eq!(UnitClass::Frigate.moves(), 7);
     }
 
     #[test]

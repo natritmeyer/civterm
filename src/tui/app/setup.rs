@@ -233,6 +233,7 @@ impl App {
         self.phase = Phase::Playing;
         self.selected_city = None;
         self.city_window_scroll = 0;
+        self.city_window_units_scroll = 0;
         self.moused_window = Cell::new(None);
         self.production_picker_open = false;
         self.picker_cursor_col = 0;

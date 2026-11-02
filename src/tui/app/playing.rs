@@ -8,12 +8,12 @@ use strum::IntoEnumIterator;
 /// A unit is still worth commanding while it has movement left and is
 /// neither fortified, sentried, improving, nor riding in a ship.
 fn unit_commandable(unit: &Unit) -> bool {
-    unit.moves_remaining() > 0 && unit.order() == UnitOrder::Idle && !unit.is_transported()
+    unit.move_credit() > 0 && unit.order() == UnitOrder::Idle && !unit.is_transported()
 }
 
 impl App {
     fn unit_is_commandable(&self, unit: &Unit) -> bool {
-        unit.moves_remaining() > 0
+        unit.move_credit() > 0
             && unit.order() == UnitOrder::Idle
             && (!unit.is_transported() || self.awaiting_disembark == Some(unit.id()))
     }
@@ -799,7 +799,8 @@ impl App {
                     battle: step.battle,
                 })
                 .collect();
-            self.rival_animation = (!frames.is_empty()).then(|| RivalMoveAnimation {
+            let has_animation = !frames.is_empty();
+            self.rival_animation = has_animation.then(|| RivalMoveAnimation {
                 start: self.started_at.elapsed(),
                 frames,
             });
@@ -807,27 +808,28 @@ impl App {
             // by a window the player acknowledges; more than one war queues
             // up one after the other.
             let wars = engine.drain_rival_wars();
-            self.war_notice = (!wars.is_empty()).then(|| WarNoticeState {
+            let war_notice = (!wars.is_empty()).then(|| WarNoticeState {
                 queue: wars.into_iter().map(|war| war.rival).collect(),
             });
             // A city that starved this round is announced by a window the
             // player acknowledges; several hungry cities queue up one after
             // another.
             let starved = engine.drain_starvations();
-            self.starvation_notice = (!starved.is_empty()).then(|| StarvationNoticeState {
+            let starvation_notice = (!starved.is_empty()).then(|| StarvationNoticeState {
                 queue: starved.into(),
             });
             // A round the player could not pay for is announced by a window the
             // player acknowledges; several shortfalls queue up one after
             // another.
             let shortfalls = engine.drain_upkeep_notices();
-            self.upkeep_notice = (!shortfalls.is_empty()).then(|| UpkeepNoticeState {
+            let upkeep_notice = (!shortfalls.is_empty()).then(|| UpkeepNoticeState {
                 queue: shortfalls.into(),
             });
             // A city that finished building this round is announced by a
             // window offering OK (move to the next such city) or Next Order
             // (open that city's window to set its next target). Each is shown
-            // in turn, so several finishing cities queue up one after another.
+            // in turn, so several finishing cities queue up one after
+            // another.
             builds = engine.drain_build_completions();
             // An advancement completes at the start of the human's turn: once
             // play wraps back to player zero, their research has advanced and
@@ -838,6 +840,23 @@ impl App {
                 .get(advances_before.len())
                 .copied();
             let wrapped = engine.current_player_id() == human;
+            if has_animation {
+                // Hold the windows back until the replay has finished, so the
+                // player is never asked to acknowledge one while the camera is
+                // still panning.
+                self.pending_war_notice = war_notice;
+                self.pending_starvation_notice = starvation_notice;
+                self.pending_upkeep_notice = upkeep_notice;
+                self.pending_builds = builds.clone();
+                self.pending_research_discovery = if wrapped { discovered } else { None };
+                self.pending_wrapped = wrapped;
+                self.has_pending_end_turn_windows = true;
+                builds.clear();
+            } else {
+                self.war_notice = war_notice;
+                self.starvation_notice = starvation_notice;
+                self.upkeep_notice = upkeep_notice;
+            }
             (events, discovered, wrapped)
         } else {
             (Vec::new(), None, false)
@@ -849,7 +868,8 @@ impl App {
         // The research dialog only belongs to a live turn: a round that just
         // ended the match (usually the final rivals' death) must not pile a
         // research choice on top of the victory screen.
-        if self.game_over.is_none()
+        if !self.has_pending_end_turn_windows
+            && self.game_over.is_none()
             && wrapped
             && let Some(discovered) = discovered
         {

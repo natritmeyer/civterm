@@ -232,6 +232,7 @@ pub struct App {
     selected_city: Option<CityId>,
     /// Scroll offset of the open city window's improvement list.
     city_window_scroll: usize,
+    city_window_units_scroll: usize,
     /// The last-drawn city-window rectangle and its close button, for mouse
     /// hit-testing while the window is open.
     moused_window: Cell<Option<(Rect, Rect)>>,
@@ -314,6 +315,15 @@ pub struct App {
     build_notice: Option<BuildNoticeState>,
     /// The last-drawn build-completion rectangle, for mouse hit-testing.
     build_notice_rect: Cell<Option<Rect>>,
+    /// Pending end-of-round windows held back until the rival-movement replay
+    /// has finished, so the player is never asked to acknowledge a window
+    /// while the camera is still panning.
+    pending_war_notice: Option<WarNoticeState>,
+    pending_starvation_notice: Option<StarvationNoticeState>,
+    pending_upkeep_notice: Option<UpkeepNoticeState>,
+    pending_builds: Vec<crate::game_engine::BuildComplete>,
+    pending_wrapped: bool,
+    has_pending_end_turn_windows: bool,
     /// The open transport window, if a ship's manifest is being shown.
     transport_window: Option<TransportState>,
 
@@ -409,6 +419,7 @@ impl App {
             unit_advance_deadline: None,
             selected_city: None,
             city_window_scroll: 0,
+            city_window_units_scroll: 0,
             moused_window: Cell::new(None),
             production_picker_open: false,
             picker_cursor_col: 0,
@@ -445,6 +456,12 @@ impl App {
             upkeep_notice_rect: Cell::new(None),
             build_notice: None,
             build_notice_rect: Cell::new(None),
+            pending_war_notice: None,
+            pending_starvation_notice: None,
+            pending_upkeep_notice: None,
+            pending_builds: Vec::new(),
+            pending_wrapped: false,
+            has_pending_end_turn_windows: false,
             transport_window: None,
             transport_window_rect: Cell::new(None),
             disband_dialog: None,
@@ -549,6 +566,30 @@ impl App {
             .is_some_and(|animation| animation.is_complete(now))
         {
             self.rival_animation = None;
+            if self.has_pending_end_turn_windows {
+                self.war_notice = self.pending_war_notice.take();
+                self.starvation_notice = self.pending_starvation_notice.take();
+                self.upkeep_notice = self.pending_upkeep_notice.take();
+                let builds = std::mem::take(&mut self.pending_builds);
+                self.open_build_notices(builds);
+                let discovered = self.pending_research_discovery.take();
+                let wrapped = self.pending_wrapped;
+                self.pending_wrapped = false;
+                self.has_pending_end_turn_windows = false;
+                if self.game_over.is_none()
+                    && wrapped
+                    && let Some(discovered) = discovered
+                {
+                    if self.starvation_notice.is_some() {
+                        self.pending_research_discovery = Some(discovered);
+                    } else {
+                        self.open_research_dialog(
+                            discovered,
+                            crate::model::civilizations::PlayerId::new(0),
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -684,7 +725,8 @@ impl App {
                             // are computed from. Passing `window` here instead
                             // would make it re-shift the box a cell in.
                             frame.render_widget(
-                                CityWindow::new(engine, city_id, app.city_window_scroll),
+                                CityWindow::new(engine, city_id, app.city_window_scroll)
+                                    .with_units_scroll(app.city_window_units_scroll),
                                 area,
                             );
                             app.moused_window
