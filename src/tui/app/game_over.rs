@@ -13,7 +13,7 @@ impl App {
     /// turns and the board may be cleared, and a freshly loaded game that was
     /// already over.
     pub(super) fn check_game_over(&mut self) {
-        if self.game_over.is_some() {
+        if self.game_over.is_some() || self.game_over_continued {
             return;
         }
         let Some(engine) = &self.engine else {
@@ -133,6 +133,9 @@ impl App {
         }
         self.game_over = None;
         self.game_over_buttons.set(None);
+        if outcome == GameOutcome::Victory && first {
+            self.game_over_continued = true;
+        }
         if outcome == GameOutcome::Defeat {
             self.phase = Phase::Menu;
         }

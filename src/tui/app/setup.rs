@@ -231,6 +231,7 @@ impl App {
         self.drag_carry.set((0, 0));
         self.drag_engaged.set(false);
         self.phase = Phase::Playing;
+        self.game_over_continued = false;
         self.selected_city = None;
         self.city_window_scroll = 0;
         self.city_window_units_scroll = 0;

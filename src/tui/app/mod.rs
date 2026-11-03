@@ -386,6 +386,7 @@ pub struct App {
     game_over: Option<GameOverState>,
     /// The last-drawn end-game button rectangles, for mouse hit-testing.
     game_over_buttons: Cell<Option<(Rect, Rect)>>,
+    game_over_continued: bool,
     /// The seed a new game's map and rivals are drawn from. A real game takes a
     /// fresh clock-derived seed every time; tests pin one so the world they
     /// generate is the same on every run. A random map makes any assertion
@@ -496,6 +497,7 @@ impl App {
             rival_animation: None,
             game_over: None,
             game_over_buttons: Cell::new(None),
+            game_over_continued: false,
             #[cfg(test)]
             seed: TEST_SEED,
         }
