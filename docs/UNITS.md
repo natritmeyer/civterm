@@ -122,15 +122,36 @@ A fortified veteran behind walls on its home tile is 3× its bare defence.
 - A unit that wins a fight is promoted to veteran.
 - Veteran gives ×3/2 attack and defence.
 
-## Movement and terrain
+## Movement
 
-- Terrain movement costs apply; mountains cost 3, forests/jungle/swamp 2,
-  others 1 (in thirds-of-a-point units internally).
-- Roads: a road-to-road step costs 1/3 of a movement point, letting a unit
-  travel three times as far along a road. Stepping onto/off a road pays the
-  full terrain cost.
+### Terrain costs
+
+| Category  | Cost (points) | Terrains                                    |
+| --------- | ------------- | ------------------------------------------- |
+| Open      | 1             | Ocean, Grassland, Plains, Desert, Tundra    |
+| Dense     | 2             | Forest, Hills, Swamp, Jungle                |
+| Mountain  | 3             | Mountain                                    |
+
+- Units spend movement in thirds of a point internally; an ordinary step
+  costs 3 (one whole point).
+- Roads: a road-to-road step costs 1 (one third), so a unit travels three
+  times as far along a road. Stepping onto/off a road pays the full terrain
+  cost.
 - Ships move on water only; land units on land only. Boarding is the only
   lawful land↔water transition.
+
+## Transport & shipping
+
+- Trireme, Sail, Frigate carry up to 2 land units.
+- Boarding: a land unit moves onto a friendly transport's tile (free, no
+  movement cost).
+- Disembarking: a transported unit moves onto an adjacent land tile (free).
+- Transported units are inert: no movement except ashore, no fortify, work,
+  sentry, or founding. Cargo never fights.
+- Transported units have no map square of their own (`units_at` omits them;
+  `player_units` keeps them for selection).
+- When a carrier is removed, its cargo goes with it.
+- Ships can only be built in coastal cities (`borders_water`).
 
 ## Combat outcomes
 
