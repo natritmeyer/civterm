@@ -72,7 +72,7 @@ Only rivals are scaled; your economy is never affected. On Easy the neighbors st
 ## Cities
 
 - Founded by a Settler on a land tile.
-- **Growth**: cities store food; reaching the threshold grows population. Granary/Aqueduct affect growth.
+- **Growth**: cities store food; reaching the threshold grows population. Granary/Aqueduct boost food income.
 - **Working tiles**: each citizen works one tile in the city radius, yielding food, shields, trade.
 - **Production**: cities accumulate shields toward a unit or improvement; when complete, the item is created.
 - **Starvation**: if food runs out, population may shrink; a notice is shown.
@@ -84,17 +84,17 @@ Only rivals are scaled; your economy is never affected. On Easy the neighbors st
 | ----------- | -------------- | ------------- | ----------------- | ----------------------------------------- |
 | Barracks    | 15             | 1             | —                 | New units produced as veterans            |
 | City Walls  | 15             | 1             | Masonry           | ×2 defence for all defenders in city      |
-| Aqueduct    | 15             | 2             | Construction      | Allows city growth beyond size 2          |
+| Aqueduct    | 15             | 2             | Construction      | Food income ×3/2                          |
 | Temple      | 20             | 1             | Ceremonial Burial | +1 happy citizen                          |
-| Library     | 20             | 1             | Writing           | +research (doubles research output)       |
-| Marketplace | 20             | 1             | Currency          | Gold income multiplied                    |
-| Granary     | 20             | 1             | Pottery           | Food carried over on growth               |
-| Courthouse  | 20             | 1             | Code of Laws      | Reduces corruption (standard Civ effect)  |
+| Library     | 20             | 1             | Writing           | Research output ×5/4 (stacks with University) |
+| Marketplace | 20             | 1             | Currency          | Gold income ×3/2 (stacks with Bank)        |
+| Granary     | 20             | 1             | Pottery           | Food income ×5/4                          |
+| Courthouse  | 20             | 1             | Code of Laws      | Not yet wired (planned: reduces corruption) |
 | Colosseum   | 20             | 4             | Construction      | +3 happy citizens                         |
 | Cathedral   | 20             | 3             | Religion          | +4 happy citizens                         |
 | Bank        | 20             | 3             | Banking           | Gold income multiplied (with Marketplace) |
-| University  | 20             | 3             | University        | Research output multiplied (with Library) |
-| Palace      | 30             | 0             | Masonry           | Capital; no upkeep                        |
+| University  | 20             | 3             | University        | Research output ×3/2 (stacks with Library) |
+| Palace      | 30             | 0             | Masonry           | Not yet wired (planned: capital)          |
 
 Happy citizens are twice as productive (shields only). Happiness bonuses stack but never exceed population.
 
