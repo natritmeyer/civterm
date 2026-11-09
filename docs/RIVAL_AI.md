@@ -74,6 +74,7 @@ chosen from explored tiles.
 
 - **Easy**: militia spam (original behavior); no improvements, no terrain
   development, no naval expansion.
+- Militia production is capped at 7 per city.
 - **Normal (medium)**: rivals build city improvements (cheapest available)
   once their city count reaches the expansion target, and idle settlers
   develop terrain (irrigation, mines, roads) around owned cities instead of

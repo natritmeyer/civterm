@@ -17,6 +17,10 @@ use strum::IntoEnumIterator;
 /// of blanketing the map.
 const RIVAL_EXPANSION_TARGET_CITIES: usize = 4;
 
+/// Maximum militia units a rival will keep homed to a single city. Caps the
+/// endless militia stacks that otherwise made cities a grind to capture.
+const RIVAL_MILITIA_CAP_PER_CITY: usize = 7;
+
 /// The gold a rival never spends on a rush-buy, kept back to pay its cities'
 /// upkeep. A rival at war will hurry its builds along with the rest of its
 /// treasury, but not into an empty one: the reserve is what stops a spree of
@@ -212,7 +216,26 @@ impl Engine {
     /// On Normal and Hard, rivals also build city improvements (cheapest
     /// available) and, on Hard, ocean-going units in coastal cities.
     fn rival_production_pick(&self, ai: PlayerId, city_id: CityId) -> Option<ProductionTarget> {
-        let choices = self.production_choices(city_id);
+        let militia_count = self
+            .game
+            .units
+            .iter()
+            .filter(|u| {
+                u.owner() == ai
+                    && u.unit_class == UnitClass::Militia
+                    && u.home_city() == Some(city_id)
+            })
+            .count();
+        // No more than seven militia per city: stop the endless militia stacks.
+        let cap_militia = militia_count >= RIVAL_MILITIA_CAP_PER_CITY;
+        let choices: Vec<ProductionTarget> = self
+            .production_choices(city_id)
+            .into_iter()
+            .filter(|target| {
+                !(cap_militia && matches!(target, ProductionTarget::Unit(UnitClass::Militia)))
+            })
+            .collect();
+        let choices = choices.as_slice();
         let cheapest_unit = || {
             choices
                 .iter()
