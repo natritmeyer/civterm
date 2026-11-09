@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
@@ -1008,6 +1008,13 @@ impl App {
     /// sees, which reads exactly like a crash and reports nothing, because
     /// nothing went wrong — the loop simply ran out of loop.
     fn handle_key(&mut self, key: KeyEvent) -> bool {
+        // Ctrl-C quits the process from anywhere, including raw mode where it
+        // is delivered as a key event rather than a signal.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, crossterm::event::KeyCode::Char('c'))
+        {
+            return true;
+        }
         // While the save/load prompt is open it captures the keyboard.
         if self.save_prompt.is_some() {
             self.handle_save_prompt_key(key);

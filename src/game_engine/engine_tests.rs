@@ -6825,7 +6825,7 @@ fn a_unit_moves_three_times_as_far_along_a_road() {
 }
 
 #[test]
-fn stepping_onto_a_road_from_open_ground_costs_a_full_move() {
+fn stepping_onto_a_road_from_open_ground_costs_a_third() {
     let mut engine = Engine::new(3, 2, Player::new(Civilization::English), Vec::new());
     for x in 0..3 {
         engine
@@ -6853,7 +6853,7 @@ fn stepping_onto_a_road_from_open_ground_costs_a_full_move() {
     });
 
     assert_eq!(engine.game.units[0].location, Location::new(1, 1));
-    assert_eq!(engine.game.units[0].move_credit(), 0);
+    assert!(engine.game.units[0].has_moves());
 }
 
 #[test]
@@ -6893,7 +6893,7 @@ fn a_partial_road_credit_lets_a_unit_step_off_the_road() {
     assert_eq!(engine.game.units[0].location, Location::new(3, 1));
     assert!(engine.game.units[0].has_moves());
 
-    // The remaining third is enough to leave the road onto open ground.
+    // Stepping off the road onto open ground still spends the remaining credit.
     engine.submit(Command::Move {
         unit: UnitId::new(0),
         direction: Direction::E,

@@ -262,13 +262,14 @@ impl Engine {
         // unit may travel three times as far along a road. Stepping onto a
         // road from open ground, or off a road onto open ground, pays the
         // ordinary terrain cost.
-        let origin_on_road = self.game.map.tile_at(unit.location).has_road();
         let destination_on_road = self.game.map.tile_at(destination).has_road();
         let base_cost = self.game.map.tile_at(destination).terrain.movement_cost();
-        // `cost` is in thirds of a movement point: an ordinary step spends
-        // three (one whole point), a road-to-road step spends one (a third).
-        let cost = if origin_on_road && destination_on_road {
-            base_cost
+        // A road on the destination tile waives the terrain movement penalty
+        // entirely: the step costs one third of a movement point, regardless
+        // of the underlying terrain. Only an unroaded destination pays the
+        // full terrain cost.
+        let cost = if destination_on_road {
+            1
         } else {
             base_cost * 3
         };

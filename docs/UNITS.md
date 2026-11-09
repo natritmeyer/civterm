@@ -134,9 +134,9 @@ A fortified veteran behind walls on its home tile is 3× its bare defence.
 
 - Units spend movement in thirds of a point internally; an ordinary step
   costs 3 (one whole point).
-- Roads: a road-to-road step costs 1 (one third), so a unit travels three
-  times as far along a road. Stepping onto/off a road pays the full terrain
-  cost.
+- Roads: a step onto a roaded tile costs a third of that tile's terrain
+  movement cost, even from unroaded ground. A step onto an unroaded tile
+  pays the full terrain cost.
 - Ships move on water only; land units on land only. Boarding is the only
   lawful land↔water transition.
 
