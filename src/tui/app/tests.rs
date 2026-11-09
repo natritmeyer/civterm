@@ -3448,6 +3448,7 @@ fn app_with_marching_rival(reveal: Option<(Location, u8)>) -> App {
         PlayerId::new(1),
         Some(CityId::new(0)),
     );
+    engine.game.make_peace(PlayerId::new(0), PlayerId::new(1));
     if let Some((origin, radius)) = reveal {
         engine.game.players[0].reveal_tiles_at(origin, radius);
     }

@@ -248,6 +248,10 @@ impl Engine {
     }
 
     /// The player governed by `civilization`, if that civilization is in play.
+    pub fn have_met(&self, a: PlayerId, b: PlayerId) -> bool {
+        self.game.have_met(a, b)
+    }
+
     pub fn player_id_of(&self, civilization: Civilization) -> Option<PlayerId> {
         self.game
             .players

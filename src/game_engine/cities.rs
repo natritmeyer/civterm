@@ -174,6 +174,11 @@ impl Engine {
             self.events.push(Event::new("No such city"));
             return;
         };
+        if self.game.cities[index].rushed_this_turn() {
+            self.events
+                .push(Event::new("This city has already rushed this turn"));
+            return;
+        }
         let Some(cost) = self.game.cities[index].rush_cost() else {
             self.events
                 .push(Event::new("The city is building nothing to rush"));
@@ -188,6 +193,7 @@ impl Engine {
         }
         self.game.players[owner.index()].spend_gold(cost);
         let city_name = self.game.cities[index].name.clone();
+        self.game.cities[index].mark_rushed();
         let target = self.game.cities[index]
             .rush_production()
             .expect("a city with a rush cost has a build to complete");

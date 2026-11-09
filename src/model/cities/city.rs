@@ -21,6 +21,10 @@ pub struct City {
     improvements: Vec<CityImprovement>,
     production: Option<ProductionTarget>,
     resource_stored: u32,
+    /// Whether this city has already rush-bought this turn. Reset each turn
+    /// by `tick`/`tick_scaled`, so a city may rush at most once per round.
+    #[serde(default)]
+    rushed_this_turn: bool,
     worked: Vec<Location>,
     /// Whether a foreign diplomat has paid to look inside this city. The
     /// knowledge belongs to whoever paid for it, but the city is the only
@@ -63,6 +67,7 @@ impl City {
             improvements: Vec::new(),
             production: None,
             resource_stored: 0,
+            rushed_this_turn: false,
             investigated: false,
             // The city centre is always worked from the moment it is founded.
             worked: vec![location],
@@ -175,6 +180,8 @@ impl City {
         resource_income: u32,
         growth: Scale,
     ) -> CityTick {
+        // A new turn clears the rush-buy allowance.
+        self.rushed_this_turn = false;
         let consumption = self.food_consumption();
         let net_food = food_income as i32 - consumption as i32;
         let produced = resource_income;
@@ -258,6 +265,16 @@ impl City {
     pub fn rush_cost(&self) -> Option<u32> {
         self.production
             .map(|target| (2 * target.resource_cost().saturating_sub(self.resource_stored)).max(1))
+    }
+
+    /// Whether this city has already rush-bought this turn.
+    pub fn rushed_this_turn(&self) -> bool {
+        self.rushed_this_turn
+    }
+
+    /// Record that this city has rush-bought this turn.
+    pub fn mark_rushed(&mut self) {
+        self.rushed_this_turn = true;
     }
 
     /// Finish the current build at once, as a rush purchase does: the store is

@@ -10,7 +10,8 @@ Reference for how rivals act during `EndTurn`. See `docs/DIFFICULTY.md` and
   turn number increments once.
 - Rivals act in player order; eliminated players are skipped.
 - The human's turn begins fresh (units' moves restored).
-- Rival moves are recorded as `RivalMotion` and replayed by the TUI.
+- Rival moves are recorded as `RivalMotion` and replayed by the TUI (600ms
+  per step; Space/Enter/Esc skips the replay).
 
 ## Rival turn (`run_rival_turn`)
 
@@ -68,6 +69,18 @@ chosen from explored tiles.
 - Runs at end of `rival_units`, only when at war.
 - Walks cities in id order; rushes each current build while cost fits
   beneath `RIVAL_GOLD_RESERVE` (10).
+
+## Difficulty-gated behavior
+
+- **Easy**: militia spam (original behavior); no improvements, no terrain
+  development, no naval expansion.
+- **Normal (medium)**: rivals build city improvements (cheapest available)
+  once their city count reaches the expansion target, and idle settlers
+  develop terrain (irrigation, mines, roads) around owned cities instead of
+  idling.
+- **Hard**: additionally builds ocean-going units in coastal cities and
+  transports settlers/military across water to other continents; keeps the
+  Normal improvements and terrain development.
 
 ## Determinism
 

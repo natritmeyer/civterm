@@ -274,7 +274,15 @@ impl App {
         // the player may only watch the round they just resolved, and any
         // command typed now would land while the camera is elsewhere. Modals
         // opened by the round (research, diplomacy) still capture input above.
+        // Space/Enter/Esc skip the rest of the replay so a long round does
+        // not lock the screen; the pending windows are flushed immediately.
         if self.rival_animation.is_some() {
+            match key.code {
+                KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Esc => {
+                    self.skip_rival_animation();
+                }
+                _ => {}
+            }
             return false;
         }
         match key.code {
@@ -550,6 +558,36 @@ impl App {
         }
     }
 
+    /// Skip the rest of the rival-movement replay, dropping the animation and
+    /// flushing any windows the round held back behind it.
+    pub(super) fn skip_rival_animation(&mut self) {
+        self.rival_animation = None;
+        if self.has_pending_end_turn_windows {
+            self.war_notice = self.pending_war_notice.take();
+            self.starvation_notice = self.pending_starvation_notice.take();
+            self.upkeep_notice = self.pending_upkeep_notice.take();
+            let builds = std::mem::take(&mut self.pending_builds);
+            self.open_build_notices(builds);
+            let discovered = self.pending_research_discovery.take();
+            let wrapped = self.pending_wrapped;
+            self.pending_wrapped = false;
+            self.has_pending_end_turn_windows = false;
+            if self.game_over.is_none()
+                && wrapped
+                && let Some(discovered) = discovered
+            {
+                if self.starvation_notice.is_some() {
+                    self.pending_research_discovery = Some(discovered);
+                } else {
+                    self.open_research_dialog(
+                        discovered,
+                        crate::model::civilizations::PlayerId::new(0),
+                    );
+                }
+            }
+        }
+    }
+
     pub(super) fn move_selected_unit(&mut self, direction: Direction) {
         if let Some(unit) = self.selected_unit {
             self.move_unit(unit, direction);
@@ -789,8 +827,14 @@ impl App {
             let frames: Vec<RivalMoveFrame> = motion
                 .into_iter()
                 .filter(|step| {
-                    engine.explored(step.from.x as usize, step.from.y as usize)
-                        || engine.explored(step.to.x as usize, step.to.y as usize)
+                    // Only animate rivals the human has already met; an
+                    // undiscovered civilization's movements stay hidden.
+                    let met = engine
+                        .unit(step.unit)
+                        .map(|unit| engine.have_met(PlayerId::new(0), unit.owner()))
+                        .unwrap_or(false);
+                    met && (engine.explored(step.from.x as usize, step.from.y as usize)
+                        || engine.explored(step.to.x as usize, step.to.y as usize))
                 })
                 .map(|step| RivalMoveFrame {
                     unit_id: step.unit,

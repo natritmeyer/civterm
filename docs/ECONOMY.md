@@ -32,6 +32,8 @@ Reference for gold, upkeep, rush-buying, and trade income. See
 - `City::rush_production` fills the store to the target's cost and
   completes via `complete_if_ready`, so a rushed unit wears a Barracks'
   veteran stripe like any other.
+- A city may rush-buy at most once per turn (`rushed_this_turn` flag,
+  reset each turn by `tick`).
 
 ## Trade income
 

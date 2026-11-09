@@ -5,7 +5,9 @@ use crate::model::advancements::Advancement;
 use crate::model::cartography::{Direction, Location};
 use crate::model::cities::{City, CityId, ProductionTarget};
 use crate::model::civilizations::PlayerId;
+use crate::model::difficulty::Difficulty;
 use crate::model::geography::Terrain;
+use crate::model::geography::TerrainImprovement;
 use crate::model::units::{Unit, UnitClass, UnitId, UnitOrder};
 use std::cmp::Reverse;
 use strum::IntoEnumIterator;
@@ -207,6 +209,8 @@ impl Engine {
     /// What the idle `city_id` should build: the cheapest military unit while
     /// any of the rival's cities lacks a guard, a settler until the expansion
     /// target is reached, and the cheapest unit of any kind beyond that.
+    /// On Normal and Hard, rivals also build city improvements (cheapest
+    /// available) and, on Hard, ocean-going units in coastal cities.
     fn rival_production_pick(&self, ai: PlayerId, city_id: CityId) -> Option<ProductionTarget> {
         let choices = self.production_choices(city_id);
         let cheapest_unit = || {
@@ -222,6 +226,13 @@ impl Engine {
                 .filter(|target| {
                     matches!(target, ProductionTarget::Unit(class) if Self::is_military_class(*class))
                 })
+                .min_by_key(|target| target.resource_cost())
+                .copied()
+        };
+        let cheapest_improvement = || {
+            choices
+                .iter()
+                .filter(|target| matches!(target, ProductionTarget::Improvement(_)))
                 .min_by_key(|target| target.resource_cost())
                 .copied()
         };
@@ -243,6 +254,30 @@ impl Engine {
                 return Some(settler);
             }
             return cheapest_unit();
+        }
+        // Medium/Hard: develop cities with improvements before spamming units.
+        if !matches!(self.difficulty, Difficulty::Easy)
+            && let Some(improvement) = cheapest_improvement()
+        {
+            // Build at most one improvement per city at a time; production
+            // target is already idle here, so this is safe.
+            return Some(improvement);
+        }
+        // Hard: build ocean-going units in coastal cities.
+        if matches!(self.difficulty, Difficulty::Hard) {
+            let coastal = self
+                .game
+                .cities
+                .iter()
+                .find(|c| c.id() == city_id)
+                .is_some_and(|c| self.game.borders_water(c.location));
+            if coastal
+                && let Some(ship) = choices.iter().copied().find(|target| {
+                    matches!(target, ProductionTarget::Unit(class) if class.can_travel_water())
+                })
+            {
+                return Some(ship);
+            }
         }
         cheapest_unit()
     }
@@ -290,6 +325,26 @@ impl Engine {
             if ready {
                 self.rival_settle(unit_id);
             }
+        }
+        // On Normal/Hard, idle settlers that did not found a city develop
+        // terrain around the rival's cities (irrigation, mines, roads).
+        if !matches!(self.difficulty, Difficulty::Easy) {
+            for unit_id in self.game.owned_units(ai) {
+                let ready = self.owned_unit(unit_id).is_some_and(|unit| {
+                    unit.unit_class == UnitClass::Settler
+                        && !unit.is_transported()
+                        && unit.order() == UnitOrder::Idle
+                });
+                let city_count = self.game.cities.iter().filter(|c| c.owner() == ai).count();
+                if ready && city_count >= RIVAL_EXPANSION_TARGET_CITIES {
+                    self.rival_develop(unit_id);
+                }
+            }
+        }
+        // Hard: transport settlers/military on ocean-going ships and
+        // move ships toward unexplored coasts.
+        if matches!(self.difficulty, Difficulty::Hard) {
+            self.rival_naval(ai);
         }
         self.rival_garrison(ai);
         self.rival_warfare(ai);
@@ -459,6 +514,144 @@ impl Engine {
             .get(count)
             .map(|name| (*name).to_string())
             .unwrap_or_else(|| format!("City {}", count + 1))
+    }
+
+    /// Develop terrain around the rival's cities: an idle settler builds an
+    /// improvement on its current tile if possible, otherwise marches to the
+    /// nearest tile in an owned city's footprint that supports one.
+    fn rival_develop(&mut self, unit_id: UnitId) {
+        let ai = self.current_player_index;
+        // If the settler can build here, do it.
+        let location = match self.owned_unit(unit_id) {
+            Some(u) => u.location,
+            None => return,
+        };
+        if let Some(improvement) = self.buildable_here(location) {
+            self.work(unit_id, improvement);
+            return;
+        }
+        // Otherwise march to the nearest buildable tile in an owned city's
+        // footprint.
+        let owned_cities: Vec<CityId> = self
+            .game
+            .cities
+            .iter()
+            .filter(|c| c.owner() == ai)
+            .map(|c| c.id())
+            .collect();
+        let mut goal: Option<Location> = None;
+        let mut best = usize::MAX;
+        let map_w = self.game.map.width;
+        let unit_loc = location;
+        for city_id in &owned_cities {
+            let city = match self.game.cities.iter().find(|c| c.id() == *city_id) {
+                Some(c) => c,
+                None => continue,
+            };
+            for tile in self.game.city_footprint(city.location) {
+                if self.buildable_here(tile).is_some() {
+                    let d = Self::chebyshev(unit_loc, tile, map_w);
+                    if d < best {
+                        best = d;
+                        goal = Some(tile);
+                    }
+                }
+            }
+        }
+        if let Some(goal) = goal {
+            self.march_towards(unit_id, goal);
+        }
+    }
+
+    fn buildable_here(&self, location: Location) -> Option<TerrainImprovement> {
+        let tile = self.game.map.tile_at(location);
+        [
+            TerrainImprovement::Irrigation,
+            TerrainImprovement::Mine,
+            TerrainImprovement::Road,
+        ]
+        .into_iter()
+        .find(|&improvement| tile.can_build(improvement))
+    }
+
+    /// Hard: build ocean-going units and transport settlers/military across
+    /// water to other continents. A minimal implementation: move idle ships
+    /// toward the nearest unexplored water tile and board adjacent land units
+    /// when a free berth exists.
+    fn rival_naval(&mut self, ai: PlayerId) {
+        // Board adjacent land units onto ready ships.
+        let ship_ids: Vec<UnitId> = self
+            .game
+            .owned_units(ai)
+            .into_iter()
+            .filter(|id| {
+                self.owned_unit(*id)
+                    .is_some_and(|u| u.unit_class.can_travel_water() && !u.is_transported())
+            })
+            .collect();
+        for ship_id in &ship_ids {
+            let ship_loc = match self.owned_unit(*ship_id) {
+                Some(u) => u.location,
+                None => continue,
+            };
+            // Find adjacent idle land units and board them.
+            for land_id in self.game.owned_units(ai).clone() {
+                let ready = self.owned_unit(land_id).is_some_and(|u| {
+                    !u.unit_class.can_travel_water()
+                        && !u.is_transported()
+                        && u.order() == UnitOrder::Idle
+                        && u.location.x.abs_diff(ship_loc.x) <= 1
+                        && u.location.y.abs_diff(ship_loc.y) <= 1
+                        && u.location != ship_loc
+                });
+                if !ready {
+                    continue;
+                }
+                // Find the direction from the land unit to the ship and board.
+                if let Some(direction) = Direction::iter().find(|d| {
+                    self.game
+                        .map
+                        .destination(self.owned_unit(land_id).unwrap().location, *d)
+                        == Some(ship_loc)
+                }) {
+                    self.move_unit(land_id, direction);
+                }
+            }
+        }
+        // Move ships toward unexplored water.
+        for ship_id in ship_ids {
+            let ready = self.owned_unit(ship_id).is_some_and(|u| {
+                u.unit_class.can_travel_water() && !u.is_transported() && u.move_credit() > 0
+            });
+            if !ready {
+                continue;
+            }
+            // Pick nearest unexplored water tile.
+            let ship_loc = self.owned_unit(ship_id).unwrap().location;
+            let map_w = self.game.map.width;
+            let player = &self.game.players[ai.index()];
+            let mut goal: Option<Location> = None;
+            let mut best = usize::MAX;
+            for y in 0..self.game.map.height {
+                for x in 0..self.game.map.width {
+                    let loc = Location::new(x as u16, y as u16);
+                    if player.explored_at(x, y) {
+                        continue;
+                    }
+                    if !self.game.map.tile_at(loc).terrain.is_water() {
+                        continue;
+                    }
+                    let d = Self::chebyshev(ship_loc, loc, map_w);
+                    if d < best {
+                        best = d;
+                        goal = Some(loc);
+                    }
+                }
+            }
+            if let Some(goal) = goal {
+                self.march_towards(ship_id, goal);
+            }
+        }
     }
 
     fn rival_garrison(&mut self, ai: PlayerId) {
