@@ -252,6 +252,18 @@ impl Engine {
                 .min_by_key(|target| target.resource_cost())
                 .copied()
         };
+        let strongest_military = || {
+            choices
+                .iter()
+                .filter(|target| {
+                    matches!(target, ProductionTarget::Unit(class) if Self::is_military_class(*class))
+                })
+                .max_by_key(|target| match target {
+                    ProductionTarget::Unit(class) => class.defence(),
+                    _ => 0,
+                })
+                .copied()
+        };
         let cheapest_improvement = || {
             choices
                 .iter()
@@ -260,6 +272,9 @@ impl Engine {
                 .copied()
         };
         if self.has_ungarrisoned_city(ai) {
+            if matches!(self.difficulty, Difficulty::Hard) {
+                return strongest_military();
+            }
             return cheapest_military();
         }
         let city_count = self

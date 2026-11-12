@@ -6,6 +6,7 @@ use crate::model::cartography::Direction;
 use crate::model::civilizations::PlayerId;
 use crate::model::competition::Competition;
 use crate::model::difficulty::Difficulty;
+use crate::tui::conquest_dialog;
 use crate::tui::diplomat_actions_dialog;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use strum::IntoEnumIterator;
@@ -410,6 +411,23 @@ impl App {
         }
         if war_dialog::ok_button_rect(panel).contains((mouse.column, mouse.row).into()) {
             self.war_notice_confirm();
+        }
+    }
+
+    pub(super) fn handle_conquest_notice_mouse(&mut self, mouse: MouseEvent) {
+        let Some(panel) = self.conquest_notice_rect.get() else {
+            return;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if mouse.column == u16::MAX || mouse.row == u16::MAX {
+            return;
+        }
+        if conquest_dialog::ok_button_rect(panel).contains((mouse.column, mouse.row).into()) {
+            self.conquest_notice = None;
+            self.conquest_notice_rect.set(None);
+            self.schedule_unit_advance_if_spent();
         }
     }
 

@@ -29,6 +29,14 @@ pub struct StarvationNotice {
     pub city_name: String,
 }
 
+/// A rival city the player has just captured. The TUI announces it with a
+/// celebration window; the name is snapshotted because the city may be gone
+/// (razed) by the time the window is answered.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConquestNotice {
+    pub city_name: String,
+}
+
 /// A round in which a civilization could not pay its improvements' upkeep: the
 /// total maintenance owed and the unit disbanded to cover it, if any was left
 /// to take. The TUI announces the human's with a window once the round
@@ -53,6 +61,12 @@ impl Engine {
     /// walks this queue one window at a time.
     pub fn drain_build_completions(&mut self) -> Vec<BuildComplete> {
         std::mem::take(&mut self.builds)
+    }
+
+    /// Drain the record of every rival city the player captured this turn, in
+    /// order. The TUI announces each with a celebration window.
+    pub fn drain_conquests(&mut self) -> Vec<ConquestNotice> {
+        std::mem::take(&mut self.conquests)
     }
 
     /// Drain the record of every upkeep shortfall from the last round, in the

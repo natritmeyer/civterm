@@ -71,6 +71,7 @@ impl SaveData {
                 rival_wars: Vec::new(),
                 builds: Vec::new(),
                 starvations: Vec::new(),
+                conquests: Vec::new(),
                 audiences: Vec::new(),
                 investigation: None,
                 steal: None,

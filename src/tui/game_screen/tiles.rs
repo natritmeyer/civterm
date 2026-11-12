@@ -193,9 +193,11 @@ pub(crate) fn paint_tile(
                         // cargo still carries a budget from before it boarded.
                         u.aboard()
                             .and_then(|carrier| view.unit(carrier))
-                            .is_some_and(|ship| ship.move_credit() > 0)
+                            .is_some_and(|ship| {
+                                ship.move_credit() > 0 && ship.order() == UnitOrder::Idle
+                            })
                     } else {
-                        u.move_credit() > 0
+                        u.move_credit() > 0 && u.order() == UnitOrder::Idle
                     }
             })
         });

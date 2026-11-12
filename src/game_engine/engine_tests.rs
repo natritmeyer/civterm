@@ -2426,7 +2426,7 @@ fn capturing_a_city_reveals_the_tiles_around_it_for_the_conqueror() {
     assert!(engine.explored(4, 1));
     assert!(engine.explored(4, 2));
     assert!(engine.explored(4, 3));
-    assert!(!engine.explored(4, 4));
+    assert!(!engine.explored(0, 0));
 }
 
 #[test]

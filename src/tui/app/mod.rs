@@ -12,6 +12,7 @@ use super::city_window::{self, CityWindow};
 use super::civ_selector::CivSelector;
 use super::command_picker::{self, CommandPicker};
 use super::competition_selector::CompetitionSelector;
+use super::conquest_dialog::{self, ConquestDialog};
 use super::difficulty_selector::DifficultySelector;
 use super::diplomacy_dialog::{self, DiplomacyChoice, DiplomacyDialog, DiplomacyOrigin};
 use super::diplomat_actions_dialog::{self, DiplomatActionsDialog};
@@ -297,8 +298,10 @@ pub struct App {
     /// The open war-declaration window, if a rival has drawn the sword this
     /// round; its queue holds every declaration still to be acknowledged.
     war_notice: Option<WarNoticeState>,
+    conquest_notice: Option<String>,
     /// The last-drawn war-declaration rectangle, for mouse hit-testing.
     war_notice_rect: Cell<Option<Rect>>,
+    conquest_notice_rect: Cell<Option<Rect>>,
     /// The open starvation window, if one of the player's cities starved this
     /// round; its queue holds every hungry city still to be announced.
     starvation_notice: Option<StarvationNoticeState>,
@@ -450,7 +453,9 @@ impl App {
             diplomacy: None,
             diplomacy_rect: Cell::new(None),
             war_notice: None,
+            conquest_notice: None,
             war_notice_rect: Cell::new(None),
+            conquest_notice_rect: Cell::new(None),
             starvation_notice: None,
             starvation_notice_rect: Cell::new(None),
             upkeep_notice: None,
@@ -805,6 +810,15 @@ impl App {
                         app.war_notice_rect.set(Some(rect));
                     } else {
                         app.war_notice_rect.set(None);
+                    }
+                    // The conquest window celebrates a city the player has just
+                    // taken. It floats above the map until acknowledged.
+                    if let Some(city_name) = &app.conquest_notice {
+                        let rect = conquest_dialog::dialog_rect(area);
+                        frame.render_widget(ConquestDialog::new(city_name.clone()), rect);
+                        app.conquest_notice_rect.set(Some(rect));
+                    } else {
+                        app.conquest_notice_rect.set(None);
                     }
                     // The starvation window floats over the map when one of the
                     // player's cities lost a citizen this round. Each hungry

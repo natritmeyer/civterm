@@ -1,5 +1,5 @@
 use crate::crash_log;
-use crate::game_engine::cities::{BuildComplete, StarvationNotice, UpkeepNotice};
+use crate::game_engine::cities::{BuildComplete, ConquestNotice, StarvationNotice, UpkeepNotice};
 use crate::game_engine::{
     Command, DiplomatAudience, Event, Player, RivalMotion, RivalWar, SabotageNotice, StealOutcome,
 };
@@ -49,6 +49,10 @@ pub struct Engine {
     /// last round, in order. The TUI announces each with a window once the
     /// round resolves; drained by `drain_starvations`, never persisted.
     pub(crate) starvations: Vec<StarvationNotice>,
+    /// Every rival city the player has captured this turn, in order. The TUI
+    /// announces each with a celebration window; drained by
+    /// `drain_conquests`, never persisted.
+    pub(crate) conquests: Vec<ConquestNotice>,
     /// Every time the player's own diplomat walked into a rival city during the
     /// last move, naming the unit and the city. The TUI opens the window that
     /// offers him a choice; drained by `drain_diplomat_audiences`, never
@@ -119,6 +123,7 @@ impl Engine {
             rival_wars: Vec::new(),
             builds: Vec::new(),
             starvations: Vec::new(),
+            conquests: Vec::new(),
             audiences: Vec::new(),
             investigation: None,
             steal: None,

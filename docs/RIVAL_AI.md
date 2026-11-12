@@ -79,7 +79,9 @@ chosen from explored tiles.
   once their city count reaches the expansion target, and idle settlers
   develop terrain (irrigation, mines, roads) around owned cities instead of
   idling.
-- **Hard**: additionally builds ocean-going units in coastal cities and
+- **Hard**: cities first produce the toughest available defender and fortify
+  it before other builds; additionally builds ocean-going units in coastal
+  cities and
   transports settlers/military across water to other continents; keeps the
   Normal improvements and terrain development.
 

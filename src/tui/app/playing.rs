@@ -55,6 +55,17 @@ impl App {
             }
             return false;
         }
+        if self.conquest_notice.is_some() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
+                    self.conquest_notice = None;
+                    self.conquest_notice_rect.set(None);
+                    self.schedule_unit_advance_if_spent();
+                }
+                _ => {}
+            }
+            return false;
+        }
         // While an upkeep window is up it captures the keyboard: enter, space
         // or esc acknowledges the empty treasury and the disbanded unit and
         // moves on to the next shortfall.
@@ -504,6 +515,7 @@ impl App {
             || self.sabotage_notice.is_some()
             || self.diplomacy.is_some()
             || self.war_notice.is_some()
+            || self.conquest_notice.is_some()
             || self.starvation_notice.is_some()
             || self.upkeep_notice.is_some()
             || self.command_picker_open
@@ -642,6 +654,10 @@ impl App {
                     self.selected_unit = None;
                 }
             }
+            // A conquered city is celebrated with a window.
+            if let Some(conquest) = engine.drain_conquests().into_iter().next() {
+                self.conquest_notice = Some(conquest.city_name);
+            }
             // A freshly met rival presents the war-or-peace choice.
             if let Some(opponent) = events
                 .iter()
@@ -738,6 +754,7 @@ impl App {
             || self.sabotage_notice_rect.get().is_some()
             || self.diplomacy_rect.get().is_some()
             || self.war_notice_rect.get().is_some()
+            || self.conquest_notice_rect.get().is_some()
             || self.starvation_notice_rect.get().is_some()
             || self.upkeep_notice_rect.get().is_some()
             || self.build_notice_rect.get().is_some()

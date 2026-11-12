@@ -223,6 +223,22 @@ impl Engine {
             .population()
             == 1;
         let disbanded = self.game.disband_units_homed_to(city_id);
+        let city_location = self
+            .game
+            .cities
+            .iter()
+            .find(|c| c.id() == city_id)
+            .map(|c| c.location);
+        if self.current_player_index == PlayerId::new(0) {
+            self.conquests
+                .push(crate::game_engine::cities::ConquestNotice {
+                    city_name: city_name.clone(),
+                });
+            if let Some(location) = city_location {
+                self.game
+                    .reveal_tiles_surrounding_city_at(PlayerId::new(0), location);
+            }
+        }
         let conqueror = self.game.players[self.current_player_index.index()].civilization;
         let loser = self.game.players[old_owner.index()].civilization;
         if overrun {
