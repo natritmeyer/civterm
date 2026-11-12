@@ -207,22 +207,51 @@ impl Engine {
             .expect("the conquered city exists")
             .name
             .clone();
-        let old_owner = self
-            .game
-            .cities
-            .iter()
-            .find(|c| c.id() == city_id)
-            .unwrap()
-            .owner();
-        let overrun = self
-            .game
-            .cities
-            .iter()
-            .find(|c| c.id() == city_id)
-            .unwrap()
-            .population()
-            == 1;
+        let (old_owner, city_population) = {
+            let city = self.game.cities.iter().find(|c| c.id() == city_id).unwrap();
+            (city.owner(), city.population())
+        };
+        let overrun = city_population == 1;
+        // Gold ransom when a rival takes a human city: a share of the
+        // player's treasury proportional to the captured city's population
+        // against the player's total population across all their cities.
+        let human = PlayerId::new(0);
+        let gold_transfer = if old_owner == human && self.current_player_index != human {
+            let total_population: u32 = self
+                .game
+                .cities
+                .iter()
+                .filter(|c| c.owner() == human)
+                .map(|c| c.population())
+                .sum();
+            self.game.players[human.index()]
+                .gold()
+                .checked_mul(city_population)
+                .and_then(|n| n.checked_div(total_population))
+                .unwrap_or(0)
+        } else {
+            0
+        };
         let disbanded = self.game.disband_units_homed_to(city_id);
+        // Pay the ransom now, while both treasuries are still in play.
+        if gold_transfer > 0 {
+            let human = PlayerId::new(0);
+            let conqueror = self.current_player_index;
+            self.game.players[human.index()].spend_gold(gold_transfer);
+            self.game.players[conqueror.index()].add_gold(gold_transfer);
+            self.events.push(Event::between(
+                conqueror,
+                human,
+                format!(
+                    "{} seizes {} gold from {}",
+                    self.game.players[conqueror.index()]
+                        .civilization
+                        .display_name(),
+                    gold_transfer,
+                    self.game.players[human.index()].civilization.display_name()
+                ),
+            ));
+        }
         let city_location = self
             .game
             .cities
