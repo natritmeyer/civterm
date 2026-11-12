@@ -52,6 +52,7 @@ impl Tile {
             TerrainImprovement::Irrigation => !self.irrigated,
             TerrainImprovement::Mine => !self.mined,
             TerrainImprovement::Road => !self.has_road,
+            TerrainImprovement::ClearForest => matches!(self.terrain, Terrain::Forest),
         }
     }
 
@@ -66,6 +67,10 @@ impl Tile {
             TerrainImprovement::Irrigation => self.irrigated = true,
             TerrainImprovement::Mine => self.mined = true,
             TerrainImprovement::Road => self.has_road = true,
+            TerrainImprovement::ClearForest => {
+                self.terrain = Terrain::Plains;
+                self.resource = None;
+            }
         }
         Ok(())
     }

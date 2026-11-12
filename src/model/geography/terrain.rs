@@ -58,6 +58,7 @@ impl Terrain {
                 matches!(self, Terrain::Hills | Terrain::Mountain | Terrain::Desert)
             }
             TerrainImprovement::Road => self.is_land(),
+            TerrainImprovement::ClearForest => matches!(self, Terrain::Forest),
         }
     }
 

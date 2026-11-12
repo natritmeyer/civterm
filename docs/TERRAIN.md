@@ -36,6 +36,7 @@ Move cost is in movement points (1–3). Roads reduce a road-to-road step to
 | Irrigation  | Grassland, Plains, Desert, Swamp, Jungle   | +1 food                   |
 | Mine        | Hills, Mountain, Desert                   | +1 shields (resources)    |
 | Road        | All land                                  | +1 trade                  |
+| Clear Forest| Forest                                    | Changes terrain to Plains |
 
 - Irrigation and Mine take 2 and 3 turns to build respectively; Road takes 2.
 - A tile may hold irrigation, a mine, and a road simultaneously.

@@ -5,6 +5,7 @@ pub enum TerrainImprovement {
     Irrigation,
     Mine,
     Road,
+    ClearForest,
 }
 
 impl TerrainImprovement {
@@ -14,6 +15,7 @@ impl TerrainImprovement {
             TerrainImprovement::Irrigation => "Irrigation",
             TerrainImprovement::Mine => "Mine",
             TerrainImprovement::Road => "Road",
+            TerrainImprovement::ClearForest => "Clear Forest",
         }
     }
 
@@ -24,6 +26,7 @@ impl TerrainImprovement {
             TerrainImprovement::Irrigation => 2,
             TerrainImprovement::Mine => 3,
             TerrainImprovement::Road => 2,
+            TerrainImprovement::ClearForest => 3,
         }
     }
 }

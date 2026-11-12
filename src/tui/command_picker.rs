@@ -5,6 +5,7 @@ use ratatui::widgets::Widget;
 
 use crate::game_engine::GameView;
 use crate::model::cartography::Tile;
+use crate::model::geography::Terrain;
 use crate::model::geography::TerrainImprovement;
 use crate::model::units::{Unit, UnitClass, UnitId, UnitOrder};
 use crate::tui::window_geometry;
@@ -32,6 +33,7 @@ pub fn buildable_improvements(tile: &Tile) -> Vec<TerrainImprovement> {
         TerrainImprovement::Irrigation,
         TerrainImprovement::Mine,
         TerrainImprovement::Road,
+        TerrainImprovement::ClearForest,
     ]
     .into_iter()
     .filter(|improvement| {
@@ -39,6 +41,7 @@ pub fn buildable_improvements(tile: &Tile) -> Vec<TerrainImprovement> {
             TerrainImprovement::Irrigation => tile.is_irrigated(),
             TerrainImprovement::Mine => tile.is_mined(),
             TerrainImprovement::Road => tile.has_road(),
+            TerrainImprovement::ClearForest => !matches!(tile.terrain, Terrain::Forest),
         };
         !already && tile.terrain.supports(*improvement)
     })
@@ -526,7 +529,7 @@ mod tests {
         let forest = Tile::new(Terrain::Forest);
         assert_eq!(
             buildable_improvements(&forest),
-            vec![TerrainImprovement::Road]
+            vec![TerrainImprovement::Road, TerrainImprovement::ClearForest]
         );
 
         let ocean = Tile::new(Terrain::Ocean);
