@@ -26,6 +26,12 @@ brew tap natritmeyer/civterm
 brew install civterm
 ```
 
+Or as a one-liner:
+
+```bash
+brew install natritmeyer/civterm/civterm
+```
+
 The tap is a separate repository named `homebrew-civterm`: create that repo and
 copy [`Formula/civterm.rb`](Formula/civterm.rb) into its `Formula/` directory.
 After each release, update the `sha256` values in it from the published archives
