@@ -1,0 +1,36 @@
+class Civterm < Formula
+  desc "A civilization game in your terminal"
+  homepage "https://github.com/natritmeyer/civterm"
+  version "{{VERSION}}"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/natritmeyer/civterm/releases/download/v{{VERSION}}/civterm-macos-aarch64.tar.gz"
+      sha256 "{{SHA_MAC_ARM}}"
+    end
+    on_intel do
+      url "https://github.com/natritmeyer/civterm/releases/download/v{{VERSION}}/civterm-macos-x86_64.tar.gz"
+      sha256 "{{SHA_MAC_INTEL}}"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/natritmeyer/civterm/releases/download/v{{VERSION}}/civterm-linux-aarch64.tar.gz"
+      sha256 "{{SHA_LIN_ARM}}"
+    end
+    on_intel do
+      url "https://github.com/natritmeyer/civterm/releases/download/v{{VERSION}}/civterm-linux-x86_64.tar.gz"
+      sha256 "{{SHA_LIN_INTEL}}"
+    end
+  end
+
+  def install
+    bin.install "civterm"
+  end
+
+  test do
+    system "#{bin}/civterm", "--version"
+  end
+end

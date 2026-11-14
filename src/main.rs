@@ -11,6 +11,13 @@ use ratatui::backend::CrosstermBackend;
 fn main() -> io::Result<()> {
     use std::io::Write;
 
+    // Handle --version before touching the terminal.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("civterm {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     // Before the terminal is touched, so a crash from here on leaves a report
     // behind and puts the terminal back the way it was found.
     crash_log::install();

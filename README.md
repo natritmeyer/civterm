@@ -8,6 +8,32 @@ A civilization game in your terminal, written in Rust with
 
 ## Install
 
+### From a release (recommended)
+
+Pre-built binaries for Linux, macOS (Intel and Apple Silicon) and Windows are
+attached to each [GitHub release](https://github.com/natritmeyer/civterm/releases),
+along with `.deb` and `.rpm` packages for Linux. Static (musl) Linux builds are
+also provided for minimal/Alpine systems. Download the archive/package for your
+platform, install it, and put `civterm` on your `PATH`.
+
+macOS binaries are ad-hoc signed; if Gatekeeper still blocks a direct download,
+run `xattr -d com.apple.quarantine civterm`. Homebrew installs are unaffected.
+
+### Homebrew (macOS / Linux)
+
+```bash
+brew tap natritmeyer/civterm
+brew install civterm
+```
+
+The tap is a separate repository named `homebrew-civterm`: create that repo and
+copy [`Formula/civterm.rb`](Formula/civterm.rb) into its `Formula/` directory.
+After each release, update the `sha256` values in it from the published archives
+(see `scripts/update_formula.sh`). You can also run
+`make update-tap TAP_DIR=/path/to/homebrew-civterm` locally.
+
+### From source
+
 You need Rust (installed via [rustup](https://rustup.rs)). The toolchain is
 pinned in `rust-toolchain.toml`.
 

@@ -8,6 +8,15 @@ repository = "https://github.com/natritmeyer/civterm"
 authors = ["Nat Ritmeyer"]
 publish = false
 
+[package.metadata.deb]
+maintainer = "Nat Ritmeyer"
+copyright = "2026, Nat Ritmeyer"
+license-file = ["LICENSE", "4"]
+section = "games"
+priority = "optional"
+
+[package.metadata.generate-rpm]
+
 [dependencies]
 crossterm = "0.29"
 ratatui = "0.30.2"
@@ -20,3 +29,16 @@ strum = { version = "0.28", features = ["derive"] }
 # naming it here costs no new build.
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[package.metadata.release]
+tag-name = "v{{version}}"
+pre-release-command = "make build"
+pre-release-commit-message = "chore: release v{{version}}"
+tag-message = "v{{version}}"
+push = true
+publish = false

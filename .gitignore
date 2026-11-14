@@ -13,6 +13,11 @@ target
 
 scratch/
 
+dist/
+
+# Generated from Formula/civterm.rb.tmpl by scripts/update_formula.sh
+Formula/civterm.rb
+
 *.civ
 
 # crash reports
