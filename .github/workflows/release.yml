@@ -32,7 +32,7 @@ jobs:
             artifact: civterm-linux-x86_64
             archive: tar.gz
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04
+            os: ubuntu-22.04-arm
             artifact: civterm-linux-aarch64
             archive: tar.gz
           - target: x86_64-unknown-linux-musl
@@ -40,7 +40,7 @@ jobs:
             artifact: civterm-linux-x86_64-musl
             archive: tar.gz
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-22.04
+            os: ubuntu-22.04-arm
             artifact: civterm-linux-aarch64-musl
             archive: tar.gz
           - target: x86_64-apple-darwin
@@ -70,21 +70,12 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install cross
-        if: matrix.target != 'x86_64-unknown-linux-gnu' && matrix.target != 'x86_64-apple-darwin' && matrix.target != 'aarch64-apple-darwin' && matrix.target != 'x86_64-pc-windows-msvc'
-        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build
-        shell: bash
-        run: |
-          case "${{ matrix.target }}" in
-            x86_64-unknown-linux-gnu|x86_64-pc-windows-msvc|x86_64-apple-darwin|aarch64-apple-darwin)
-              cargo build --release --target ${{ matrix.target }}
-              ;;
-            *)
-              cross build --release --target ${{ matrix.target }}
-              ;;
-          esac
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Ad-hoc sign (macOS)
         if: contains(matrix.target, 'apple-darwin')
@@ -146,8 +137,18 @@ jobs:
           path: target/wix/*.msi
 
   packages:
-    name: Linux packages (.deb/.rpm)
-    runs-on: ubuntu-22.04
+    name: Linux packages (.deb/.rpm) (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -155,34 +156,18 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: linux-packages
-
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+          targets: ${{ matrix.target }}
 
       - name: Install packaging tools
         run: cargo install cargo-deb cargo-generate-rpm
 
-      - name: Build (x86_64)
-        run: cargo build --release --target x86_64-unknown-linux-gnu
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Build (aarch64)
-        run: cross build --release --target aarch64-unknown-linux-gnu
-
-      - name: Package (x86_64)
+      - name: Package
         run: |
-          cargo deb --target x86_64-unknown-linux-gnu
-          cargo generate-rpm --target x86_64-unknown-linux-gnu
-
-      - name: Package (aarch64)
-        run: |
-          cargo deb --target aarch64-unknown-linux-gnu
-          cargo generate-rpm --target aarch64-unknown-linux-gnu
+          cargo deb --target ${{ matrix.target }}
+          cargo generate-rpm --target ${{ matrix.target }}
 
       - name: Collect packages
         run: |
@@ -192,7 +177,7 @@ jobs:
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: linux-packages
+          name: linux-packages-${{ matrix.arch }}
           path: pkgs/*
 
   aur:
