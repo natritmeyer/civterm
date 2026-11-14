@@ -37,7 +37,7 @@ strip = true
 
 [package.metadata.release]
 tag-name = "v{{version}}"
-pre-release-command = "make build"
+pre-release-hook = ["make", "build"]
 pre-release-commit-message = "chore: release v{{version}}"
 tag-message = "v{{version}}"
 push = true

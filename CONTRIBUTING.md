@@ -6,8 +6,8 @@ Everything needed to build and test it is described below.
 ## Prerequisites
 
 - **Rust** — install with [rustup](https://rustup.rs). The toolchain is pinned in
-  `rust-toolchain.toml` to `stable` with `clippy`, `rustfmt` and
-  `llvm-tools-preview`; rustup installs those automatically on first build.
+  `rust-toolchain.toml` to `stable` with `clippy` and `rustfmt`;
+  rustup installs those automatically on first build.
 - **make** — the repo gate and setup are Makefile targets. On macOS this comes
   with the Xcode command-line tools; on Debian/Ubuntu install `build-essential`.
 - **git**
