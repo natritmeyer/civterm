@@ -16,6 +16,9 @@ section = "games"
 priority = "optional"
 
 [package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/civterm", dest = "/usr/bin/civterm", mode = "0755" },
+]
 
 [dependencies]
 crossterm = "0.29"
