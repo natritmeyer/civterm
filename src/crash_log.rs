@@ -42,6 +42,7 @@ const CRUMB_COUNT: usize = 40;
 const BANNER: &str = "==================== civterm crash report ====================";
 /// The backtrace recorded for a signal: the faulting thread is not the thread
 /// writing the report, so there is nothing honest to print.
+#[cfg_attr(not(unix), allow(dead_code))]
 const NO_BACKTRACE: &str = "(not available: a signal is reported from the handler thread,\n\
                            not from the thread that faulted)";
 
