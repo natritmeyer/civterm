@@ -216,10 +216,13 @@ jobs:
         run: ./scripts/generate-aur.sh "${{ steps.tag.outputs.name }}" aur
 
       - name: Push to AUR (requires AUR_SSH_KEY secret)
-        if: ${{ secrets.AUR_SSH_KEY != '' }}
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
         run: |
+          if [ -z "${AUR_SSH_KEY}" ]; then
+            echo "AUR_SSH_KEY not set; skipping push"
+            exit 0
+          fi
           mkdir -p ~/.ssh
           printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
           chmod 600 ~/.ssh/aur
