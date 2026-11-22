@@ -1,4 +1,5 @@
 ---
+layout: home
 title: civterm
 description: A civilization game in your terminal
 author: Nat Ritmeyer

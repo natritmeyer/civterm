@@ -12,6 +12,7 @@ target
 /target
 
 scratch/
+_site/
 
 dist/
 
