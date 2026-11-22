@@ -1,4 +1,5 @@
 ---
+author: Nat Ritmeyer
 image: images/civterm_screen.png
 ---
 
@@ -13,12 +14,14 @@ image: images/civterm_screen.png
 [![Build status](https://img.shields.io/github/actions/workflow/status/natritmeyer/civterm/ci.yml?label=build)](https://github.com/natritmeyer/civterm/actions)
 [![Tests](https://img.shields.io/badge/tests-870%20passing-brightgreen)](https://github.com/natritmeyer/civterm/actions)
 
-civterm is a terminal Civilization-style game written in Rust. Lead a
+`civterm` is a civilization-style game for your terminal. Lead a
 civilization from a single settler to a sprawling empire: found and grow
 cities, research advances, build units and improvements, explore the
 world, and deal with rivals by diplomacy or war.
 
 Built and tested with the [Ghostty](https://ghostty.org) terminal.
+
+Written by AI under the direction of Nat Ritmeyer.
 
 ## Installation
 
