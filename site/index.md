@@ -1,3 +1,7 @@
+---
+image: images/civterm_screen.png
+---
+
 ![Splash screen](images/civterm_screen.png)
 
 [![Made with Zed](https://img.shields.io/badge/Made%20with-Zed-084CCF?logo=zed)](https://zed.dev)
