@@ -1,5 +1,4 @@
 ---
-layout: home
 title: civterm
 description: A civilization game in your terminal
 author: Nat Ritmeyer
@@ -13,6 +12,8 @@ image: images/civterm_screen.png
 [![Licence](https://img.shields.io/github/license/natritmeyer/civterm)](https://github.com/natritmeyer/civterm/blob/main/LICENSE)
 [![Language](https://img.shields.io/github/languages/top/natritmeyer/civterm)](https://github.com/natritmeyer/civterm)
 [![Repo size](https://img.shields.io/github/repo-size/natritmeyer/civterm)](https://github.com/natritmeyer/civterm)
+[![Current version](https://img.shields.io/github/v/release/natritmeyer/civterm)](https://github.com/natritmeyer/civterm/releases)
+[![Last release](https://img.shields.io/github/release-date/natritmeyer/civterm)](https://github.com/natritmeyer/civterm/releases)
 [![Last commit](https://img.shields.io/github/last-commit/natritmeyer/civterm)](https://github.com/natritmeyer/civterm/commits/main)
 [![Build status](https://img.shields.io/github/actions/workflow/status/natritmeyer/civterm/ci.yml?label=build)](https://github.com/natritmeyer/civterm/actions)
 [![Tests](https://img.shields.io/badge/tests-870%20passing-brightgreen)](https://github.com/natritmeyer/civterm/actions)
