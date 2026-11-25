@@ -1,5 +1,5 @@
 ---
-title: civterm
+# title: civterm
 description: A civilization game in your terminal
 author: Nat Ritmeyer
 image: images/civterm_screen.png
@@ -25,7 +25,7 @@ world, and deal with rivals by diplomacy or war.
 
 Built and tested with the [Ghostty](https://ghostty.org) terminal.
 
-Written by AI under the direction of Nat Ritmeyer.
+`civterm` was prompted into existence by [Nat Ritmeyer](https://natritmeyer.com).
 
 ## Installation
 
